@@ -7,6 +7,9 @@
 stores:
   shared:
     dsn: ${WG_DB_SHARED_DSN}
+    # Optionale, nur lesende Rolle für den MCP-Zugang (§20.1). Ohne Angabe wird dieselbe Rolle
+    # mit erzwungenem 'default_transaction_read_only' benutzt — schwächer, aber immer da.
+    readonly_dsn: ${WG_DB_SHARED_READONLY_DSN:-}
     allow_remote: true
   personal:
     dsn: ${WG_DB_PERSONAL_DSN}

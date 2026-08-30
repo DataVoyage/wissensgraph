@@ -146,6 +146,10 @@ CONCEPT_STATUS_DEFAULT: Final = "stable"
 #: Akteur eines Sync-Laufs im Änderungsjournal (§7.4).
 ACTOR_SYNC: Final = "system:sync"
 
+#: Akteur einer Änderung von der Kommandozeile. Sie zählt als menschliche Kuration und wird von
+#: keinem Lauf überschrieben (§10.4) — deshalb ein ``user:``-Präfix und kein ``system:``.
+ACTOR_CLI: Final = "user:cli"
+
 # ---------------------------------------------------------------------------
 # Quell-Adapter-Framework (§8, §9)
 # ---------------------------------------------------------------------------
@@ -301,6 +305,27 @@ RANKING_HOP_WEIGHT: Final = 0.5
 RANKING_DENSITY_WEIGHT: Final = 0.3
 RANKING_RECENCY_WEIGHT: Final = 0.2
 RANKING_RECENCY_HALF_LIFE_DAYS: Final = 90
+
+#: Kantenart, die ein Cluster mit seinen Mitgliedern verbindet (§7.7). Die Referenzdichte braucht
+#: sie namentlich: §12.2 zählt Verweise "auf z **oder auf ein Cluster von z**".
+EDGE_KIND_MEMBER: Final = "member"
+
+# ---------------------------------------------------------------------------
+# Lexikalische Suche (§12.4)
+# ---------------------------------------------------------------------------
+
+#: Wie viele Treffer eine Suche ohne weitere Angabe liefert.
+SEARCH_LIMIT: Final = 20
+
+#: Ab welcher Trigrammähnlichkeit ein Titel als Treffer gilt. Der Wert entspricht der
+#: PostgreSQL-Voreinstellung von ``pg_trgm``; er steht hier, damit die Abfrage nicht von einer
+#: serverseitigen Einstellung abhängt, die niemand in diesem Repository sehen kann.
+SEARCH_TRIGRAM_THRESHOLD: Final = 0.3
+
+#: Die Konstante der Reciprocal Rank Fusion (§12.4). 60 ist der in der Literatur übliche Wert; er
+#: dämpft die Wirkung der vordersten Plätze gerade so weit, dass ein einzelnes Verfahren das
+#: Ergebnis nicht allein bestimmt.
+SEARCH_RRF_K: Final = 60
 
 # ---------------------------------------------------------------------------
 # Budget-Wächter (§11.6) — schützt vor unbeabsichtigtem Token-Verbrauch

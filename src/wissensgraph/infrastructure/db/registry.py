@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -64,6 +64,7 @@ class StoreRegistry:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engines: dict[str, Engine] = {}
+        self._readonly: dict[str, Engine] = {}
 
     @property
     def store_names(self) -> tuple[str, ...]:
@@ -96,6 +97,39 @@ class StoreRegistry:
                 **self._engine_options(config.dsn),
             )
         return self._engines[store]
+
+    def readonly_engine(self, store: str) -> Engine:
+        """Eine Engine, über die sich in diesem Store nichts schreiben lässt (§20.1).
+
+        §20.1 verlangt als fünften Guard-Test: "Die MCP-Verbindung auf ``shared`` muss bei jedem
+        Schreibversuch einen Datenbankfehler erzeugen." *Datenbankfehler* ist dabei der Punkt —
+        eine Prüfung im Anwendungscode wäre nur so gut wie der Codepfad, der sie aufruft. Ein
+        lesender Zugang, der auch dann noch lesend ist, wenn jemand ihn falsch benutzt, ist eine
+        Eigenschaft der Verbindung und keine Verabredung.
+
+        Zwei Ausprägungen, je nach Konfiguration:
+
+        * Mit ``readonly_dsn`` meldet sich die Verbindung als eigene Datenbankrolle an, die nur
+          ``SELECT`` darf. Das ist die Form für den Betrieb — sie hält auch dann, wenn der
+          Prozess selbst kompromittiert ist.
+        * Ohne ``readonly_dsn`` wird dieselbe Rolle benutzt, aber mit erzwungenem
+          ``default_transaction_read_only``. Jede schreibende Anweisung scheitert damit in
+          PostgreSQL. Das ist schwächer — wer die Einstellung kennt, kann sie zurücksetzen —,
+          aber es ist ohne jede Einrichtung vorhanden und fängt jeden Irrtum ab.
+
+        Raises:
+            UnknownStoreError: Wenn der Store nicht konfiguriert ist.
+        """
+        if store not in self._readonly:
+            config = self.config_of(store)
+            dsn = config.readonly_dsn or config.dsn
+            optionen: dict[str, Any] = dict(self._engine_options(dsn))
+            if dsn.startswith("postgresql"):
+                connect_args: dict[str, Any] = dict(optionen.get("connect_args", {}))
+                connect_args["options"] = "-c default_transaction_read_only=on"
+                optionen["connect_args"] = connect_args
+            self._readonly[store] = create_engine(dsn, pool_pre_ping=True, future=True, **optionen)
+        return self._readonly[store]
 
     def _engine_options(self, dsn: str) -> dict[str, object]:
         """Engine-Optionen, die vom Datenbank-Dialekt abhängen.
@@ -132,9 +166,10 @@ class StoreRegistry:
 
     def dispose(self) -> None:
         """Schließt alle Verbindungspools. Beim Herunterfahren eines Prozesses aufzurufen."""
-        for engine in self._engines.values():
+        for engine in (*self._engines.values(), *self._readonly.values()):
             engine.dispose()
         self._engines.clear()
+        self._readonly.clear()
 
     def __enter__(self) -> Self:
         return self

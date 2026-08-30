@@ -54,6 +54,14 @@ app.add_typer(sources_app)
 runs_app = typer.Typer(name="runs", help="Läufe einsehen (§7.4, §16.2).", no_args_is_help=True)
 app.add_typer(runs_app)
 
+concepts_app = typer.Typer(
+    name="concepts", help="Konzepte anlegen und ansehen (§7, §17.4).", no_args_is_help=True
+)
+app.add_typer(concepts_app)
+
+graph_app = typer.Typer(name="graph", help="Den Graphen abfragen (§12, §19).", no_args_is_help=True)
+app.add_typer(graph_app)
+
 SourcesFileOption = Annotated[
     Path | None,
     typer.Option("--sources", help="Pfad zu sources.yaml; sonst aus WG_SOURCES_FILE."),
@@ -504,6 +512,203 @@ def runs_show(
             raise typer.Exit(code=2) from exc
 
     typer.echo(json.dumps(run.as_dict(), indent=2, ensure_ascii=False, sort_keys=True))
+
+
+@concepts_app.command("add")
+def concepts_add(
+    concept_id: Annotated[str, typer.Argument(help="Die ID, z. B. 'project:finance'.")],
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    scope: Annotated[str, typer.Option("--scope", help="Scope; bestimmt den Store (§7.3).")] = (
+        defaults.STORE_PERSONAL
+    ),
+    concept_type: Annotated[
+        str, typer.Option("--type", help="Typ aus der Taxonomie (§7.2).")
+    ] = "Project",
+    title: Annotated[str | None, typer.Option("--title")] = None,
+    description: Annotated[str | None, typer.Option("--description")] = None,
+    body: Annotated[
+        str | None, typer.Option("--body", help="Fließtext; '[[id]]' wird zur Kante (§7.1).")
+    ] = None,
+    link: Annotated[
+        list[str] | None,
+        typer.Option("--link", help="Verweis auf ein anderes Konzept; mehrfach angebbar."),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Legt ein Konzept an oder schreibt es fort — der Weg zu einem Brücken-Konzept (§7.3).
+
+    Ein Brücken-Konzept ist nichts Besonderes: ein Konzept vom Typ ``Project`` im Scope
+    ``personal``, das per ``--link`` auf Konzepte des geteilten Stores zeigt. Die Kanten entstehen
+    daraus von selbst, und ihr Zielstore wird gesucht statt behauptet (§12.1).
+
+    Der Akteur ist ``user:cli``: Was von Hand kommt, gilt als kuratiert und wird von keinem Lauf
+    überschrieben (§10.4).
+    """
+    from wissensgraph.domain.concepts import ConceptDraft
+    from wissensgraph.runtime import Runtime
+    from wissensgraph.services.concepts import ConceptValidationError
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    draft = ConceptDraft(
+        id=concept_id,
+        scope=scope,
+        type=concept_type,
+        title=title,
+        description=description,
+        body=body,
+        references=tuple(link or ()),
+        curated=True,
+    )
+
+    with _maschinenlesbar() if as_json else nullcontext():
+        try:
+            with Runtime(settings) as runtime:
+                ergebnis = runtime.concepts.upsert(draft, actor=defaults.ACTOR_CLI)
+        except ConceptValidationError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+
+    if as_json:
+        typer.echo(json.dumps(ergebnis.as_dict(), indent=2, ensure_ascii=False))
+        return
+    typer.echo(
+        f"{_SYMBOLS[CheckStatus.OK]} {ergebnis.concept_id} in '{ergebnis.store}': "
+        f"{ergebnis.outcome}, {len(ergebnis.edges_added)} Kante(n) neu, "
+        f"{len(ergebnis.edges_removed)} entfernt."
+    )
+
+
+@concepts_app.command("show")
+def concepts_show(
+    concept_id: Annotated[str, typer.Argument(help="Die ID des Konzepts.")],
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    store: StoreOption = defaults.STORE_PERSONAL,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Zeigt ein Konzept mit seinen Kanten in **beide** Richtungen (§12.1).
+
+    Die Gegenrichtung einer Brücke steht nicht im Zielstore — der geteilte Store weiß nicht, dass
+    es persönliche Konzepte gibt. Sie wird deshalb aus den anderen Stores rekonstruiert, und genau
+    das macht dieses Kommando sichtbar.
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with _maschinenlesbar() if as_json else nullcontext(), Runtime(settings) as runtime:
+        ansicht = runtime.concepts.describe(concept_id, store=store)
+
+    if ansicht is None:
+        typer.echo(f"Kein Konzept '{concept_id}' im Store '{store}'.", err=True)
+        raise typer.Exit(code=1)
+
+    if as_json:
+        typer.echo(json.dumps(ansicht.as_dict(), indent=2, ensure_ascii=False))
+        return
+
+    concept = ansicht.concept
+    typer.echo(f"{concept.id} ({concept.type}, Scope '{concept.scope}', {concept.status})")
+    typer.echo(f"  Titel: {concept.title or '—'}")
+    typer.echo(f"  ausgehend: {len(ansicht.outgoing)}")
+    for edge in ansicht.outgoing:
+        marke = "" if edge.resolved else "  (nicht auflösbar)"
+        typer.echo(f"       {edge.kind} -> {edge.to_store}:{edge.to_id}{marke}")
+    typer.echo(f"  eingehend: {len(ansicht.incoming)}")
+    for edge in ansicht.incoming:
+        marke = "" if edge.resolved else "  (nicht auflösbar)"
+        typer.echo(f"       {edge.kind} <- {edge.from_store}:{edge.from_id}{marke}")
+
+
+@graph_app.command("traverse")
+def graph_traverse(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    start: Annotated[
+        list[str] | None, typer.Option("--start", help="Startknoten; mehrfach angebbar.")
+    ] = None,
+    store: StoreOption = defaults.STORE_PERSONAL,
+    hops: Annotated[
+        int | None, typer.Option("--hops", help="Tiefe; sonst traversal.default_hops.")
+    ] = None,
+    max_nodes: Annotated[int | None, typer.Option("--max-nodes")] = None,
+    tombstones: Annotated[
+        bool, typer.Option("--tombstones", help="Grabsteine mit anzeigen (§12.3).")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Löst den Kernspace um einen Startknoten auf (§12.1, §19).
+
+    Das Ergebnis ist nach Bewertung sortiert: Nähe, Referenzdichte und Aktualität nach §12.3. Die
+    Zahl der Datenbankabfragen steht mit dabei — sie ist eine zugesicherte Eigenschaft und keine
+    Nebensache (§24, Stufe 6).
+    """
+    from wissensgraph.runtime import Runtime
+    from wissensgraph.services.graph import UnknownStartError
+
+    if not start:
+        typer.echo("Mindestens ein --start angeben.", err=True)
+        raise typer.Exit(code=2)
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with _maschinenlesbar() if as_json else nullcontext():
+        try:
+            with Runtime(settings) as runtime:
+                ergebnis = runtime.graph.traverse(
+                    start,
+                    store=store,
+                    hops=hops,
+                    max_nodes=max_nodes,
+                    include_tombstones=tombstones,
+                )
+        except UnknownStartError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+    if as_json:
+        typer.echo(json.dumps(ergebnis.as_dict(), indent=2, ensure_ascii=False))
+        return
+
+    typer.echo(
+        f"{len(ergebnis.nodes)} Knoten, {len(ergebnis.edges)} Kanten, {ergebnis.hops} Hops, "
+        f"{ergebnis.queries} Abfrage(n)" + (", gedeckelt" if ergebnis.truncated else "")
+    )
+    for node in ergebnis.nodes:
+        typer.echo(
+            f"  {node.score:6.3f}  {node.hops} Hop(s), Dichte {node.density:3d}  "
+            f"{node.store}:{node.concept.id} — {node.concept.title or '—'}"
+        )
+
+
+@graph_app.command("search")
+def graph_search(
+    query: Annotated[str, typer.Argument(help="Suchbegriff.")],
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    store: StoreOption = defaults.STORE_SHARED,
+    limit: Annotated[int, typer.Option("--limit")] = defaults.SEARCH_LIMIT,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Lexikalische Suche über Volltext und Trigramm (§12.4).
+
+    Solange es keine Embeddings gibt, ist das der einzige Modus — und er steht im Ergebnis. Ein
+    stiller Qualitätsverlust wäre die schlechtere Variante.
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with _maschinenlesbar() if as_json else nullcontext(), Runtime(settings) as runtime:
+        ergebnis = runtime.graph.search(query, store=store, limit=limit)
+
+    if as_json:
+        typer.echo(json.dumps(ergebnis.as_dict(), indent=2, ensure_ascii=False))
+        return
+    typer.echo(f"{len(ergebnis.hits)} Treffer (Modus '{ergebnis.mode}'):")
+    for hit in ergebnis.hits:
+        typer.echo(
+            f"  {hit.score:6.4f}  {hit.concept.id} ({hit.concept.type}) — "
+            f"{hit.concept.title or '—'}"
+        )
 
 
 @app.command("worker")

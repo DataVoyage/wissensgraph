@@ -15,7 +15,8 @@ Testbarkeit:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol, Self, runtime_checkable
 
@@ -23,6 +24,19 @@ from wissensgraph.domain.changes import ChangeEntry
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import Edge, EdgeDraft
 from wissensgraph.ports.runs import RunRepository, SourceCursorRepository
+
+
+@dataclass(frozen=True)
+class LexicalHit:
+    """Ein Treffer der lexikalischen Suche (§12.4).
+
+    Der Wert ist ein *Rang* und kein Maß: Volltextrang und Trigrammähnlichkeit sind zwei Skalen,
+    die sich nicht sinnvoll addieren lassen. Die Zusammenführung geschieht deshalb über die
+    Plätze (Reciprocal Rank Fusion, §12.4), und was hier steht, ist deren Ergebnis.
+    """
+
+    concept: Concept
+    score: float
 
 
 @runtime_checkable
@@ -50,6 +64,37 @@ class ConceptRepository(Protocol):
         dreißig Verweisen soll nicht dreißig Roundtrips auslösen.
         """
 
+    def resolvable_ids(self, concept_ids: Sequence[str]) -> frozenset[str]:
+        """Welche der angefragten IDs hier liegen **und keine Grabsteine** sind (§7.6).
+
+        Der Unterschied zu :meth:`existing_ids` ist der Grabstein. §7.6 sagt für ein in der
+        Quelle gelöschtes Objekt: "Kanten bleiben bestehen und werden als ``resolved = false``
+        markiert." Eine Kante auf einen Grabstein ist also weiterhin da und weiterhin sichtbar —
+        sie führt nur nicht mehr zu etwas Auffindbarem. Genau das ist die Aussage von
+        ``resolved``.
+
+        Wird das Objekt in der Quelle wiederhergestellt, wird die Kante beim nächsten Abgleich
+        von selbst wieder auflösbar. Es braucht dafür keine gespeicherte Erinnerung daran, dass
+        sie es einmal war.
+        """
+
+    def get_many(self, concept_ids: Sequence[str]) -> tuple[Concept, ...]:
+        """Mehrere Konzepte in einer Abfrage — der Batch-Load eines Traversierungs-Hops (§12.1).
+
+        §12.1 verlangt "je Zielstore ein Batch-Load der Konzepte (ein Query pro Store und Hop)".
+        Ohne diese Methode entstünde je Knoten eine Abfrage, und die Store-Trennung würde teuer
+        aussehen, obwohl sie es nicht ist.
+        """
+
+    def search_lexical(self, query: str, *, limit: int) -> tuple[LexicalHit, ...]:
+        """Lexikalische Suche über Volltext und Trigramm (§12.4).
+
+        Der Fallback, der immer verfügbar ist: Er braucht kein Embedding-Modell und funktioniert
+        deshalb auch im ``personal``-Store ohne lokalen Modellserver (§11.5). Ein stiller
+        Qualitätsverlust wäre die schlechtere Variante — der Aufrufer erfährt, dass er lexikalisch
+        gesucht hat.
+        """
+
     def save(self, concept: Concept) -> None:
         """Legt ein Konzept an oder überschreibt es vollständig.
 
@@ -72,6 +117,31 @@ class EdgeRepository(Protocol):
 
     def list_outgoing(self, concept_id: str) -> tuple[Edge, ...]:
         """Alle von einem Konzept ausgehenden Kanten."""
+
+    def list_incoming(self, concept_id: str) -> tuple[Edge, ...]:
+        """Alle auf ein Konzept zeigenden Kanten, die in *diesem* Store liegen.
+
+        Die Kanten aus einem anderen Store sind damit nicht erfasst: Eine Notiz in ``personal``,
+        die auf eine Confluence-Seite in ``shared`` zeigt, ist im geteilten Store nicht sichtbar
+        und soll es nach §12.1 auch nicht sein. Die Gegenrichtung liefert
+        :meth:`bridges_into`, aufgerufen auf dem Repository des *persönlichen* Stores.
+        """
+
+    def neighbourhood(self, concept_ids: Sequence[str]) -> tuple[Edge, ...]:
+        """Alle Kanten dieses Stores, die eine der IDs berühren — ein- und ausgehend.
+
+        Der Kantenschritt eines Traversierungs-Hops (§12.1, Schritt 2) in *einer* Abfrage für die
+        gesamte Front statt einer je Knoten.
+        """
+
+    def bridges_into(self, *, to_store: str, to_ids: Sequence[str]) -> tuple[Edge, ...]:
+        """Kanten aus diesem Store, die auf Konzepte eines anderen Stores zeigen.
+
+        Damit wird die Rückrichtung einer Brücke rekonstruiert (§12.1): "Der geteilte Store weiß
+        nicht, dass es persönliche Konzepte gibt. Die Rückrichtung wird beim Traversieren aus dem
+        personal-Store rekonstruiert." Wer wissen will, welche persönlichen Notizen auf eine
+        geteilte Seite zeigen, fragt also nicht den geteilten Store — er fragt den persönlichen.
+        """
 
     def replace_generated(
         self, *, from_id: str, generated_by: Sequence[str], drafts: Sequence[EdgeDraft]
@@ -97,15 +167,65 @@ class EdgeRepository(Protocol):
         """
 
     def refresh_resolution(self) -> int:
-        """Prüft ungelöste Kanten erneut und setzt ``resolved``, wo das Ziel inzwischen da ist.
+        """Gleicht ``resolved`` für alle Kanten *innerhalb* dieses Stores mit der Wirklichkeit ab.
 
         §8.5: "Zeigt eine Referenz auf ein noch nicht synchronisiertes Objekt, wird die Kante mit
         ``resolved = false`` angelegt und bei jedem Lauf erneut geprüft." Der Schritt steht
         absichtlich neben der Kernoperation: Er hängt nicht am Inhalt eines einzelnen Konzepts
         und darf deshalb auch dann laufen, wenn kein Hash sich geändert hat (§10.2 Regel 3).
 
+        Der Abgleich geht in **beide** Richtungen. Ein Ziel kann verschwinden — nicht durch ein
+        ``DELETE``, das es nicht gibt, sondern durch einen Grabstein (§7.6: "Kanten bleiben
+        bestehen und werden als ``resolved = false`` markiert"). Eine Prüfung, die nur auflöst und
+        nie zurücknimmt, behauptete nach der ersten Löschung dauerhaft das Gegenteil.
+
         Returns:
-            Die Anzahl der Kanten, die dadurch auflösbar wurden.
+            Die Anzahl der Kanten, deren ``resolved`` sich dadurch geändert hat.
+        """
+
+    def foreign_targets(self) -> Mapping[str, frozenset[str]]:
+        """Die Ziele aller Brückenkanten dieses Stores, gruppiert nach Zielstore (§12.1).
+
+        Der erste Schritt der store-übergreifenden Auflösung: Erst wird gefragt, *wohin* dieser
+        Store überhaupt zeigt, dann wird je fremdem Store einmal nachgesehen. Über die Grenze
+        hinweg gibt es keinen Join — die Reihenfolge ist der Ersatz dafür.
+        """
+
+    def unresolved_targets(self) -> frozenset[str]:
+        """Die Ziel-IDs aller noch nicht aufgelösten Kanten dieses Stores.
+
+        Sie sind die offene Frage des Graphen: Verweise auf etwas, das es beim letzten Versuch
+        nicht gab. Wo dieses Etwas einmal liegen wird, weiß beim Anlegen niemand — deshalb steht
+        in ``to_store`` zunächst der eigene Store (§8.5).
+        """
+
+    def attach_to_store(self, *, to_store: str, to_ids: frozenset[str]) -> int:
+        """Hängt unaufgelöste Kanten an den fremden Store, in dem ihr Ziel aufgetaucht ist.
+
+        Der Schritt, ohne den eine Brücke nie zustande käme, die *vor* ihrem Ziel entstand — der
+        Normalfall, wenn jemand eine Notiz schreibt, bevor die Quelle das erste Mal lief. Eine
+        unaufgelöste Kante hat über ihren Zielstore nie etwas behauptet; ihn jetzt zu setzen
+        nimmt also nichts zurück, sondern beantwortet die offene Frage.
+
+        Gibt es zu demselben Ausgangspunkt bereits eine Kante mit dem neuen Tripel, bleibt die
+        unaufgelöste stehen: Zwei gleiche Tripel lässt ``ux_edges_triple`` (§7.4) ohnehin nicht zu,
+        und die bestehende ist die aussagekräftigere.
+
+        Returns:
+            Die Anzahl der umgehängten Kanten.
+        """
+
+    def set_foreign_resolution(self, *, to_store: str, resolvable: frozenset[str]) -> int:
+        """Setzt ``resolved`` für alle Brückenkanten in einen bestimmten fremden Store.
+
+        Args:
+            to_store: Der Zielstore, um dessen Kanten es geht.
+            resolvable: Die dort tatsächlich auffindbaren IDs. Eine Kante, deren Ziel nicht
+                darunter ist, wird auf ``resolved = false`` gesetzt — auch wenn sie es vorher
+                war.
+
+        Returns:
+            Die Anzahl der Kanten, deren ``resolved`` sich dadurch geändert hat.
         """
 
 

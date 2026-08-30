@@ -331,6 +331,50 @@ class TestRuns:
         assert "keine gültige Lauf-ID" in result.output
 
 
+class TestConcepts:
+    """``wg concepts`` — der Weg zu einem Brücken-Konzept (§7.3, §17.4)."""
+
+    def test_ein_unbekannter_typ_bricht_vor_jeder_datenbank_ab(self, config_file: Path) -> None:
+        """Die Taxonomie ist Konfiguration (§7.2); ein Tippfehler darin ist kein Laufzeitfehler."""
+        result = invoke(
+            "concepts",
+            "add",
+            "project:finance",
+            "--config",
+            str(config_file),
+            "--type",
+            "Projekt",
+        )
+
+        assert result.exit_code == 2
+        assert "unbekannten Typ" in result.output
+
+    def test_ein_typ_im_falschen_store_wird_abgewiesen(self, config_file: Path) -> None:
+        """Ein ``Project`` gehört nach ``personal`` — der Scope entscheidet den Store (§7.2)."""
+        result = invoke(
+            "concepts",
+            "add",
+            "project:finance",
+            "--config",
+            str(config_file),
+            "--scope",
+            "engineering",
+        )
+
+        assert result.exit_code == 2
+        assert "nicht zugelassen" in result.output
+
+
+class TestGraph:
+    """``wg graph`` (§12, §19)."""
+
+    def test_ohne_startknoten_bricht_die_traversierung_ab(self, config_file: Path) -> None:
+        result = invoke("graph", "traverse", "--config", str(config_file))
+
+        assert result.exit_code == 2
+        assert "--start" in result.output
+
+
 class TestWorker:
     """``wg worker`` (§5.1, §16.3)."""
 

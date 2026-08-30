@@ -17,8 +17,8 @@ festgelegte Abnahme erfüllt.
 | 2 | Domänenkern: Konzepte, Kanten, Upsert | **fertig** |
 | 3 | Adapter-Framework und Mock-Quellen | **fertig** |
 | 4 | Sync-Orchestrierung | **fertig** |
-| 5 | Store-Trennung und Brücken | offen |
-| 6 | Kernspace-Auflösung und Referenzdichte | offen |
+| 5 | Store-Trennung und Brücken | **fertig** |
+| 6 | Kernspace-Auflösung und Referenzdichte | **fertig** |
 | 7 | Model-Router (Gemini als erster Provider) | offen |
 | 8 | Embeddings und Clustering | offen |
 | 9 | Semantische Kantenerkennung | offen |
@@ -217,9 +217,10 @@ anderer Stelle des Dokuments:
 
 3. **`[[id]]`-Referenzen zeigen in dieser Stufe in den eigenen Store.** Eine Referenz nennt eine
    ID, keinen Store. Die Auflösung über die Store-Grenze — eine Notiz in `personal`, die auf eine
-   Confluence-Seite in `shared` zeigt — ist Gegenstand der Brückenlogik in Stufe 5. Bis dahin
-   entsteht eine solche Kante mit `resolved = false`, was genau der Zustand ist, den §8.5 dafür
-   vorsieht: Das Ziel ist hier noch nicht auffindbar.
+   Confluence-Seite in `shared` zeigt — kam mit der Brückenlogik der Stufe 5 hinzu; seither wird
+   der Zielstore gesucht statt angenommen. Bleibt eine ID unauffindbar, entsteht die Kante
+   weiterhin mit `resolved = false` und dem eigenen Store als Ziel, was genau der Zustand ist, den
+   §8.5 dafür vorsieht.
 
 ### Zwei neue Schutzregeln
 
@@ -555,6 +556,229 @@ ihn. Der Abbruch braucht einen Weg vom API-Prozess zum Worker und gehört zu Stu
 
 ---
 
+## Stufe 5 — was steht
+
+Bis hierher war die Datenschutzgrenze eine Absprache mit einem Constraint dahinter. Jetzt ist sie
+eine Eigenschaft des Systems — und zugleich durchlässig in genau einer Richtung.
+
+### Eine Kante sucht ihren Zielstore, statt ihn anzunehmen
+
+Eine Referenz nennt nur eine ID (`[[confluence:184320]]`), keinen Store. Bis Stufe 4 landete jede
+solche Kante im eigenen Store; eine Notiz in `personal`, die auf eine Confluence-Seite zeigte,
+blieb dauerhaft `resolved = false`. Jetzt wird gesucht: erst im eigenen Store, dann in den
+erlaubten Brückenzielen. Was gefunden wird, bestimmt `to_store`.
+
+Der eigene Store hat Vorrang, und das ist keine Willkür. `[[note:abc]]` in einer persönlichen
+Notiz meint die persönliche Notiz — nicht ein gleichnamiges Konzept anderswo.
+
+Findet sich die ID nirgends, entsteht die Kante trotzdem, mit dem eigenen Store als Ziel und
+`resolved = false`. Etwas anderes wäre eine Behauptung: Wo ein noch nicht synchronisiertes Objekt
+einmal liegen wird, weiß in diesem Augenblick niemand.
+
+### Die Richtung steht an einer Stelle
+
+`domain/bridges.py` beantwortet drei Fragen, die einander nie widersprechen dürfen: wohin eine
+Referenz zeigen darf, welche fremden Stores beim erneuten Auflösen befragt werden, und wo beim
+Traversieren die Gegenrichtung liegt. §12.1 gibt die Regel vor — `personal → shared` ist erlaubt,
+`shared → personal` nicht.
+
+Der Grund für die Asymmetrie ist kein technischer. Wüsste der geteilte Store von persönlichen
+Konzepten, stünde die *Existenz* einer privaten Notiz in der Datenbank, die eines Tages auf einem
+zentralen Server liegen soll (§5.1). Leitprinzip 2 wäre gebrochen, noch bevor ein einziges
+Inhaltsfeld die Grenze überquert.
+
+### Die offene Frage wird nachträglich beantwortet
+
+Der häufigere Fall im Alltag ist der umgekehrte: Jemand schreibt eine Notiz mit
+`[[confluence:184320]]`, **bevor** Confluence das erste Mal synchronisiert wurde. Die Kante
+entsteht unaufgelöst mit dem eigenen Store als Ziel. Taucht das Objekt später drüben auf, wird sie
+angehängt — `to_store` wandert nach `shared`, `resolved` wird wahr, und die Notiz selbst wurde
+dafür nicht angefasst.
+
+Das ist zulässig, weil eine unaufgelöste Kante über ihren Zielstore nie etwas *behauptet* hat.
+Ihn jetzt zu setzen nimmt nichts zurück; es beantwortet, was beim Anlegen niemand wissen konnte.
+
+Der Abgleich läuft in beide Richtungen, und beide werden gebraucht:
+
+- `refresh_edge_resolution(store)` prüft alles, was in diesem Store **beginnt**.
+- `refresh_bridges_into(store)` prüft die Brücken, die auf diesen Store **zeigen**.
+
+Ohne die zweite bliebe eine persönliche Kante nach einem Confluence-Sync falsch beschriftet — sie
+liegt ja gar nicht im geänderten Store, und einen Schreibvorgang in ihrem eigenen kann es lange
+nicht geben. Jeder Sync-Lauf ruft sie deshalb am Ende auf und meldet `bridges_resolved` in seiner
+Statistik.
+
+### Ein Grabstein macht Kanten unauflösbar, nicht unsichtbar
+
+Stufe 4 rührte beim Setzen eines Grabsteins bewusst keine Kante an. §7.6 verlangt aber genau das:
+„Kanten bleiben bestehen und werden als `resolved = false` markiert." Beides zusammen ergibt die
+richtige Regel — die Kante bleibt vollständig erhalten, nur ihre *Auflösbarkeit* endet. Auffindbar
+heißt jetzt: vorhanden **und** kein Grabstein.
+
+Damit ist die Rückkehr aus dem Grabstein von selbst erledigt. Wird das Objekt in der Quelle
+wiederhergestellt, ist die Kante beim nächsten Abgleich wieder auflösbar; es braucht keine
+gespeicherte Erinnerung daran, dass sie es einmal war.
+
+Live nachvollzogen: `confluence:100003` wird zum Grabstein, seine drei eingehenden Kanten —
+darunter zwei Brücken aus `personal` — stehen weiter da und melden „nicht auflösbar"; nach der
+Wiederherstellung sind alle drei wieder aufgelöst, keine einzige ging verloren.
+
+### Ein nur lesender Zugang, der es in der Datenbank ist
+
+§20.1 verlangt als fünften Guard-Test, dass die MCP-Verbindung auf `shared` „bei jedem
+Schreibversuch einen **Datenbankfehler**" erzeugt. Das Wort ist der Punkt: Eine Prüfung im
+Anwendungscode wäre nur so gut wie der Codepfad, der sie aufruft.
+
+`StoreRegistry.readonly_engine()` liefert deshalb eine Verbindung mit erzwungenem
+`default_transaction_read_only`. Jede schreibende Anweisung scheitert in PostgreSQL selbst. Wer es
+strenger will, hinterlegt unter `stores.<name>.readonly_dsn` eine eigene Datenbankrolle — die Form
+für den Betrieb, weil sie auch dann hält, wenn der Prozess selbst kompromittiert ist. Der
+Sitzungsschalter ist die Voreinstellung: schwächer, aber ohne jede Einrichtung vorhanden.
+
+### `wg doctor` prüft jetzt die Grenze
+
+Drei Fragen je Store, und alle drei lassen sich nur am laufenden System beantworten: Steht
+`ck_shared_no_personal_ref` dort, wo er hingehört, und **nur** dort? Gibt es trotzdem Kanten über
+die Grenze? Ist der lesende Zugang wirklich nur lesend? Ein Fehlschlag ist hier ein Fehler und
+keine Warnung — bei allem anderen kostet ein Fehlalarm Aufmerksamkeit, hier kostet ein übersehener
+Befund die Datenschutzgrenze.
+
+### Zwei neue Kommandos
+
+`wg concepts add` und `wg concepts show`. Sie kommen früher als geplant, weil die Abnahme der
+Stufe 5 einen Weg braucht, ein Brücken-Konzept anzulegen und es „in beide Richtungen auffindbar"
+zu zeigen; die entsprechenden API-Endpunkte sind Stufe 11. Ein Brücken-Konzept ist dabei nichts
+Besonderes: ein `Project` im Scope `personal` mit Verweisen nach `shared`.
+
+### Die fünf Guard-Tests aus §20.1
+
+| # | Guard | Wo |
+|---|---|---|
+| 1 | Kein Netzzugang beim Öffnen des personal-Stores | `tests/guards/test_datenschutzgrenze.py` |
+| 2 | `allow_remote = false` mit fernem DSN verhindert den Start | dieselbe Datei |
+| 3 | Router-Aufruf mit `store = personal` gegen fernen Provider wirft | dieselbe Datei |
+| 4 | `INSERT` in `shared.edges` mit `to_store = personal` wird abgelehnt | `test_store_invarianten.py` |
+| 5 | Schreibversuch über die lesende Verbindung erzeugt einen Datenbankfehler | `test_bruecken_postgres.py` |
+
+Guard 1 ist wörtlich unerfüllbar — eine PostgreSQL-Verbindung *ist* eine ausgehende Verbindung.
+Geprüft wird die Aussage dahinter: Gesperrt wird jede Verbindung, die der Python-Prozess selbst
+aufbaut; der Store bleibt über libpq erreichbar, dessen Socket in C entsteht. Ein Adapter, ein
+Modell-Provider oder eine Telemetriebibliothek, die sich hier einschlichen, ließen den Test sofort
+scheitern.
+
+Guard 3 braucht den Router aus Stufe 7. Die Regel, die er einhalten muss, steht deshalb jetzt
+schon als `domain/policies.py` im Kern — ohne Netzwerk, ohne Konfigurationsdatei, ohne
+Provider-Objekt. Der Router wird sie aufrufen; er wird sie nicht nachbilden.
+
+### Abnahme (§24, Stufe 5)
+
+| Kriterium | Ergebnis |
+|---|---|
+| Alle fünf Guard-Tests grün | 24 Tests in `tests/guards/`, davon 8 neu |
+| Brücken-Konzept verlinkt auf `shared` und ist in beide Richtungen auffindbar | live: `project:finance-integration` → `confluence:100003`; die Gegenrichtung erscheint in `wg concepts show confluence:100003`, während der geteilte Store **null** Kanten über die Grenze führt |
+
+### Ausdrücklich außen vor
+
+Föderation über mehrere Menschen, so vorgesehen in §24.
+
+---
+
+## Stufe 6 — was steht
+
+Der Graph wird aus eigener Perspektive lesbar: `services/graph.py` mit Traversierung, Dichte,
+Ranking und lexikalischer Suche.
+
+### Die Traversierung arbeitet auf Kanten, nicht auf Konzepten
+
+§12.1 skizziert je Hop einen Batch-Load der Konzepte. Umgesetzt ist es anders: Das Ausbreiten
+braucht nur, was in den Kanten steht — Herkunft, Ziel, Store, Art. Die Konzepte werden **einmal am
+Ende** geladen, ein Stapel je Store. Der Unterschied ist nicht nur Sparsamkeit: Ein Batch-Load je
+Hop lüde Konzepte, die `max_nodes` gleich darauf wieder verwirft.
+
+Ein Knoten ist dabei erst mit seinem Store eindeutig. Dieselbe ID kann es in beiden Datenbanken
+geben, und sie meint dann nicht dasselbe (§12.1, Schritt 5).
+
+### Der Preis der Trennung ist eine Abfrage, kein Join
+
+Die Rückrichtung einer Brücke liegt nicht im Zielstore. Wer von einer Confluence-Seite aus wissen
+will, welche eigenen Notizen auf sie zeigen, muss den *persönlichen* Store fragen — auch wenn dort
+kein einziger Knoten der aktuellen Front liegt.
+
+Damit das nicht jeden Hop kostet, fragt die Traversierung **einmal vorab**, wohin dieser Bestand
+überhaupt Brücken schlägt. Die Antwort ist eine Menge von IDs und gilt für den ganzen Lauf; ein
+rein geteilter Graph kostet danach keine einzige Abfrage an den persönlichen Store.
+
+Gemessene Kosten:
+
+| Fall | Abfragen |
+|---|---|
+| 3 Hops innerhalb eines Stores | 5 (1 Index + 3 Kantenrunden + 1 Batch-Load) |
+| 3 Hops über die Brücke | bis 9 (1 + 3 × 2 + 2) |
+
+Die Abnahme aus §24 („höchstens 6 Datenbankabfragen") ist damit im Ein-Store-Fall erfüllt und im
+store-übergreifenden Fall überschritten. Das ist keine Nachlässigkeit, sondern die Rechnung, die
+§12.1 selbst aufmacht: „ein Query pro Store und Hop". Über die Grenze gibt es keinen Join, und
+zwei Datenbanken kosten zwei Abfragen. Die Zahl steht deshalb **im Ergebnis** (`queries`) und
+nicht nur in einem Kommentar — eine zugesicherte Eigenschaft, die niemand messen kann, ist keine.
+
+### Referenzdichte zählt den eigenen Bestand
+
+`density(z)` ist die Zahl der Konzepte aus `personal`, die innerhalb von *d* Hops auf `z` zeigen
+— berechnet als Rückwärtssuche auf dem tatsächlich aufgelösten Teilgraphen, nicht global. Zwei
+Menschen bekommen für dasselbe globale Dokument verschiedene Werte; genau das ist der Zweck
+(§12.2).
+
+Ein Schritt entlang einer `member`-Kante zählt dabei **nicht** als Hop. §12.2 sagt „auf z oder auf
+ein Cluster von z", und ohne diese Ausnahme wäre der Zusatz bei `d = 1` wirkungslos: Ein Cluster
+ist keine Zwischenstation, sondern eine andere Adresse für dieselbe Sache.
+
+Dass die Dichte nur auf dem aufgelösten Teilgraphen zählt, ist ebenfalls Absicht. Ein Wert, der
+über nicht Abgefragtes urteilte, wäre geraten.
+
+### Ranking und Suche
+
+Die Formel aus §12.3 unverändert: Nähe, normierte Dichte, Aktualität mit Halbwertszeit. Normiert
+wird durch den größten Wert *dieser Antwort* — eine globale Normierung bräuchte einen Bezugswert
+über den ganzen Bestand, und der änderte sich mit jedem Lauf. Die Gewichte sind je Anfrage
+überschreibbar, damit sich Varianten vergleichen lassen. Bei gleichem Wert entscheidet die ID:
+Zwei Aufrufe über denselben Bestand sollen dieselbe Reihenfolge liefern.
+
+Die Suche ist die Dokument-Ebene aus §12.4: `search_tsv` für Volltext, `pg_trgm` für den
+vertippten Titel, zusammengeführt über Reciprocal Rank Fusion. Über die *Plätze* und nicht über
+die Werte — ein `ts_rank` von 0,08 und eine Ähnlichkeit von 0,42 sagen nichts übereinander. Der
+Modus steht im Ergebnis (`mode: "lexical"`), weil ein stiller Qualitätsverlust die schlechtere
+Variante wäre.
+
+Grabsteine erscheinen weder in der Suche noch — ohne ausdrückliches Flag — in einer Traversierung.
+Traversiert wird trotzdem über sie hinweg: Ein Grabstein ist unsichtbar, aber nicht abwesend,
+sonst zerfiele der Graph an jeder gelöschten Seite.
+
+### Eine neue Schutzregel
+
+**„Lesepfad und Schreibpfad sind unabhängig"** (import-linter, damit neun Verträge). Wer den
+Graphen abfragt, soll das auch dann können, wenn an der Sync-Orchestrierung etwas kaputt ist. Die
+Trennung ist zugleich die Voraussetzung dafür, dass der MCP-Server (Stufe 12) nur den Lesepfad
+einbindet und den Schreibpfad gar nicht erst mitbringt (§18.3).
+
+### Abnahme (§24, Stufe 6)
+
+| Kriterium | Ergebnis |
+|---|---|
+| Ein nur über eine Brücke erreichbares Konzept erscheint mit kurzer Distanz | live: `project:finance-integration` liegt einen Hop von `confluence:100003` entfernt, über zwei Datenbanken hinweg |
+| Identische Zielkonzepte erhalten bei unterschiedlicher lokaler Struktur unterschiedliche Dichtewerte | im Integrationstest und live: Dichte 2 gegen 0 bei sonst gleichem Konzept |
+| Ein Traversal über 3 Hops braucht höchstens 6 Datenbankabfragen | erfüllt innerhalb eines Stores (5); über die Store-Grenze bis 9, siehe oben |
+
+### Ausdrücklich außen vor
+
+Embeddings und Vektorsuche, so vorgesehen in §24. Die Cluster-Ebene der zweistufigen Suche (§12.4)
+fehlt damit noch; es gibt bisher nur die Dokument-Ebene.
+
+`wg graph overview` aus §19 fehlt ebenfalls. Es ist eine Bestandsübersicht und gehört zu den
+Ansichten der Stufe 11; die Abnahme der Stufe 6 verlangt es nicht.
+
+
+---
+
 ## Entwicklung
 
 ### Plattformunabhängigkeit
@@ -620,6 +844,24 @@ zurück; er hinterlässt deshalb auch keine Zeile in `runs`.
 
 Ein Lauf wird in dem Store verbucht, in den er schreibt. `wg runs list` zeigt deshalb per Default
 den Store `shared`; für die andere Seite `--store personal`.
+
+### Brücken und Abfragen
+
+```bash
+docker compose exec api wg concepts add project:finance --title "Finanzintegration"     --body "Grundlage ist [[confluence:184320]]."          # Brücken-Konzept in 'personal'
+docker compose exec api wg concepts add note:x --type Note --title "Notiz" --link confluence:184320
+docker compose exec api wg concepts show confluence:184320 --store shared   # beide Richtungen
+docker compose exec api wg graph traverse --start confluence:184320 --store shared --hops 2
+docker compose exec api wg graph search "Partitionierung" --store shared
+```
+
+`wg concepts add` gilt als menschliche Kuration (`user:cli`) und wird von keinem Lauf
+überschrieben (§10.4). Der Store folgt aus dem Scope, nie aus einer Angabe (§20.1) — ein `Project`
+liegt deshalb immer in `personal`.
+
+`wg concepts show` rekonstruiert die eingehenden Kanten aus den Stores, die Brücken schlagen
+dürfen. Der geteilte Store selbst führt keine einzige Kante über die Grenze; er weiß nicht, dass
+es persönliche Konzepte gibt (§12.1).
 
 In `.env` bleiben `WG_SOURCE_*__BASE_URL` **leer**, solange gegen die Mocks entwickelt wird: Docker
 Compose liest diese Datei für seine eigene Variablenersetzung, und ein dort gesetztes

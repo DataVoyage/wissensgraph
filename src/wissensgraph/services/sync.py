@@ -310,6 +310,7 @@ class SyncService:
 
         # Erst nach dem vollständigen Durchlauf, und nie im Trockenlauf (§22.3).
         if not request.dry_run:
+            stats["bridges_resolved"] = self._bruecken_aufloesen(store)
             self._cursor_speichern(cfg.name, bericht.cursor, request=request, store=store)
 
         return self._lauf_abschliessen(run, stats, store=store, dry_run=request.dry_run)
@@ -331,7 +332,7 @@ class SyncService:
 
         einheit = self._unit_of_work(store)
         with einheit:
-            fabrik = _Probelauf(einheit, store)
+            fabrik = _Probelauf(einheit, store, self._unit_of_work)
             try:
                 yield fabrik
             finally:
@@ -370,6 +371,21 @@ class SyncService:
         if anzahl:
             _log.info("lauf.loeschungen", run_id=str(run.id), source=cfg.name, count=anzahl)
         return anzahl
+
+    def _bruecken_aufloesen(self, store: str) -> int:
+        """Prüft die Brücken, die auf den soeben veränderten Store zeigen (§12.1).
+
+        Ein Sync speist immer nur einen Store. Die Kanten, die dadurch auflösbar werden oder es
+        aufhören zu sein, liegen aber womöglich im anderen: Eine persönliche Notiz zeigt auf eine
+        Confluence-Seite, die es jetzt erst gibt — oder die gerade zum Grabstein wurde. Ohne
+        diesen Schritt bliebe sie bis zum nächsten Schreibvorgang *in ihrem eigenen* Store falsch
+        beschriftet, und den kann es lange nicht geben.
+
+        Der Schritt läuft außerhalb der Arbeitseinheit des Laufs, weil er einen anderen Store
+        betrifft, und nie im Trockenlauf: Dessen Rückrollen umfasst genau eine Transaktion.
+        """
+        concepts = ConceptService(self._settings, self._unit_of_work, clock=self._clock)
+        return concepts.refresh_bridges_into(store)
 
     def _cursor_laden(self, source: str, *, store: str) -> Cursor | None:
         """Der gespeicherte Stand einer Quelle; ``None`` heißt "noch nie gelaufen"."""
@@ -439,16 +455,21 @@ class _Probelauf:
     Schreibpfad umgeht, könnte über ihn nichts sagen.
     """
 
-    def __init__(self, einheit: UnitOfWork, store: str) -> None:
+    def __init__(self, einheit: UnitOfWork, store: str, echte: UnitOfWorkFactory) -> None:
         self._einheit = einheit
         self._store = store
+        self._echte = echte
 
-    def __call__(self, store: str) -> Self:
+    def __call__(self, store: str) -> Any:
+        """Der eigene Store als stillgelegte Einheit; jeder andere als gewöhnliche Einheit.
+
+        Ein fremder Store wird während eines Laufs nur *gelesen*: Die Auflösung einer Referenz
+        über die Grenze fragt, welche IDs dort auffindbar sind (§12.1). Diese Frage muss auch ein
+        Trockenlauf stellen dürfen, sonst sagte er über eine Notiz mit Brücken nichts aus.
+        Geschrieben wird ausschließlich in den einen Store, dessen Transaktion am Ende zurückgeht.
+        """
         if store != self._store:
-            raise ValueError(
-                f"Ein Trockenlauf umfasst genau einen Store. Angefragt wurde '{store}', "
-                f"offen ist '{self._store}'."
-            )
+            return self._echte(store)
         return self
 
     # Die Arbeitseinheit selbst wird durchgereicht; nur ihr Lebenszyklus ist stillgelegt.

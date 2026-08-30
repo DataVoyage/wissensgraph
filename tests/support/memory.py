@@ -21,9 +21,10 @@ from typing import Self
 from uuid import UUID
 
 from wissensgraph.domain.changes import CONFLICT_SOURCE_HASH_KEY, ChangeEntry, ChangeType
-from wissensgraph.domain.concepts import Concept
+from wissensgraph.domain.concepts import Concept, ConceptStatus
 from wissensgraph.domain.edges import Edge, EdgeDraft, new_edge_id
 from wissensgraph.domain.runs import Run, RunKind
+from wissensgraph.ports.repositories import LexicalHit
 from wissensgraph.ports.runs import SourceBusy, SourceCursorState
 from wissensgraph.ports.sources import Cursor
 
@@ -63,6 +64,43 @@ class MemoryConceptRepository:
     def existing_ids(self, concept_ids: Sequence[str]) -> frozenset[str]:
         return frozenset(item for item in concept_ids if item in self._state.concepts)
 
+    def resolvable_ids(self, concept_ids: Sequence[str]) -> frozenset[str]:
+        return frozenset(
+            item
+            for item in concept_ids
+            if item in self._state.concepts
+            and self._state.concepts[item].status is not ConceptStatus.TOMBSTONE
+        )
+
+    def get_many(self, concept_ids: Sequence[str]) -> tuple[Concept, ...]:
+        return tuple(
+            self._state.concepts[item] for item in concept_ids if item in self._state.concepts
+        )
+
+    def search_lexical(self, query: str, *, limit: int) -> tuple[LexicalHit, ...]:
+        """Eine bewusst grobe Nachbildung: Teilzeichenkette statt Volltext und Trigramm.
+
+        Was sich damit prüfen lässt, ist der Vertrag — Grabsteine bleiben draußen, die Zahl der
+        Treffer ist begrenzt, die Reihenfolge ist stabil. Was PostgreSQL daraus macht, prüft der
+        Integrationstest; ein Fake, der ``ts_rank`` nachzubauen versuchte, prüfte am Ende nur
+        seine eigene Nachbildung.
+        """
+        begriff = query.strip().casefold()
+        if not begriff:
+            return ()
+        treffer = [
+            concept
+            for concept in self._state.concepts.values()
+            if concept.status is not ConceptStatus.TOMBSTONE
+            and begriff
+            in " ".join(filter(None, (concept.title, concept.description, concept.body))).casefold()
+        ]
+        treffer.sort(key=lambda concept: concept.id)
+        return tuple(
+            LexicalHit(concept=concept, score=1.0 / (1 + rang))
+            for rang, concept in enumerate(treffer[:limit])
+        )
+
     def save(self, concept: Concept) -> None:
         if concept.store != self._store:
             raise ValueError(
@@ -92,6 +130,79 @@ class MemoryEdgeRepository:
             for edge in self._state.edges
             if edge.from_store == self._store and edge.from_id == concept_id
         )
+
+    def list_incoming(self, concept_id: str) -> tuple[Edge, ...]:
+        return tuple(
+            edge
+            for edge in self._state.edges
+            if edge.to_store == self._store and edge.to_id == concept_id
+        )
+
+    def neighbourhood(self, concept_ids: Sequence[str]) -> tuple[Edge, ...]:
+        gesucht = frozenset(concept_ids)
+        return tuple(
+            edge
+            for edge in self._state.edges
+            if (edge.from_store == self._store and edge.from_id in gesucht)
+            or (edge.to_store == self._store and edge.to_id in gesucht)
+        )
+
+    def bridges_into(self, *, to_store: str, to_ids: Sequence[str]) -> tuple[Edge, ...]:
+        gesucht = frozenset(to_ids)
+        return tuple(
+            edge
+            for edge in self._state.edges
+            if edge.from_store == self._store
+            and edge.to_store == to_store
+            and edge.to_id in gesucht
+        )
+
+    def foreign_targets(self) -> dict[str, frozenset[str]]:
+        gruppiert: dict[str, set[str]] = {}
+        for edge in self._state.edges:
+            if edge.from_store == self._store and edge.to_store != self._store:
+                gruppiert.setdefault(edge.to_store, set()).add(edge.to_id)
+        return {store: frozenset(ids) for store, ids in gruppiert.items()}
+
+    def unresolved_targets(self) -> frozenset[str]:
+        return frozenset(
+            edge.to_id
+            for edge in self._state.edges
+            if edge.from_store == self._store and not edge.resolved
+        )
+
+    def attach_to_store(self, *, to_store: str, to_ids: frozenset[str]) -> int:
+        vorhandene_tripel = {edge.triple for edge in self._state.edges}
+        anzahl = 0
+        for index, edge in enumerate(self._state.edges):
+            passt = (
+                edge.from_store == self._store
+                and not edge.resolved
+                and edge.to_store != to_store
+                and edge.to_id in to_ids
+            )
+            if not passt:
+                continue
+            neu = (edge.from_store, edge.from_id, to_store, edge.to_id, edge.kind)
+            if neu in vorhandene_tripel:
+                continue
+            self._state.edges[index] = edge.model_copy(
+                update={"to_store": to_store, "resolved": True}
+            )
+            vorhandene_tripel.add(neu)
+            anzahl += 1
+        return anzahl
+
+    def set_foreign_resolution(self, *, to_store: str, resolvable: frozenset[str]) -> int:
+        anzahl = 0
+        for index, edge in enumerate(self._state.edges):
+            if edge.from_store != self._store or edge.to_store != to_store:
+                continue
+            soll = edge.to_id in resolvable
+            if edge.resolved != soll:
+                self._state.edges[index] = edge.model_copy(update={"resolved": soll})
+                anzahl += 1
+        return anzahl
 
     def replace_generated(
         self, *, from_id: str, generated_by: Sequence[str], drafts: Sequence[EdgeDraft]
@@ -150,14 +261,12 @@ class MemoryEdgeRepository:
     def refresh_resolution(self) -> int:
         anzahl = 0
         for index, edge in enumerate(self._state.edges):
-            passt = (
-                edge.from_store == self._store
-                and edge.to_store == self._store
-                and not edge.resolved
-                and edge.to_id in self._state.concepts
-            )
-            if passt:
-                self._state.edges[index] = edge.model_copy(update={"resolved": True})
+            if edge.from_store != self._store or edge.to_store != self._store:
+                continue
+            ziel = self._state.concepts.get(edge.to_id)
+            soll = ziel is not None and ziel.status is not ConceptStatus.TOMBSTONE
+            if edge.resolved != soll:
+                self._state.edges[index] = edge.model_copy(update={"resolved": soll})
                 anzahl += 1
         return anzahl
 

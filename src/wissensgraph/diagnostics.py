@@ -16,8 +16,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigError
 from wissensgraph.config.masking import mask_dsn
 from wissensgraph.config.network import is_local_dsn
@@ -25,7 +27,7 @@ from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import load_sources
 from wissensgraph.infrastructure.adapters import AdapterRegistry
 from wissensgraph.infrastructure.db import StoreRegistry
-from wissensgraph.infrastructure.db.introspection import vector_dimension
+from wissensgraph.infrastructure.db.introspection import constraint_exists, vector_dimension
 from wissensgraph.infrastructure.db.migrations import (
     build_options,
     current_revision,
@@ -314,6 +316,117 @@ def check_sources(settings: Settings, path: Path | None = None) -> tuple[CheckRe
     )
 
 
+def check_store_separation(registry: StoreRegistry) -> tuple[CheckResult, ...]:
+    """Prüft die Store-Trennung dort, wo sie wirkt: in der Datenbank (§20.1, §12.1).
+
+    Drei Fragen je Store, und alle drei lassen sich nur *am laufenden System* beantworten — eine
+    Konfiguration, die richtig aussieht, sagt über eine Datenbank nichts:
+
+    1. Steht ``ck_shared_no_personal_ref`` dort, wo er hingehört, und nur dort? Der Constraint
+       gehört in den geteilten Store und ausdrücklich **nicht** in den persönlichen: Dort wäre er
+       das Verbot der Brücke, die §7.3 gerade will.
+    2. Gibt es trotzdem Kanten über die Grenze, die es nicht geben dürfte? Der Constraint gilt für
+       neue Zeilen; eine Datenbank, die vor seiner Einführung befüllt wurde, könnte alte tragen.
+    3. Ist der nur lesende Zugang wirklich nur lesend (§20.1, Guard 5)?
+
+    Ein Fehlschlag ist hier ein **Fehler** und keine Warnung. Bei allem anderen kostet ein
+    Fehlalarm Aufmerksamkeit; hier kostet ein übersehener Befund die Datenschutzgrenze.
+    """
+    return tuple(_check_store_separation_one(registry, store) for store in registry.store_names)
+
+
+def _check_store_separation_one(registry: StoreRegistry, store: str) -> CheckResult:
+    """Die Trennungsprüfung eines einzelnen Stores."""
+    name = f"store_trennung:{store}"
+    ist_geteilt = store == defaults.STORE_SHARED
+    try:
+        with registry.engine(store).connect() as connection:
+            if connection.dialect.name != "postgresql":
+                return CheckResult(
+                    name=name,
+                    status=CheckStatus.WARN,
+                    detail=f"Übersprungen: Dialekt '{connection.dialect.name}'.",
+                )
+            constraint = constraint_exists(connection, "edges", "ck_shared_no_personal_ref")
+            ueber_grenze = connection.execute(
+                text("SELECT count(*) FROM edges WHERE from_store <> :store OR to_store <> :store"),
+                {"store": store},
+            ).scalar_one()
+        nur_lesend = _pruefe_nur_lesend(registry, store)
+    except SQLAlchemyError as exc:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"Nicht prüfbar: {str(exc).splitlines()[0][:200]}",
+        )
+
+    context: dict[str, object] = {
+        "ck_shared_no_personal_ref": constraint,
+        "kanten_ueber_die_grenze": ueber_grenze,
+        "nur_lesender_zugang": nur_lesend,
+    }
+
+    if constraint is not ist_geteilt:
+        fehlt = "fehlt" if ist_geteilt else "steht hier, gehört aber nicht hierher"
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"'ck_shared_no_personal_ref' {fehlt}. 'wg migrate' ausführen (§7.4).",
+            context=context,
+        )
+    if ist_geteilt and ueber_grenze:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=(
+                f"{ueber_grenze} Kante(n) im geteilten Store verweisen über die Store-Grenze. "
+                f"Der geteilte Store darf nicht wissen, dass es persönliche Konzepte gibt "
+                f"(§12.1)."
+            ),
+            context=context,
+        )
+    if not nur_lesend:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=(
+                "Über den als nur lesend gedachten Zugang lässt sich schreiben (§20.1, Guard 5)."
+            ),
+            context=context,
+        )
+    bruecken = "" if ist_geteilt else f", {ueber_grenze} Brücke(n) nach außen"
+    return CheckResult(
+        name=name,
+        status=CheckStatus.OK,
+        detail=f"Grenze gewahrt, lesender Zugang schreibgeschützt{bruecken}.",
+        context=context,
+    )
+
+
+def _pruefe_nur_lesend(registry: StoreRegistry, store: str) -> bool:
+    """Versucht über den lesenden Zugang zu schreiben — und erwartet einen Datenbankfehler.
+
+    Der Versuch geht auf eine Tabelle, die es gibt, und schreibt einen Wert, den es nicht geben
+    darf. Gelingt er wider Erwarten, wird zurückgerollt: Eine Diagnose darf nichts hinterlassen,
+    auch dann nicht, wenn sie einen Missstand feststellt.
+    """
+    try:
+        with registry.readonly_engine(store).connect() as connection:
+            transaktion = connection.begin()
+            try:
+                connection.execute(
+                    text(
+                        "INSERT INTO runs (id, kind, params, status, progress, stats) "
+                        "VALUES (gen_random_uuid(), 'export', '{}', 'queued', 0, '{}')"
+                    )
+                )
+            finally:
+                transaktion.rollback()
+    except SQLAlchemyError:
+        return True
+    return False
+
+
 def check_broker(settings: Settings) -> CheckResult:
     """Prüft den Broker, über den asynchrone Läufe angestoßen werden (§5.1, §16.3).
 
@@ -366,6 +479,7 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     results = [check(settings) for check in settings_checks]
     results.extend(check_stores(registry))
     results.extend(check_schema(settings, registry))
+    results.extend(check_store_separation(registry))
     results.extend(check_sources(settings))
     results.append(check_broker(settings))
     return DiagnosticsReport(results=tuple(results))

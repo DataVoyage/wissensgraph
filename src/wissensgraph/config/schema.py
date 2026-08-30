@@ -50,6 +50,14 @@ class StoreConfig(FrozenModel):
     """Ein physischer Speicherbereich — genau eine PostgreSQL-Datenbank."""
 
     dsn: str = Field(min_length=1, description="SQLAlchemy-DSN der Datenbank dieses Stores.")
+    readonly_dsn: str | None = Field(
+        default=None,
+        description=(
+            "DSN einer nur lesenden Rolle auf derselben Datenbank (§20.1, Ebene 'Datenbank'). "
+            "Ohne Angabe wird dieselbe Rolle mit erzwungenem 'default_transaction_read_only' "
+            "benutzt — schwächer, aber immer vorhanden."
+        ),
+    )
     allow_remote: bool = Field(
         default=False,
         description=(
@@ -58,11 +66,17 @@ class StoreConfig(FrozenModel):
         ),
     )
 
+    _normalize_readonly_dsn = field_validator("readonly_dsn", mode="before")(empty_to_none)
+
     @model_validator(mode="after")
     def _check_locality(self) -> StoreConfig:
-        if not self.allow_remote and not is_local_dsn(self.dsn):
+        # Beide DSNs, nicht nur der erste: Eine lesende Verbindung, die den Rechner verlässt,
+        # verletzt Leitprinzip 2 genauso vollständig wie eine schreibende.
+        for name, dsn in (("dsn", self.dsn), ("readonly_dsn", self.readonly_dsn)):
+            if dsn is None or self.allow_remote or is_local_dsn(dsn):
+                continue
             raise ValueError(
-                "allow_remote=false, aber der DSN zeigt nicht auf einen lokalen Host. "
+                f"allow_remote=false, aber '{name}' zeigt nicht auf einen lokalen Host. "
                 "Entweder den DSN auf localhost/ein privates Netz/den Compose-Service richten "
                 "oder allow_remote bewusst auf true setzen."
             )

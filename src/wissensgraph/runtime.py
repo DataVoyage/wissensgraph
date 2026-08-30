@@ -27,6 +27,8 @@ from wissensgraph.infrastructure.db.uow import UnitOfWorkFactory
 from wissensgraph.infrastructure.queue import MemoryJobQueue, RedisJobQueue
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.queue import Job, JobQueue
+from wissensgraph.services.concepts import ConceptService
+from wissensgraph.services.graph import GraphService
 from wissensgraph.services.jobs import JobService
 from wissensgraph.services.sync import RunNotFound, SyncRequest, SyncService
 
@@ -82,6 +84,8 @@ class Runtime:
             known_prefixes=[item.id_prefix for item in self._sources.sources],
         )
         self.jobs = JobService(self._queue)
+        self.concepts = ConceptService(settings, self._uow)
+        self.graph = GraphService(settings, self._uow)
 
     # -- Bestandteile ------------------------------------------------------------
 

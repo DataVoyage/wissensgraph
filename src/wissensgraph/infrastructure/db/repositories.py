@@ -16,12 +16,12 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, and_, delete, select, update
+from sqlalchemy import Connection, and_, delete, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from wissensgraph.config import defaults
 from wissensgraph.domain.changes import CONFLICT_SOURCE_HASH_KEY, ChangeEntry, ChangeType
-from wissensgraph.domain.concepts import Concept
+from wissensgraph.domain.concepts import Concept, ConceptStatus
 from wissensgraph.domain.edges import Edge, EdgeDraft, new_edge_id
 from wissensgraph.domain.runs import Run, RunKind, RunStatus
 from wissensgraph.infrastructure.db.tables import (
@@ -31,8 +31,50 @@ from wissensgraph.infrastructure.db.tables import (
     runs,
     source_cursors,
 )
+from wissensgraph.ports.repositories import LexicalHit
 from wissensgraph.ports.runs import SourceCursorState
 from wissensgraph.ports.sources import Cursor
+
+#: Die Spalten der Konzepttabelle, wie sie in eine handgeschriebene Abfrage eingesetzt werden.
+#: Sie stammen aus der Tabellendefinition und nicht aus einer zweiten Liste — ``search_tsv`` ist
+#: dort bewusst nicht abgebildet (es ist eine generierte Spalte) und fehlt damit auch hier.
+_KONZEPT_SPALTEN = ", ".join(f"c.{spalte.name}" for spalte in concepts.c)
+
+#: Die lexikalische Suche aus §12.4. Sie steht als Text und nicht als SQLAlchemy-Ausdruck, weil
+#: sie ``search_tsv``, ``ts_rank`` und ``similarity`` braucht — drei PostgreSQL-Eigenheiten, die
+#: sich nur unter Verrenkungen abbilden ließen und dabei unlesbar würden.
+_LEXIKALISCHE_SUCHE = f"""
+WITH anfrage AS (
+    SELECT plainto_tsquery('simple', :query) AS tsq
+),
+volltext AS (
+    SELECT c.id,
+           row_number() OVER (ORDER BY ts_rank(c.search_tsv, anfrage.tsq) DESC, c.id) AS rang
+    FROM concepts c, anfrage
+    WHERE c.status <> :tombstone AND c.search_tsv @@ anfrage.tsq
+    LIMIT :limit
+),
+trigramm AS (
+    SELECT c.id,
+           row_number() OVER (
+               ORDER BY similarity(coalesce(c.title, ''), :query) DESC, c.id
+           ) AS rang
+    FROM concepts c
+    WHERE c.status <> :tombstone
+      AND similarity(coalesce(c.title, ''), :query) >= :schwelle
+    LIMIT :limit
+),
+vereint AS (
+    SELECT id, sum(1.0 / (:k + rang)) AS score
+    FROM (SELECT * FROM volltext UNION ALL SELECT * FROM trigramm) beide
+    GROUP BY id
+)
+SELECT {_KONZEPT_SPALTEN}, vereint.score AS score
+FROM concepts c
+JOIN vereint ON vereint.id = c.id
+ORDER BY vereint.score DESC, c.id
+LIMIT :limit
+"""
 
 
 class StoreMismatchError(ValueError):
@@ -91,6 +133,63 @@ class SqlConceptRepository(_StoreBound):
         ).scalars()
         return frozenset(rows)
 
+    def resolvable_ids(self, concept_ids: Sequence[str]) -> frozenset[str]:
+        """Welche der angefragten IDs hier liegen und keine Grabsteine sind (§7.6)."""
+        if not concept_ids:
+            return frozenset()
+        rows = self._connection.execute(
+            select(concepts.c.id).where(
+                and_(
+                    concepts.c.id.in_(tuple(concept_ids)),
+                    concepts.c.status != str(ConceptStatus.TOMBSTONE),
+                )
+            )
+        ).scalars()
+        return frozenset(rows)
+
+    def get_many(self, concept_ids: Sequence[str]) -> tuple[Concept, ...]:
+        """Mehrere Konzepte in einer Abfrage (§12.1, Batch-Load je Hop)."""
+        if not concept_ids:
+            return ()
+        rows = self._connection.execute(
+            select(concepts).where(concepts.c.id.in_(tuple(concept_ids)))
+        ).mappings()
+        return tuple(Concept.model_validate(dict(row)) for row in rows)
+
+    def search_lexical(self, query: str, *, limit: int) -> tuple[LexicalHit, ...]:
+        """Volltext und Trigramm, über Reciprocal Rank Fusion zusammengeführt (§12.4).
+
+        Zwei Verfahren mit zwei Stärken: ``search_tsv`` findet Wörter überall im Text, die
+        Trigrammähnlichkeit auf dem Titel findet auch das Falschgeschriebene. Ihre Werte sind
+        nicht vergleichbar — ein ``ts_rank`` von 0,08 und eine Ähnlichkeit von 0,42 sagen nichts
+        übereinander. Zusammengeführt werden deshalb die *Plätze*: Jede Liste steuert
+        ``1 / (k + Rang)`` bei. Das ist genau der Grund, warum §12.4 Reciprocal Rank Fusion nennt
+        und keine gewichtete Summe.
+
+        Grabsteine bleiben außen vor: Sie sind Erinnerung, kein Suchergebnis (§7.6).
+        """
+        if not query.strip():
+            return ()
+        rows = self._connection.execute(
+            text(_LEXIKALISCHE_SUCHE),
+            {
+                "query": query,
+                "limit": limit,
+                "schwelle": defaults.SEARCH_TRIGRAM_THRESHOLD,
+                "k": defaults.SEARCH_RRF_K,
+                "tombstone": str(ConceptStatus.TOMBSTONE),
+            },
+        ).mappings()
+        return tuple(
+            LexicalHit(
+                concept=Concept.model_validate(
+                    {name: wert for name, wert in row.items() if name != "score"}
+                ),
+                score=float(row["score"]),
+            )
+            for row in rows
+        )
+
     def save(self, concept: Concept) -> None:
         """Legt ein Konzept an oder überschreibt es (``INSERT … ON CONFLICT DO UPDATE``).
 
@@ -123,6 +222,49 @@ class SqlEdgeRepository(_StoreBound):
             select(edges)
             .where(and_(edges.c.from_store == self._store, edges.c.from_id == concept_id))
             .order_by(edges.c.kind, edges.c.to_id)
+        ).mappings()
+        return tuple(Edge.model_validate(dict(row)) for row in rows)
+
+    def list_incoming(self, concept_id: str) -> tuple[Edge, ...]:
+        """Alle Kanten dieses Stores, die auf ein Konzept dieses Stores zeigen."""
+        rows = self._connection.execute(
+            select(edges)
+            .where(and_(edges.c.to_store == self._store, edges.c.to_id == concept_id))
+            .order_by(edges.c.kind, edges.c.from_id)
+        ).mappings()
+        return tuple(Edge.model_validate(dict(row)) for row in rows)
+
+    def neighbourhood(self, concept_ids: Sequence[str]) -> tuple[Edge, ...]:
+        """Alle Kanten dieses Stores, die eine der IDs berühren — in einer Abfrage (§12.1)."""
+        if not concept_ids:
+            return ()
+        gesucht = tuple(concept_ids)
+        rows = self._connection.execute(
+            select(edges)
+            .where(
+                or_(
+                    and_(edges.c.from_store == self._store, edges.c.from_id.in_(gesucht)),
+                    and_(edges.c.to_store == self._store, edges.c.to_id.in_(gesucht)),
+                )
+            )
+            .order_by(edges.c.from_id, edges.c.kind, edges.c.to_id)
+        ).mappings()
+        return tuple(Edge.model_validate(dict(row)) for row in rows)
+
+    def bridges_into(self, *, to_store: str, to_ids: Sequence[str]) -> tuple[Edge, ...]:
+        """Kanten aus diesem Store auf Konzepte eines anderen Stores (§12.1, Rückrichtung)."""
+        if not to_ids:
+            return ()
+        rows = self._connection.execute(
+            select(edges)
+            .where(
+                and_(
+                    edges.c.from_store == self._store,
+                    edges.c.to_store == to_store,
+                    edges.c.to_id.in_(tuple(to_ids)),
+                )
+            )
+            .order_by(edges.c.from_id, edges.c.kind, edges.c.to_id)
         ).mappings()
         return tuple(Edge.model_validate(dict(row)) for row in rows)
 
@@ -168,26 +310,104 @@ class SqlEdgeRepository(_StoreBound):
         return hinzugefuegt, entfernt
 
     def refresh_resolution(self) -> int:
-        """Setzt ``resolved`` auf Kanten, deren Ziel inzwischen in diesem Store liegt (§8.5).
+        """Gleicht ``resolved`` für alle Kanten innerhalb dieses Stores ab (§8.5, §7.6).
 
-        Geprüft werden nur Kanten mit einem Ziel im *eigenen* Store: Über die Store-Grenze hinweg
-        ist die Auflösung eine Abfrage an eine zweite Datenbank und gehört damit in die
-        Brückenlogik der Stufe 5.
+        Innerhalb eines Stores ist das eine einzige Anweisung: Ziel und Kante liegen in derselben
+        Datenbank, ein Unterabfrage-Join genügt. Über die Grenze hinweg geht das nicht — dafür
+        gibt es :meth:`foreign_targets` und :meth:`set_foreign_resolution`.
+
+        Geschrieben wird nur, wo sich etwas ändert. Das hält nicht nur die Zahl ehrlich, die
+        zurückkommt; es vermeidet auch, bei jedem Lauf jede Kante der Datenbank anzufassen.
 
         Returns:
-            Die Anzahl der Kanten, die dadurch auflösbar wurden.
+            Die Anzahl der Kanten, deren ``resolved`` sich geändert hat.
         """
+        auffindbar = select(concepts.c.id).where(concepts.c.status != str(ConceptStatus.TOMBSTONE))
+        soll = edges.c.to_id.in_(auffindbar)
         result = self._connection.execute(
             update(edges)
             .where(
                 and_(
                     edges.c.from_store == self._store,
                     edges.c.to_store == self._store,
-                    edges.c.resolved.is_(False),
-                    edges.c.to_id.in_(select(concepts.c.id)),
+                    edges.c.resolved != soll,
                 )
             )
-            .values(resolved=True)
+            .values(resolved=soll)
+        )
+        return result.rowcount
+
+    def foreign_targets(self) -> dict[str, frozenset[str]]:
+        """Die Ziele aller Brückenkanten dieses Stores, gruppiert nach Zielstore (§12.1)."""
+        rows = self._connection.execute(
+            select(edges.c.to_store, edges.c.to_id)
+            .where(and_(edges.c.from_store == self._store, edges.c.to_store != self._store))
+            .distinct()
+        )
+        gruppiert: dict[str, set[str]] = {}
+        for to_store, to_id in rows:
+            gruppiert.setdefault(to_store, set()).add(to_id)
+        return {store: frozenset(ids) for store, ids in gruppiert.items()}
+
+    def unresolved_targets(self) -> frozenset[str]:
+        """Die Ziel-IDs aller noch nicht aufgelösten Kanten dieses Stores (§8.5)."""
+        rows = self._connection.execute(
+            select(edges.c.to_id)
+            .where(and_(edges.c.from_store == self._store, edges.c.resolved.is_(False)))
+            .distinct()
+        ).scalars()
+        return frozenset(rows)
+
+    def attach_to_store(self, *, to_store: str, to_ids: frozenset[str]) -> int:
+        """Hängt unaufgelöste Kanten an den fremden Store, in dem ihr Ziel aufgetaucht ist."""
+        if not to_ids:
+            return 0
+        andere = edges.alias("bestehend")
+        result = self._connection.execute(
+            update(edges)
+            .where(
+                and_(
+                    edges.c.from_store == self._store,
+                    edges.c.resolved.is_(False),
+                    edges.c.to_store != to_store,
+                    edges.c.to_id.in_(tuple(to_ids)),
+                    ~select(andere.c.id)
+                    .where(
+                        and_(
+                            andere.c.from_store == edges.c.from_store,
+                            andere.c.from_id == edges.c.from_id,
+                            andere.c.to_store == to_store,
+                            andere.c.to_id == edges.c.to_id,
+                            andere.c.kind == edges.c.kind,
+                        )
+                    )
+                    .exists(),
+                )
+            )
+            .values(to_store=to_store, resolved=True)
+        )
+        return result.rowcount
+
+    def set_foreign_resolution(self, *, to_store: str, resolvable: frozenset[str]) -> int:
+        """Schreibt das Ergebnis einer Auflösung über die Store-Grenze zurück (§12.1).
+
+        Die auffindbaren IDs kommen von außen, weil sie aus einer anderen Datenbank stammen. Was
+        hier passiert, ist nur noch der Abgleich — und auch der schreibt nur, wo sich etwas
+        ändert.
+        """
+        # Eine leere Menge ist kein Sonderfall: SQLAlchemy übersetzt ein ``IN ()`` in einen
+        # Ausdruck, der für jede Zeile falsch ist — genau das ist hier die richtige Aussage.
+        soll = edges.c.to_id.in_(tuple(resolvable))
+        result = self._connection.execute(
+            update(edges)
+            .where(
+                and_(
+                    edges.c.from_store == self._store,
+                    edges.c.to_store == to_store,
+                    edges.c.resolved != soll,
+                )
+            )
+            .values(resolved=soll)
         )
         return result.rowcount
 

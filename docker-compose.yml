@@ -43,6 +43,10 @@ x-app-environment: &app-environment
   # Innerhalb der Container gelten die Compose-Servicenamen, nicht die Host-Ports.
   WG_DB_SHARED_DSN: postgresql+psycopg://${WG_POSTGRES_USER:-wg}:${WG_POSTGRES_PASSWORD:-wg}@db-shared:5432/wg_shared
   WG_DB_PERSONAL_DSN: postgresql+psycopg://${WG_POSTGRES_USER:-wg}:${WG_POSTGRES_PASSWORD:-wg}@db-personal:5432/wg_personal
+  # Ohne Wert benutzt der nur lesende Zugang (§20.1) dieselbe Rolle mit erzwungenem
+  # 'default_transaction_read_only'. Wer eine eigene, nur lesende Datenbankrolle anlegt, trägt
+  # deren DSN hier ein — dann hält der Schutz auch gegen einen kompromittierten Prozess.
+  WG_DB_SHARED_READONLY_DSN: ${WG_DB_SHARED_READONLY_DSN:-}
   WG_EMBEDDING_DIM: ${WG_EMBEDDING_DIM:?WG_EMBEDDING_DIM muss gesetzt sein - siehe .env.example}
   WG_API_TOKEN: ${WG_API_TOKEN:-}
   WG_API_AUTH_MODE: ${WG_API_AUTH_MODE:-token}

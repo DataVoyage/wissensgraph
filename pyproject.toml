@@ -213,6 +213,15 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# Der Lesepfad hängt nicht am Schreibpfad. Wer den Graphen abfragt, soll das auch dann können,
+# wenn an der Sync-Orchestrierung etwas kaputt ist — und umgekehrt darf kein Lauf davon abhängen,
+# wie gerankt wird. Die Trennung ist zugleich die Voraussetzung dafür, dass der MCP-Server
+# (Stufe 12) nur den Lesepfad einbindet und den Schreibpfad gar nicht erst mitbringt (§18.3).
+name = "Lesepfad und Schreibpfad sind unabhängig"
+type = "independence"
+modules = ["wissensgraph.services.graph", "wissensgraph.services.sync"]
+
+[[tool.importlinter.contracts]]
 name = "Schichtenreihenfolge: Interface -> Services -> Domain/Ports"
 type = "layers"
 # Module in Klammern sind optional: Sie entstehen erst mit späteren Stufen des Stufenplans

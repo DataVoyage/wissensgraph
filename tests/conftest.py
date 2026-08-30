@@ -46,6 +46,9 @@ def minimal_config_dict() -> dict[str, Any]:
             {"name": "Jira Issue", "stores": ["shared"], "source_mirrored": True},
             {"name": "Cluster", "stores": ["shared", "personal"], "source_mirrored": False},
             {"name": "Note", "stores": ["personal"], "source_mirrored": False},
+            # Der Typ des Brücken-Konzepts (§24, Stufe 5). Er liegt ausschließlich in 'personal' —
+            # eine Brücke wird immer von der privaten Seite aus geschlagen (§12.1).
+            {"name": "Project", "stores": ["personal"], "source_mirrored": False},
         ],
         "edge_kinds": {
             "structural": ["member", "related"],

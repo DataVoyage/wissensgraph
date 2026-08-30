@@ -13,13 +13,14 @@ Kern ist die Operation, auf der jede Pipeline aufsetzt — nicht die Pipeline se
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
 from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
+from wissensgraph.domain.bridges import bridge_sources, bridge_targets
 from wissensgraph.domain.changes import CONFLICT_SOURCE_HASH_KEY, ChangeEntry, ChangeType
 from wissensgraph.domain.concepts import Concept, ConceptDraft, ConceptStatus
 from wissensgraph.domain.edges import Edge, EdgeDraft
@@ -70,6 +71,49 @@ class UpsertResult:
             "edges_added": len(self.edges_added),
             "edges_removed": len(self.edges_removed),
             "verification_reset": self.verification_reset,
+        }
+
+
+@dataclass(frozen=True)
+class ConceptView:
+    """Ein Konzept mit seinen Kanten in beide Richtungen (§12.1).
+
+    Die eingehenden Kanten sind der interessante Teil. Innerhalb eines Stores stehen sie einfach
+    da; über die Grenze hinweg gibt es sie im Zielstore gar nicht — der geteilte Store weiß nicht,
+    dass es persönliche Konzepte gibt. Sie werden deshalb aus den Stores rekonstruiert, die
+    Brücken schlagen dürfen.
+    """
+
+    concept: Concept
+    outgoing: tuple[Edge, ...]
+    incoming: tuple[Edge, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialisierbare Form für CLI und spätere API (§16.2)."""
+        return {
+            "id": self.concept.id,
+            "store": self.concept.store,
+            "scope": self.concept.scope,
+            "type": self.concept.type,
+            "title": self.concept.title,
+            "status": str(self.concept.status),
+            "curated": self.concept.curated,
+            "outgoing": [
+                {
+                    "kind": edge.kind,
+                    "to": f"{edge.to_store}:{edge.to_id}",
+                    "resolved": edge.resolved,
+                }
+                for edge in self.outgoing
+            ],
+            "incoming": [
+                {
+                    "kind": edge.kind,
+                    "from": f"{edge.from_store}:{edge.from_id}",
+                    "resolved": edge.resolved,
+                }
+                for edge in self.incoming
+            ],
         }
 
 
@@ -229,23 +273,136 @@ class ConceptService:
         _log.info("konzept.quelle_geloescht", concept_id=concept_id, store=store)
         return True
 
+    def describe(self, concept_id: str, *, store: str) -> ConceptView | None:
+        """Ein Konzept mit seinen Kanten in beide Richtungen; ``None``, wenn es das nicht gibt.
+
+        Die Gegenrichtung einer Brücke kostet eine Abfrage je Store, der Brücken hierher schlagen
+        darf — für den geteilten Store also genau eine an den persönlichen. Sie geht bewusst in
+        diese Richtung: Gefragt wird der Store, in dem die Kante *liegt*.
+        """
+        with self._unit_of_work(store) as uow:
+            concept = uow.concepts.get(concept_id)
+            if concept is None:
+                return None
+            ausgehend = uow.edges.list_outgoing(concept_id)
+            eingehend = list(uow.edges.list_incoming(concept_id))
+
+        for quell_store in bridge_sources(store, self._settings.stores):
+            with self._unit_of_work(quell_store) as fremd:
+                eingehend.extend(fremd.edges.bridges_into(to_store=store, to_ids=(concept_id,)))
+
+        return ConceptView(concept=concept, outgoing=ausgehend, incoming=tuple(eingehend))
+
     def refresh_edge_resolution(self, store: str) -> int:
-        """Prüft ungelöste Kanten eines Stores erneut (§8.5).
+        """Gleicht alle Kanten ab, die in diesem Store *beginnen* (§8.5, §12.1).
 
         Der Schritt steht neben der Kernoperation, weil er nicht am Inhalt eines Konzepts hängt:
         Eine Kante wird auflösbar, weil ihr *Ziel* dazugekommen ist — am Ausgangskonzept hat sich
         dabei nichts geändert, sein Hash also auch nicht.
 
+        Zwei Teile, weil es zwei Datenbanken sind: Kanten innerhalb des Stores erledigt eine
+        einzige Anweisung; für jede Brücke wird einmal im Zielstore nachgesehen und das Ergebnis
+        zurückgeschrieben. Zwei Abfragen je fremdem Store, unabhängig davon, wie viele Kanten
+        dorthin zeigen.
+
         Returns:
-            Die Anzahl der Kanten, die dadurch auflösbar wurden.
+            Die Anzahl der Kanten, deren ``resolved`` sich geändert hat — in beide Richtungen.
         """
         with self._unit_of_work(store) as uow:
             anzahl = uow.edges.refresh_resolution()
+            fremde = dict(uow.edges.foreign_targets())
+
+        for ziel_store, ziele in fremde.items():
+            anzahl += self._bruecken_abgleichen(von=store, nach=ziel_store, ziele=ziele)
+        for ziel_store in bridge_targets(store, self._settings.stores):
+            anzahl += self._offene_anhaengen(von=store, nach=ziel_store)
+
         if anzahl:
             _log.info("kante.aufgeloest", store=store, count=anzahl)
         return anzahl
 
+    def refresh_bridges_into(self, store: str) -> int:
+        """Gleicht die Brücken ab, die *auf* diesen Store zeigen (§12.1).
+
+        Die Gegenrichtung zu :meth:`refresh_edge_resolution` und der Grund, warum es sie braucht:
+        Ändert sich etwas im geteilten Store — eine Seite kommt dazu, eine wird zum Grabstein —,
+        dann betrifft das Kanten, die gar nicht dort liegen. Sie liegen im persönlichen Store, und
+        niemand außer diesem Aufruf käme je auf die Idee, sie erneut zu prüfen.
+
+        Der geteilte Store erfährt dabei nichts über den persönlichen: Gefragt wird immer aus der
+        Richtung der Brücke heraus. Er beantwortet nur, welche seiner eigenen IDs auffindbar sind.
+        """
+        anzahl = 0
+        for quell_store in bridge_sources(store, self._settings.stores):
+            with self._unit_of_work(quell_store) as uow:
+                ziele = uow.edges.foreign_targets().get(store, frozenset())
+            anzahl += self._bruecken_abgleichen(von=quell_store, nach=store, ziele=ziele)
+            anzahl += self._offene_anhaengen(von=quell_store, nach=store)
+        if anzahl:
+            _log.info("bruecke.aufgeloest", store=store, count=anzahl)
+        return anzahl
+
     # -- innere Abläufe ---------------------------------------------------------
+
+    def _bruecken_abgleichen(self, *, von: str, nach: str, ziele: frozenset[str]) -> int:
+        """Fragt einen fremden Store nach seinen auffindbaren IDs und schreibt das Ergebnis fort.
+
+        Die drei Transaktionen sind absichtlich getrennt und kurz. Eine offene Transaktion im
+        einen Store, während im anderen gelesen wird, hielte über die Dauer einer fremden Abfrage
+        Sperren — und das ausgerechnet in dem Store, aus dem gerade ein Sync schreibt.
+        """
+        if not ziele:
+            return 0
+        with self._unit_of_work(nach) as fremd:
+            auffindbar = fremd.concepts.resolvable_ids(tuple(sorted(ziele)))
+        with self._unit_of_work(von) as uow:
+            return uow.edges.set_foreign_resolution(to_store=nach, resolvable=auffindbar)
+
+    def _offene_anhaengen(self, *, von: str, nach: str) -> int:
+        """Sucht offene Verweise im fremden Store und hängt die Kanten dorthin um (§8.5, §12.1).
+
+        Der Fall, den das abdeckt, ist der häufigere von beiden: Jemand schreibt eine Notiz mit
+        ``[[confluence:184320]]``, bevor Confluence das erste Mal synchronisiert wurde. Die Kante
+        entsteht unaufgelöst und mit dem eigenen Store als Ziel, weil in diesem Augenblick niemand
+        weiß, wo das Objekt einmal liegen wird. Sobald es da ist, wird aus der offenen Frage eine
+        Brücke — ohne dass die Notiz dafür angefasst werden müsste.
+        """
+        with self._unit_of_work(von) as uow:
+            offen = uow.edges.unresolved_targets()
+        if not offen:
+            return 0
+        with self._unit_of_work(nach) as fremd:
+            auffindbar = fremd.concepts.resolvable_ids(tuple(sorted(offen)))
+        if not auffindbar:
+            return 0
+        with self._unit_of_work(von) as uow:
+            return uow.edges.attach_to_store(to_store=nach, to_ids=auffindbar)
+
+    def _ziele_aufloesen(self, uow: UnitOfWork, ids: Sequence[str]) -> dict[str, str]:
+        """Sucht zu jeder referenzierten ID den Store, in dem sie auffindbar ist (§8.5, §12.1).
+
+        Der eigene Store zuerst, dann die erlaubten Brückenziele — die Reihenfolge steht in
+        :func:`resolution_order` und ist dort begründet. Was nirgends gefunden wird, taucht im
+        Ergebnis nicht auf; die Kante entsteht trotzdem, nur unaufgelöst und mit dem eigenen Store
+        als Ziel. §8.5: "Kaputte Referenzen sind kein Fehler."
+
+        Für den geteilten Store ist die Schleife leer — er darf gar nicht hinauszeigen (§12.1),
+        also entsteht für ihn auch keine einzige zusätzliche Abfrage.
+        """
+        if not ids:
+            return {}
+        treffer: dict[str, str] = dict.fromkeys(uow.concepts.resolvable_ids(ids), uow.store)
+        offen = tuple(ziel for ziel in ids if ziel not in treffer)
+
+        for fremd in bridge_targets(uow.store, self._settings.stores):
+            if not offen:
+                break
+            with self._unit_of_work(fremd) as fremde:
+                gefunden = fremde.concepts.resolvable_ids(offen)
+            treffer.update(dict.fromkeys(gefunden, fremd))
+            offen = tuple(ziel for ziel in offen if ziel not in treffer)
+
+        return treffer
 
     def _ausfuehren(
         self,
@@ -370,27 +527,31 @@ class ConceptService:
         Beide gehen in *einem* Abgleich in die Datenbank. Zwei Aufrufe wären nicht atomar: Ein
         Verweis, der von der Quelle in den Text wandert, verschwände zwischen ihnen.
 
-        Der Zielstore ist in dieser Stufe der eigene: Eine Referenz nennt nur eine ID, keinen
-        Store. Die Auflösung über die Store-Grenze hinweg — eine Notiz in ``personal``, die auf
-        eine Confluence-Seite in ``shared`` zeigt — ist Gegenstand der Brückenlogik in Stufe 5.
-        Bis dahin entsteht eine solche Kante mit ``resolved = false``, was genau der Zustand ist,
-        den §8.5 dafür vorsieht: Das Ziel ist hier noch nicht auffindbar.
+        Eine Referenz nennt nur eine ID, keinen Store — der Zielstore wird gesucht. Eine Notiz in
+        ``personal``, die ``[[confluence:184320]]`` schreibt, bekommt damit eine Kante nach
+        ``shared``: die Brücke aus §7.3. Findet sich die ID nirgends, entsteht die Kante trotzdem,
+        mit dem eigenen Store als Ziel und ``resolved = false`` — genau der Zustand, den §8.5
+        dafür vorsieht.
+
+        Der eigene Store bleibt Ziel auch dann, wenn die ID unbekannt ist. Etwas anderes wäre
+        eine Behauptung: Wo ein noch nicht synchronisiertes Objekt einmal liegen wird, weiß hier
+        niemand, und ein geratener Zielstore stünde als Tatsache in der Datenbank.
         """
         herkunft = {
             **dict.fromkeys(draft.body_references, defaults.GENERATED_BY_BODY_REFERENCE),
             **dict.fromkeys(draft.source_references, defaults.GENERATED_BY_SOURCE_REFERENCE),
         }
-        vorhanden = uow.concepts.existing_ids(tuple(herkunft))
+        gefunden = self._ziele_aufloesen(uow, tuple(herkunft))
         jetzt = self._clock()
 
         drafts = [
             EdgeDraft(
                 from_store=concept.store,
                 from_id=concept.id,
-                to_store=concept.store,
+                to_store=gefunden.get(ziel, concept.store),
                 to_id=ziel,
                 kind=defaults.EDGE_KIND_REFERENCES,
-                resolved=ziel in vorhanden,
+                resolved=ziel in gefunden,
                 generated_by=erzeuger,
                 generated_at=jetzt,
             )
