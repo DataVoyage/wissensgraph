@@ -314,6 +314,47 @@ def check_sources(settings: Settings, path: Path | None = None) -> tuple[CheckRe
     )
 
 
+def check_broker(settings: Settings) -> CheckResult:
+    """Prüft den Broker, über den asynchrone Läufe angestoßen werden (§5.1, §16.3).
+
+    Das Ergebnis ist nie ein Fehler, und das ist eine bewusste Abwägung: Ohne Broker fallen die
+    *asynchronen* Läufe aus — ``POST /runs/sync`` und der ``worker``. Alles Synchrone,
+    einschließlich ``wg sync``, funktioniert unverändert. Im Profil ``minimal`` läuft gar kein
+    Broker (§5.4); ein Fehler wäre dort ein Fehlalarm, und ein Diagnosewerkzeug, das im
+    Regelbetrieb Fehlalarme gibt, wird nicht mehr gelesen.
+    """
+    if not settings.broker_url:
+        return CheckResult(
+            name="broker",
+            status=CheckStatus.WARN,
+            detail=(
+                "Kein Broker konfiguriert (WG_BROKER_URL). Läufe über 'wg sync' laufen "
+                "synchron; asynchrone Läufe über Queue und Worker sind nicht möglich."
+            ),
+        )
+
+    from wissensgraph.infrastructure.queue import RedisJobQueue
+
+    queue = RedisJobQueue(settings.broker_url)
+    try:
+        wartend = queue.size()
+    except Exception as exc:  # Redis wirft je nach Ursache sehr verschiedene Typen.
+        return CheckResult(
+            name="broker",
+            status=CheckStatus.WARN,
+            detail=f"Broker nicht erreichbar: {type(exc).__name__}: {str(exc)[:150]}",
+        )
+    finally:
+        queue.close()
+
+    return CheckResult(
+        name="broker",
+        status=CheckStatus.OK,
+        detail=f"erreichbar, {wartend} wartende(r) Job(s).",
+        context={"pending": wartend},
+    )
+
+
 def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsReport:
     """Führt alle Prüfungen aus und fasst sie zu einem Bericht zusammen."""
     settings_checks: tuple[Callable[[Settings], CheckResult], ...] = (
@@ -326,4 +367,5 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     results.extend(check_stores(registry))
     results.extend(check_schema(settings, registry))
     results.extend(check_sources(settings))
+    results.append(check_broker(settings))
     return DiagnosticsReport(results=tuple(results))

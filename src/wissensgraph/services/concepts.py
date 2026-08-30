@@ -21,7 +21,7 @@ from uuid import UUID
 from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
 from wissensgraph.domain.changes import CONFLICT_SOURCE_HASH_KEY, ChangeEntry, ChangeType
-from wissensgraph.domain.concepts import Concept, ConceptDraft
+from wissensgraph.domain.concepts import Concept, ConceptDraft, ConceptStatus
 from wissensgraph.domain.edges import Edge, EdgeDraft
 from wissensgraph.domain.upsert import UpsertOutcome, UpsertPlan, plan_upsert
 from wissensgraph.observability.logging import get_logger
@@ -181,6 +181,53 @@ class ConceptService:
 
         _log.info("konzept.upsert", **result.as_dict())
         return result
+
+    def mark_source_deleted(
+        self,
+        concept_id: str,
+        *,
+        store: str,
+        actor: str = defaults.ACTOR_SYNC,
+        run_id: UUID | None = None,
+    ) -> bool:
+        """Setzt ein Konzept auf ``tombstone``, weil die Quelle es als gelöscht meldet (§7.6).
+
+        Der Grabstein ist der Ersatz für ein ``DELETE``, und der Grund dafür steht in §7.6:
+        "Wird ein Objekt in der Quelle gelöscht, bleiben Inhalt und Kanten erhalten, damit
+        persönliche Notizen, die darauf verlinkt haben, nachvollziehbar bleiben." Deshalb rührt
+        diese Operation **keine einzige Kante an** — weder die ausgehenden noch die eingehenden.
+        Eine Notiz, die auf eine gelöschte Seite zeigt, soll weiterhin zeigen, dass es sie gab.
+
+        Der Status wird auch dann gesetzt, wenn das Konzept kuratiert ist. §10.4 nennt genau
+        diese Ausnahme: "Kuration gewinnt, außer die Quelle meldet Löschung."
+
+        Returns:
+            Ob sich etwas geändert hat — ``False``, wenn die ID unbekannt ist oder bereits ein
+            Grabstein war. Ein Lauf, der dieselbe Löschmeldung zweimal sieht, schreibt damit nur
+            einmal ins Journal.
+        """
+        with self._unit_of_work(store) as uow:
+            vorhanden = uow.concepts.get(concept_id)
+            if vorhanden is None or vorhanden.status is ConceptStatus.TOMBSTONE:
+                return False
+
+            uow.concepts.save(
+                vorhanden.model_copy(
+                    update={"status": ConceptStatus.TOMBSTONE, "updated_at": self._clock()}
+                )
+            )
+            uow.changes.append(
+                ChangeEntry(
+                    change_type=ChangeType.SOURCE_DELETED,
+                    concept_id=concept_id,
+                    actor=actor,
+                    run_id=run_id,
+                    detail={"vorheriger_status": str(vorhanden.status)},
+                )
+            )
+
+        _log.info("konzept.quelle_geloescht", concept_id=concept_id, store=store)
+        return True
 
     def refresh_edge_resolution(self, store: str) -> int:
         """Prüft ungelöste Kanten eines Stores erneut (§8.5).

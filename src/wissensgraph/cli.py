@@ -51,6 +51,19 @@ app.add_typer(config_app)
 sources_app = typer.Typer(name="sources", help="Quellen einsehen (§19).", no_args_is_help=True)
 app.add_typer(sources_app)
 
+runs_app = typer.Typer(name="runs", help="Läufe einsehen (§7.4, §16.2).", no_args_is_help=True)
+app.add_typer(runs_app)
+
+SourcesFileOption = Annotated[
+    Path | None,
+    typer.Option("--sources", help="Pfad zu sources.yaml; sonst aus WG_SOURCES_FILE."),
+]
+
+StoreOption = Annotated[
+    str,
+    typer.Option("--store", help="Store, in dem die Läufe verbucht sind."),
+]
+
 ConfigFileOption = Annotated[
     Path | None,
     typer.Option("--config", help="Pfad zur Kern-Config-Datei; sonst aus WG_CONFIG_DIR."),
@@ -344,6 +357,183 @@ def sources_list(
         )
         typer.echo(f"       Fähigkeiten: {faehig or 'keine'}")
         typer.echo(f"       Zustand: {item.health.state} — {item.health.detail}")
+
+
+@app.command("sync")
+def sync(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    sources_file: SourcesFileOption = None,
+    source: Annotated[
+        str | None, typer.Option("--source", help="Name der Quelle aus sources.yaml.")
+    ] = None,
+    alle: Annotated[
+        bool, typer.Option("--all", help="Über alle benutzbaren Quellen laufen.")
+    ] = False,
+    full: Annotated[
+        bool,
+        typer.Option("--full", help="Vollabgleich: den gespeicherten Cursor ignorieren."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Alles ausführen und am Ende verwerfen (§19)."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Die Läufe als JSON ausgeben.")] = False,
+) -> None:
+    """Gleicht eine Quelle oder alle Quellen mit dem Graphen ab (§10.1, §19).
+
+    Wiederholbar und idempotent: Ein zweiter Lauf ohne Quelländerung schreibt nichts (§10.2
+    Regel 3). Der Rückgabewert ist 1, sobald ein Lauf gescheitert ist — damit ist das Kommando in
+    einem Skript verwendbar.
+    """
+    from wissensgraph.domain.runs import RunStatus
+    from wissensgraph.ports.runs import SourceBusy
+    from wissensgraph.runtime import Runtime, UnknownSourceError
+    from wissensgraph.services.sync import SyncRequest
+
+    if (source is None) == (not alle):
+        typer.echo("Entweder --source <name> oder --all angeben, nicht beides.", err=True)
+        raise typer.Exit(code=2)
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    request = SyncRequest(full=full, dry_run=dry_run)
+
+    with _maschinenlesbar() if as_json else nullcontext():
+        try:
+            with Runtime(settings, sources_file=sources_file) as runtime:
+                laeufe = (
+                    runtime.run_sync_all(request)
+                    if alle
+                    else (runtime.run_sync(str(source), request),)
+                )
+        except ConfigError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+        except (UnknownSourceError, SourceBusy, RuntimeError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+
+    if as_json:
+        typer.echo(json.dumps([run.as_dict() for run in laeufe], indent=2, ensure_ascii=False))
+    else:
+        for run in laeufe:
+            _lauf_zeile(run)
+        if dry_run:
+            typer.echo(f"{_SYMBOLS[CheckStatus.WARN]} Trockenlauf: nichts geschrieben.")
+
+    gescheitert = any(run.status is RunStatus.FAILED for run in laeufe)
+    raise typer.Exit(code=1 if gescheitert else 0)
+
+
+def _lauf_zeile(run: object) -> None:
+    """Eine Zeile je Lauf: Zustand, Quelle, Dauer und die Zähler."""
+    from wissensgraph.domain.runs import Run, RunStatus
+
+    assert isinstance(run, Run)
+    symbol = _SYMBOLS[CheckStatus.OK if run.status is RunStatus.SUCCEEDED else CheckStatus.FAIL]
+    quelle = run.params.get(defaults.RUN_PARAM_SOURCE, "—")
+    dauer = "" if run.duration_seconds is None else f", {run.duration_seconds:.1f} s"
+    typer.echo(f"{symbol} {quelle}: {run.status}{dauer} (Lauf {run.id})")
+    if run.error:
+        typer.echo(f"       Fehler: {run.error}")
+    if run.stats:
+        zahlen = ", ".join(
+            f"{name}={wert}" for name, wert in run.stats.items() if isinstance(wert, int)
+        )
+        typer.echo(f"       {zahlen}")
+
+
+@runs_app.command("list")
+def runs_list(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    store: StoreOption = defaults.STORE_SHARED,
+    limit: Annotated[
+        int, typer.Option("--limit", help="Wie viele Läufe höchstens.")
+    ] = defaults.RUNS_LIST_LIMIT,
+    as_json: Annotated[bool, typer.Option("--json", help="Als JSON ausgeben.")] = False,
+) -> None:
+    """Zeigt die zuletzt begonnenen Läufe eines Stores (§7.4, §16.2)."""
+    from wissensgraph.infrastructure.db.locks import SqlSourceLocks
+    from wissensgraph.infrastructure.db.uow import UnitOfWorkFactory
+    from wissensgraph.services.sync import SyncService
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with _maschinenlesbar() if as_json else nullcontext(), StoreRegistry(settings) as registry:
+        try:
+            dienst = SyncService(settings, UnitOfWorkFactory(registry), SqlSourceLocks(registry))
+            laeufe = dienst.recent_runs(store=store, limit=limit)
+        except UnknownStoreError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+
+    if as_json:
+        typer.echo(json.dumps([run.as_dict() for run in laeufe], indent=2, ensure_ascii=False))
+        return
+    if not laeufe:
+        typer.echo(f"Keine Läufe im Store '{store}'.")
+        return
+    for run in laeufe:
+        _lauf_zeile(run)
+
+
+@runs_app.command("show")
+def runs_show(
+    run_id: Annotated[str, typer.Argument(help="Die ID des Laufs.")],
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    store: StoreOption = defaults.STORE_SHARED,
+) -> None:
+    """Zeigt einen Lauf mit Parametern und vollständiger Statistik."""
+    from uuid import UUID
+
+    from wissensgraph.infrastructure.db.locks import SqlSourceLocks
+    from wissensgraph.infrastructure.db.uow import UnitOfWorkFactory
+    from wissensgraph.services.sync import RunNotFound, SyncService
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with _maschinenlesbar(), StoreRegistry(settings) as registry:
+        try:
+            dienst = SyncService(settings, UnitOfWorkFactory(registry), SqlSourceLocks(registry))
+            run = dienst.get_run(UUID(run_id), store=store)
+        except (RunNotFound, UnknownStoreError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        except ValueError as exc:
+            typer.echo(f"'{run_id}' ist keine gültige Lauf-ID.", err=True)
+            raise typer.Exit(code=2) from exc
+
+    typer.echo(json.dumps(run.as_dict(), indent=2, ensure_ascii=False, sort_keys=True))
+
+
+@app.command("worker")
+def worker(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    sources_file: SourcesFileOption = None,
+    once: Annotated[
+        bool, typer.Option("--once", help="Nur einen Job abarbeiten und beenden.")
+    ] = False,
+) -> None:
+    """Arbeitet Jobs aus der Queue ab — der Startbefehl des worker-Containers (§5.1, §16.3).
+
+    Die Schleife endet erst mit dem Prozess. Ein einzelner gescheiterter Job beendet sie nicht:
+    Er landet mit seinem Grund in ``runs`` und im Log, und der nächste Job läuft.
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="worker", dotenv_file=dotenv_file)
+    try:
+        with Runtime(settings, sources_file=sources_file) as runtime:
+            erledigt = runtime.work(once=once)
+    except ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    except KeyboardInterrupt:  # pragma: no cover — nur beim Beenden von Hand
+        typer.echo("Worker beendet.", err=True)
+        return
+
+    typer.echo(f"{_SYMBOLS[CheckStatus.OK]} {erledigt} Job(s) abgearbeitet.")
 
 
 @app.command("mock-sources")

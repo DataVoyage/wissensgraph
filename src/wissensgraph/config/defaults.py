@@ -204,6 +204,40 @@ MOCK_FIXTURES_DIR: Final = "/app/fixtures"
 MOCK_CONTROL_PREFIX: Final = "/_control"
 
 # ---------------------------------------------------------------------------
+# Sync-Orchestrierung (§10, §16.3)
+# ---------------------------------------------------------------------------
+
+#: Namensraum des Advisory-Locks je Quelle (§10.5). Getrennt vom Migrations-Namensraum, damit
+#: ein laufender Sync keine Migration blockiert und umgekehrt.
+SYNC_LOCK_NAMESPACE: Final = "wissensgraph.sync"
+
+#: Nach so vielen Dokumenten schreibt ein Lauf seinen Zwischenstand in ``runs.stats``. Klein genug,
+#: dass die UI bei einem großen Bestand etwas sieht; groß genug, dass die Zwischenstände den Lauf
+#: nicht dominieren.
+SYNC_PROGRESS_INTERVAL: Final = 100
+
+#: Schlüssel in ``runs.params``. Sie stehen hier und nicht als Literal in der Abfrage, weil
+#: ``active_for_source`` (§10.5) danach sucht: Ein Tippfehler auf einer der beiden Seiten machte
+#: die Nebenläufigkeitsprüfung wirkungslos, ohne dass etwas fehlschlüge.
+RUN_PARAM_SOURCE: Final = "source"
+RUN_PARAM_FULL: Final = "full"
+RUN_PARAM_DRY_RUN: Final = "dry_run"
+
+#: Wie viele Läufe ``wg runs list`` ohne weitere Angabe zeigt.
+RUNS_LIST_LIMIT: Final = 20
+
+# ---------------------------------------------------------------------------
+# Job-Queue und Worker (§5.1, §16.3)
+# ---------------------------------------------------------------------------
+
+#: Schlüssel der Redis-Liste, über die Jobs laufen.
+QUEUE_KEY: Final = "wg:jobs"
+
+#: Wie lange ein Worker auf einen Job wartet, bevor er einmal durchatmet. Die Frist ist der Grund,
+#: warum er sich sauber beenden lässt: Zwischen zwei Wartezeiten prüft er sein Abbruchsignal.
+QUEUE_RESERVE_TIMEOUT_SECONDS: Final = 5.0
+
+# ---------------------------------------------------------------------------
 # HTTP-API (§16, §20.3)
 # ---------------------------------------------------------------------------
 

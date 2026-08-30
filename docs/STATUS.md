@@ -16,7 +16,7 @@ festgelegte Abnahme erfüllt.
 | 1 | Datenmodell und Migrationen | **fertig** |
 | 2 | Domänenkern: Konzepte, Kanten, Upsert | **fertig** |
 | 3 | Adapter-Framework und Mock-Quellen | **fertig** |
-| 4 | Sync-Orchestrierung | offen |
+| 4 | Sync-Orchestrierung | **fertig** |
 | 5 | Store-Trennung und Brücken | offen |
 | 6 | Kernspace-Auflösung und Referenzdichte | offen |
 | 7 | Model-Router (Gemini als erster Provider) | offen |
@@ -390,14 +390,168 @@ zweite Lauf schreibt nichts (§22.2 Punkt 1). Die Testdaten wurden danach wieder
 ### Ausdrücklich außen vor
 
 Echte Zugangsdaten und Zeitsteuerung, so vorgesehen in §24. `schedule.cron` wird gelesen und
-validiert, aber nicht ausgeführt. Ebenfalls noch offen und Gegenstand der Stufe 4: `runs`- und
-`source_cursors`-Verwaltung, Löschbehandlung nach Capabilities, Advisory-Lock je Quelle,
-`--dry-run`, Job-Queue und Lauf-Statistik. Der Cursor kommt in `SourceIngestService.ingest` als
-Wert herein und wieder heraus, ohne gespeichert zu werden — genug, um den inkrementellen Lauf
-schon jetzt zu prüfen, und bewusst zu wenig, um eine Orchestrierung zu sein.
+validiert, aber nicht ausgeführt.
 
 Der Endpunkt `GET /api/v1/sources` (§16.2) fehlt noch; die HTTP-API ist Stufe 11. Bis dahin
 beantwortet `wg sources list --json` dieselbe Frage.
+
+---
+
+## Stufe 4 — was steht
+
+Aus einem Durchlauf wird ein **Lauf**: wiederholbar, nachvollziehbar, abbrechbar. Die Stufe fügt
+dem Dokumentendurchlauf der Stufe 3 nichts hinzu, was ein einzelnes Dokument betrifft — sie fügt
+alles hinzu, was den *Vorgang* betrifft.
+
+### Die Reihenfolge am Ende ist der ganze Punkt
+
+`SyncService.sync` folgt dem Flussdiagramm aus §10.1 Schritt für Schritt. Die einzige Stelle, an
+der die Reihenfolge nicht offensichtlich ist, ist zugleich die wichtigste:
+
+1. Dokumente lesen und schreiben — jedes in seiner eigenen Transaktion,
+2. Löschungen als Grabsteine setzen,
+3. **erst jetzt** den Cursor speichern,
+4. den Lauf abschließen und die Statistik schreiben.
+
+§21.3 sagt für eine nicht erreichbare Quelle: „Lauf endet mit `failed`, Cursor bleibt unverändert,
+Wiederholung ist gefahrlos." Ein Cursor, der schon unterwegs fortgeschrieben würde, ließe den Rest
+des Bestands stillschweigend verschwinden — der nächste Lauf setzte hinter dem Abbruch auf und
+holte das Übersprungene nie nach. Deshalb liefert der Adapter seine Fortschrittsmarke auch erst in
+`next_cursor()` nach vollständig durchlaufener Iteration (§8.2), und deshalb steht das Speichern
+hier hinter allem anderen.
+
+Dass ein einzelnes Dokument eine eigene Transaktion bekommt, gehört zur selben Zusicherung: Was
+vor dem Abbruch geschrieben wurde, bleibt geschrieben, und weil der Cursor stehen bleibt, kommt
+es beim nächsten Lauf noch einmal — mit unverändertem Hash und damit ohne Wirkung (§10.2 Regel 3).
+
+### Ein Trockenlauf tut alles und verwirft es
+
+`--dry-run` täuscht nichts vor. Der Lauf öffnet **eine** Transaktion, führt jedes Dokument wirklich
+durch die Kernoperation bis zum `INSERT` und rollt am Ende zurück. Technisch steckt dahinter eine
+Fabrik (`_Probelauf`), die statt einer neuen Arbeitseinheit immer dieselbe offene herausgibt und
+deren Lebenszyklus stilllegt; der äußere Block rollt genau einmal zurück.
+
+Der Aufwand lohnt sich, weil die Alternative die Frage nicht beantwortet: Eine Vorschau, die den
+Schreibpfad umgeht, sagt über den Schreibpfad nichts. Ein Trockenlauf, der 120 Konzepte meldet,
+hat 120 Konzepte geschrieben — nur eben nicht behalten.
+
+Konsequent zu Ende gedacht heißt das auch: Ein Trockenlauf hinterlässt **keine Zeile in `runs`**.
+`--dry-run` verspricht, nichts zu verändern, und eine Lauf-Zeile wäre eine Veränderung. Der
+Bericht ist derselbe, er wird nur nirgends abgelegt.
+
+### Löschung setzt Grabsteine und rührt keine Kante an
+
+Meldet ein Adapter mit `capabilities.deletions` gelöschte Objekte, werden die zugehörigen Konzepte
+auf `status = tombstone` gesetzt — Inhalt und Kanten bleiben vollständig stehen. §7.6 begründet
+das: „damit persönliche Notizen, die darauf verlinkt haben, nachvollziehbar bleiben." Das ist
+zugleich der Fall, in dem §10.4 die Kuration ausdrücklich überstimmt: „Kuration gewinnt, außer die
+Quelle meldet Löschung."
+
+Die Fähigkeit wird am Flag abgelesen und nicht an einer Ausnahme erprobt — §8.2 Regel 3: „Der
+`SyncService` fragt Flags ab, nicht Ausnahmen."
+
+Eine wiederholte Löschmeldung schreibt nichts: Löschung ist ein Zustand, kein Ereignis. Ohne diese
+Prüfung entstünde bei jedem Lauf eine neue Journalzeile für dasselbe längst gelöschte Objekt.
+
+### Nebenläufigkeit: abweisen, nicht warten
+
+Die Sperre je Quelle ist ein PostgreSQL-Advisory-Lock auf dem Quellnamen (§10.5), und drei Details
+entscheiden darüber, ob sie wirkt:
+
+- **Eine eigene Verbindung.** Advisory-Locks hängen an der Sitzung. Läge die Sperre auf der
+  Verbindung einer Arbeitseinheit, fiele sie nach dem ersten geschriebenen Dokument.
+- **`pg_try_advisory_lock`, nicht `pg_advisory_lock`.** §10.5 verlangt eine Abweisung („liefert
+  `409 Conflict`"), keine Warteschlange. Ein zweiter Aufruf, der stumm wartet, sähe für den
+  Aufrufer aus wie ein besonders langsamer Lauf.
+- **Sie umschließt auch das Speichern von Cursor und Statistik.** Läge sie enger, könnte ein
+  zweiter Lauf zwischen dem letzten Dokument und dem Cursor starten — und mit dem *alten* Cursor
+  loslaufen.
+
+Die Abweisung nennt die ID des laufenden Laufs, wie §10.5 es verlangt. Die Sperre selbst kennt sie
+nicht; der Dienst schlägt sie in `runs` nach und reichert die Ausnahme an. Bewusst in dieser
+Richtung: Entschieden wird über den Lock, nicht über die Abfrage. Umgekehrt entstünde zwischen
+Abfrage und Anlage genau das Zeitfenster, in dem zwei Läufe zugleich starten könnten.
+
+### Die Queue transportiert Aufträge, keine Arbeit
+
+§16.3 trennt Anstoßen und Ausführen: Ein `POST /runs/*` legt einen Lauf an, stellt einen Job ein
+und antwortet mit `202 Accepted`; der `worker` führt aus. Der Job trägt deshalb **nur einen
+Verweis** — Lauf-ID, Art, Store, Parameter — und nie Nutzlast. Der Zustand liegt in `runs`.
+
+Das macht die einzige Schwäche eines `BLPOP` erträglich: Es entnimmt *at most once*. Stürzt der
+Worker zwischen Entnehmen und Abschluss ab, ist der Job weg — der Lauf aber steht weiterhin
+sichtbar als `queued` oder `running` da. Verloren geht nur der Anstoß, und den kann ein Mensch
+wiederholen. Die Alternative wäre eine zweite Liste als Zwischenablage samt Aufräumlauf für
+verwaiste Einträge: Zustandshaltung, die die Datenbank bereits leistet.
+
+Ohne konfigurierten Broker wählt die Laufzeit eine Warteschlange im Speicher. Das ist kein
+Testhilfsmittel, sondern der Normalfall für `wg sync`: Der Befehl arbeitet synchron und soll keinen
+laufenden Redis voraussetzen.
+
+### Wo ein Lauf verbucht wird
+
+Im Store, in den er schreibt — für einen Sync also im Store des Ziel-Scopes. Ein Lauf über eine
+persönliche Quelle hinterlässt damit keine Spur im geteilten Store (Leitprinzip 2). `runs` und
+`source_cursors` liegen deshalb in beiden Datenbanken; die Migration aus Stufe 1 legt sie ohnehin
+schon dort an.
+
+### Ein neues Modul: `runtime.py`
+
+Alle bisherigen Module halten ihre Schicht strikt ein — die Dienste kennen nur Ports, die Adapter
+kennen den Graphen nicht. Irgendwo muss trotzdem entschieden werden, *welche* Umsetzung ein Port
+bekommt. Das steht jetzt in `wissensgraph/runtime.py`, an einer Stelle statt verstreut in CLI, API
+und Worker. `wg sync`, das spätere `POST /runs/sync` und der Worker sind drei Wege zu demselben
+Lauf — es soll keinen geben, auf dem er nach anderen Regeln liefe (Leitprinzip 14).
+
+### Ergänzungen am Bestand
+
+- **`plan_upsert` kennt die Rückkehr aus dem Grabstein.** Liefert eine Quelle ein zuvor gelöschtes
+  Objekt wieder aus, ist das eine Aussage über seine *Existenz* und geht am Content-Hash vorbei.
+  Ohne diese Regel bliebe ein wiederhergestelltes Objekt für immer ein Grabstein, weil sein Text
+  sich nicht geändert hat.
+- **`SourceIngestService` überspringt fehlerhafte Einzelobjekte.** §21.3: „Einzelnes Quellobjekt
+  fehlerhaft → überspringen, in `runs.stats.errors` zählen, Lauf fortsetzen." Ein Ausfall der
+  *Quelle* wird dagegen durchgereicht — er betrifft nicht ein Objekt, sondern alle noch
+  ausstehenden.
+- **`wg doctor` prüft den Broker.** Nie als Fehler, immer als Warnung: Ohne Broker fallen nur die
+  asynchronen Läufe aus, und im Profil `minimal` läuft gar keiner (§5.4). Ein Diagnosewerkzeug, das
+  im Regelbetrieb Fehlalarme gibt, wird nicht mehr gelesen.
+- **`worker` und `mcp` haben im Compose keinen Healthcheck mehr.** Der des Images fragt `/healthz`
+  auf Port 8080 ab, den es nur im `api`-Dienst gibt; ein einwandfrei arbeitender Worker stand
+  dauerhaft als `unhealthy` da.
+
+### Eine neue Schutzregel
+
+**„Die Job-Queue kennt den Graphen nicht"** (import-linter, damit acht Verträge). Eine Queue, die
+den Graphen kennt, wäre die Einladung, Nutzlast statt Verweisen zu verschicken — und damit eine
+zweite Wahrheit über den Zustand des Systems.
+
+### Abnahme (§24, Stufe 4)
+
+| Kriterium | Wo geprüft | Ergebnis |
+|---|---|---|
+| Vollständiger und inkrementeller Lauf über den Mock | `test_sync_service.py`, `test_sync_postgres.py` | 120 Seiten beim ersten Lauf, 1 Dokument beim zweiten; ohne Änderung 0 |
+| Löschszenario setzt Tombstones ohne Kantenverlust | dieselben | `confluence:100003` wird `tombstone`, Kantenzahl unverändert |
+| Paralleler Start derselben Quelle wird abgewiesen | `test_sync_postgres.py` | zweite Sitzung bekommt `SourceBusy` mit der ID des laufenden Laufs |
+| Netzwerkabbruch mitten im Lauf lässt den Cursor unverändert | dieselben | Lauf `failed`, `source_cursors.cursor` unverändert |
+
+Der dritte Punkt zählt nur im Integrationstest wirklich: Der Advisory-Lock wirkt über
+Verbindungsgrenzen, die Speicher-Sperre der Unit-Tests nur innerhalb eines Prozesses.
+
+### Ausdrücklich außen vor
+
+Zeitplanung und echte Quellen, so vorgesehen in §24. `schedule.cron` wird weiterhin nur gelesen
+und validiert. Kein Lauf startet von selbst; jeder braucht `wg sync`, einen Job in der Queue oder
+später `POST /runs/sync`.
+
+Ebenfalls noch offen: `progress` bleibt während eines Laufs auf 0 und springt am Ende auf 1.0. Ein
+Anteil setzt eine bekannte Gesamtmenge voraus, und die hat ein Adapter nicht — `iter_documents`
+ist ein Generator und weiß selbst nicht, wie viele Objekte noch kommen (§8.2). Stattdessen
+schreibt ein Lauf alle 100 Dokumente seinen Zwischenstand nach `runs.stats`: Die Zahl der bisher
+verarbeiteten Dokumente ist eine Tatsache, eine Prozentzahl wäre eine Behauptung.
+
+Läufe lassen sich noch nicht abbrechen; `RunStatus.CANCELLED` ist vorgesehen, aber nichts setzt
+ihn. Der Abbruch braucht einen Weg vom API-Prozess zum Worker und gehört zu Stufe 11.
 
 ---
 
@@ -446,6 +600,26 @@ curl -X POST http://localhost:8090/_control/scenario/incremental_update
 curl -X POST http://localhost:8090/_control/reset
 curl http://localhost:8090/_control/state
 ```
+
+### Läufe
+
+```bash
+docker compose exec worker wg sync --source confluence-eng           # ein Lauf, synchron
+docker compose exec worker wg sync --all                             # über alle Quellen
+docker compose exec worker wg sync --source confluence-eng --full    # Cursor ignorieren
+docker compose exec worker wg sync --source confluence-eng --dry-run # alles tun, nichts behalten
+docker compose exec api    wg runs list                              # die letzten Läufe
+docker compose exec api    wg runs list --json --limit 5
+docker compose exec api    wg runs show <run-id>                     # Parameter und Statistik
+```
+
+`wg sync` arbeitet synchron im aufrufenden Prozess und braucht keinen Broker. Der Dienst `worker`
+läuft daneben als `wg worker` und nimmt Jobs aus der Redis-Queue entgegen — der Weg, den später
+`POST /runs/sync` benutzt (§16.3). Ein `--dry-run` schreibt wirklich alles und rollt am Ende
+zurück; er hinterlässt deshalb auch keine Zeile in `runs`.
+
+Ein Lauf wird in dem Store verbucht, in den er schreibt. `wg runs list` zeigt deshalb per Default
+den Store `shared`; für die andere Seite `--store personal`.
 
 In `.env` bleiben `WG_SOURCE_*__BASE_URL` **leer**, solange gegen die Mocks entwickelt wird: Docker
 Compose liest diese Datei für seine eigene Variablenersetzung, und ein dort gesetztes

@@ -10,6 +10,7 @@ from wissensgraph.config.schema import Settings
 from wissensgraph.diagnostics import (
     CheckStatus,
     check_api_exposure,
+    check_broker,
     check_configuration,
     check_model_policy,
     check_personal_locality,
@@ -156,6 +157,47 @@ class TestCheckSchema:
 
         assert all(result.status is CheckStatus.FAIL for result in results)
         assert all("nicht feststellbar" in result.detail for result in results)
+
+
+class TestBrokerpruefung:
+    """``check_broker`` — der Queue-Teil von ``wg doctor`` (§5.1, §16.3)."""
+
+    def test_ohne_broker_gibt_es_eine_warnung(self, settings: Settings) -> None:
+        """Kein Fehler: Im Profil 'minimal' läuft gar kein Broker (§5.4)."""
+        ergebnis = check_broker(settings)
+
+        assert ergebnis.name == "broker"
+        assert ergebnis.status is CheckStatus.WARN
+        assert "WG_BROKER_URL" in ergebnis.detail
+
+    def test_ein_unerreichbarer_broker_warnt_ebenfalls(
+        self, minimal_config_dict: dict[str, Any]
+    ) -> None:
+        """Ohne Broker fällt nur das Asynchrone aus; 'wg sync' läuft unverändert."""
+        # Port 1 ist reserviert und nimmt keine Verbindungen an.
+        minimal_config_dict["broker_url"] = "redis://127.0.0.1:1/0"
+        settings = Settings.model_validate(minimal_config_dict)
+
+        ergebnis = check_broker(settings)
+
+        assert ergebnis.status is CheckStatus.WARN
+        assert "nicht erreichbar" in ergebnis.detail
+
+    def test_ein_erreichbarer_broker_meldet_die_warteschlange(
+        self, minimal_config_dict: dict[str, Any], mocker: Any
+    ) -> None:
+        from wissensgraph.infrastructure.queue import RedisJobQueue
+
+        minimal_config_dict["broker_url"] = "redis://broker:6379/0"
+        settings = Settings.model_validate(minimal_config_dict)
+        mocker.patch.object(RedisJobQueue, "__init__", return_value=None)
+        mocker.patch.object(RedisJobQueue, "size", return_value=3)
+        mocker.patch.object(RedisJobQueue, "close", return_value=None)
+
+        ergebnis = check_broker(settings)
+
+        assert ergebnis.status is CheckStatus.OK
+        assert ergebnis.context["pending"] == 3
 
 
 class TestRunDiagnostics:

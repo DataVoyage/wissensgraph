@@ -5,18 +5,20 @@ abgestreift und ein DTO geliefert; die Konfiguration sagt, welche Identität, we
 welcher Typ daraus werden. Beides zusammen ergibt einen Konzeptentwurf, und ab da gilt die
 Kernoperation aus §10.2 unverändert.
 
-Was hier **nicht** passiert, gehört zu Stufe 4 und ist absichtlich ausgespart: ``runs``- und
-``source_cursors``-Verwaltung, Löschbehandlung, Advisory-Locks, ``--dry-run``, Job-Queue. Der
-Lauf in :class:`SourceIngestService` ist der kürzeste Weg von einer Quelle in den Graphen — genug,
-um die Abnahme der Stufe 3 zu belegen ("der Fixture-Korpus ist vollständig als Konzepte
-abgebildet"), und bewusst zu wenig, um schon eine Orchestrierung zu sein.
+Was hier **nicht** passiert, ist die Orchestrierung: ``runs``- und ``source_cursors``-Verwaltung,
+Löschbehandlung, Advisory-Locks, ``--dry-run`` und die Job-Queue stehen in
+:mod:`wissensgraph.services.sync`. Die Trennung ist keine Schichtung um ihrer selbst willen: Der
+Dokumentendurchlauf hier ist ohne jede Lauf-Buchführung prüfbar, und der ``SyncService`` ist
+umgekehrt gegen einen beliebigen Durchlauf prüfbar.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from uuid import UUID
+
+from pydantic import ValidationError
 
 from wissensgraph.config import defaults
 from wissensgraph.config.sources import SourceConfig
@@ -25,7 +27,11 @@ from wissensgraph.domain.ids import source_concept_id, split_concept_id
 from wissensgraph.domain.upsert import UpsertOutcome
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.sources import Cursor, SourceAdapter, SourceDocument
-from wissensgraph.services.concepts import ConceptService, UpsertResult
+from wissensgraph.services.concepts import (
+    ConceptService,
+    ConceptValidationError,
+    UpsertResult,
+)
 
 _log = get_logger(__name__)
 
@@ -116,6 +122,7 @@ class IngestReport:
     edges_added: int = 0
     edges_removed: int = 0
     edges_resolved: int = 0
+    errors: int = 0
     cursor: Cursor = field(default_factory=Cursor)
 
     @property
@@ -135,6 +142,7 @@ class IngestReport:
             "edges_added": self.edges_added,
             "edges_removed": self.edges_removed,
             "edges_resolved": self.edges_resolved,
+            "errors": self.errors,
         }
 
 
@@ -163,12 +171,18 @@ class SourceIngestService:
         cursor: Cursor | None = None,
         actor: str = defaults.ACTOR_SYNC,
         run_id: UUID | None = None,
+        on_progress: Callable[[dict[str, int]], None] | None = None,
     ) -> IngestReport:
         """Liest die Dokumente einer Quelle und schreibt sie als Konzepte fort.
 
-        Der Cursor kommt herein und geht wieder hinaus, ohne gespeichert zu werden: Wo er
-        zwischen zwei Läufen liegt, entscheidet Stufe 4 (``source_cursors``). Hier bleibt er ein
-        Wert, damit der inkrementelle Lauf schon jetzt prüfbar ist.
+        Der Cursor kommt herein und geht wieder hinaus, ohne gespeichert zu werden. Wo er zwischen
+        zwei Läufen liegt, entscheidet :class:`~wissensgraph.services.sync.SyncService` — dieser
+        Dienst bleibt der reine Dokumentendurchlauf.
+
+        Ein einzelnes fehlerhaftes Quellobjekt beendet den Lauf nicht. §21.3 legt das fest:
+        "Einzelnes Quellobjekt fehlerhaft → überspringen, in ``runs.stats.errors`` zählen, Lauf
+        fortsetzen." Ein Ausfall der *Quelle* dagegen wird durchgereicht: Er betrifft nicht ein
+        Objekt, sondern alle noch ausstehenden, und der Cursor darf dann nicht fortschreiten.
 
         Args:
             adapter: Der konfigurierte Adapter dieser Quelle.
@@ -176,29 +190,57 @@ class SourceIngestService:
             cursor: Fortschrittsmarke des vorigen Laufs; ``None`` für einen Vollabgleich.
             actor: Wer die Änderungen verantwortet.
             run_id: Der Lauf, zu dem die Journaleinträge gehören.
+            on_progress: Wird gelegentlich mit dem Zwischenstand der Zähler aufgerufen — die
+                Grundlage von ``runs.stats`` während eines laufenden Syncs (§16.3).
 
         Returns:
             Die Zahlen des Laufs und die neue Fortschrittsmarke.
+
+        Raises:
+            SourceError: Wenn die Quelle während der Iteration ausfällt.
         """
         mapper = self.mapper_for(cfg)
-        zaehler = {
-            UpsertOutcome.CREATED: 0,
-            UpsertOutcome.UPDATED: 0,
-            UpsertOutcome.UNCHANGED: 0,
-            UpsertOutcome.CONFLICT: 0,
+        zaehler: dict[str, int] = {
+            "documents": 0,
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "conflicts": 0,
+            "edges_added": 0,
+            "edges_removed": 0,
+            "errors": 0,
         }
-        dokumente = 0
-        hinzugefuegt = 0
-        entfernt = 0
+        namen = {
+            UpsertOutcome.CREATED: "created",
+            UpsertOutcome.UPDATED: "updated",
+            UpsertOutcome.UNCHANGED: "unchanged",
+            UpsertOutcome.CONFLICT: "conflicts",
+        }
 
         for document in adapter.iter_documents(cursor):
-            dokumente += 1
-            ergebnis: UpsertResult = self._concepts.upsert(
-                mapper.to_draft(document), actor=actor, run_id=run_id
-            )
-            zaehler[ergebnis.outcome] += 1
-            hinzugefuegt += len(ergebnis.edges_added)
-            entfernt += len(ergebnis.edges_removed)
+            zaehler["documents"] += 1
+            try:
+                ergebnis: UpsertResult = self._concepts.upsert(
+                    mapper.to_draft(document), actor=actor, run_id=run_id
+                )
+            except (ConceptValidationError, ValidationError) as exc:
+                zaehler["errors"] += 1
+                _log.warning(
+                    "quelle.dokument.uebersprungen",
+                    source=cfg.name,
+                    external_id=document.external_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                continue
+            zaehler[namen[ergebnis.outcome]] += 1
+            zaehler["edges_added"] += len(ergebnis.edges_added)
+            zaehler["edges_removed"] += len(ergebnis.edges_removed)
+
+            if (
+                on_progress is not None
+                and zaehler["documents"] % defaults.SYNC_PROGRESS_INTERVAL == 0
+            ):
+                on_progress(dict(zaehler))
 
         # §8.5: "…und bei jedem Lauf erneut geprüft." Der Schritt gehört ans Ende, weil ein Ziel
         # erst durch diesen Lauf entstanden sein kann — die Kante darauf wurde angelegt, als es
@@ -208,15 +250,9 @@ class SourceIngestService:
 
         bericht = IngestReport(
             source=cfg.name,
-            documents=dokumente,
-            created=zaehler[UpsertOutcome.CREATED],
-            updated=zaehler[UpsertOutcome.UPDATED],
-            unchanged=zaehler[UpsertOutcome.UNCHANGED],
-            conflicts=zaehler[UpsertOutcome.CONFLICT],
-            edges_added=hinzugefuegt,
-            edges_removed=entfernt,
             edges_resolved=aufgeloest,
             cursor=adapter.next_cursor(),
+            **zaehler,
         )
         _log.info("quelle.lauf", **bericht.as_dict())
         return bericht

@@ -106,11 +106,31 @@ def plan_upsert(
     # Regel 2 und 3: Der Hash allein entscheidet, ob überhaupt geschrieben wird. Eine reine
     # Tag- oder Statusänderung der Quelle bleibt damit folgenlos — das ist der Preis dafür,
     # dass ein unveränderter Lauf keine Kosten verursacht (§10.3).
-    if existing.content_hash == draft.content_hash:
+    #
+    # Die eine Ausnahme ist die Rückkehr aus dem Tombstone: Liefert eine Quelle ein Objekt
+    # wieder aus, das sie zuvor als gelöscht gemeldet hatte, ist das eine Aussage über seine
+    # *Existenz* und nicht über seinen Inhalt — und die geht am Hash vorbei. Ohne diese Zeile
+    # bliebe ein wiederhergestelltes Objekt für immer ein Grabstein, weil sein Inhalt sich
+    # nicht geändert hat (§7.6).
+    if existing.content_hash == draft.content_hash and not _kehrt_zurueck(existing, draft):
         return UpsertPlan(outcome=UpsertOutcome.UNCHANGED)
 
     return _zusammenfuehren(
         existing=existing, draft=draft, source_mirrored=source_mirrored, now=now
+    )
+
+
+def _kehrt_zurueck(existing: Concept, draft: ConceptDraft) -> bool:
+    """Ob eine Quelle ein zuvor als gelöscht gemeldetes Objekt wieder ausliefert (§7.6).
+
+    Nur eine *Quelle* kann das: Ein lokaler Schreibvorgang ohne ``source_name`` sagt nichts
+    darüber aus, ob das Quellobjekt wieder da ist. Und der Entwurf darf nicht selbst ein
+    Tombstone sein — sonst wäre eine erneute Löschmeldung eine Rückkehr.
+    """
+    return (
+        existing.status is ConceptStatus.TOMBSTONE
+        and draft.is_from_source
+        and draft.status is not ConceptStatus.TOMBSTONE
     )
 
 

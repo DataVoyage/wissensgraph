@@ -196,6 +196,23 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# Die Queue transportiert Aufträge, keine Arbeit. §16.3: Der Job trägt die ID eines bereits
+# angelegten Laufs, der Zustand liegt in 'runs'. Eine Queue, die den Graphen kennt, wäre die
+# Einladung, Nutzlast statt Verweisen zu verschicken — und damit eine zweite Wahrheit über den
+# Zustand des Systems.
+name = "Die Job-Queue kennt den Graphen nicht"
+type = "forbidden"
+source_modules = ["wissensgraph.infrastructure.queue"]
+forbidden_modules = [
+    "wissensgraph.domain.concepts",
+    "wissensgraph.domain.edges",
+    "wissensgraph.domain.upsert",
+    "wissensgraph.infrastructure.db",
+    "wissensgraph.services",
+    "wissensgraph.api",
+]
+
+[[tool.importlinter.contracts]]
 name = "Schichtenreihenfolge: Interface -> Services -> Domain/Ports"
 type = "layers"
 # Module in Klammern sind optional: Sie entstehen erst mit späteren Stufen des Stufenplans

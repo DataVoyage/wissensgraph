@@ -261,3 +261,85 @@ class TestSourcesList:
 
         assert result.exit_code == 2
         assert "nirgends auffindbar" in result.output
+
+
+@pytest.fixture
+def fixture_sources(tmp_path: Path) -> Path:
+    """Eine Quelle ohne Netzwerk und ohne Datenbankbedarf beim Registrieren (§9.1)."""
+    pfad = tmp_path / "sources.yaml"
+    pfad.write_text(
+        "sources:\n"
+        "  - name: fixtures\n"
+        "    adapter: fixture-source\n"
+        "    id_prefix: fix\n"
+        "    target:\n"
+        "      scope: engineering\n"
+        "      default_type: Confluence Page\n"
+        "    selection:\n"
+        "      documents:\n"
+        "        - external_id: '1'\n"
+        "          title: Ein Dokument\n",
+        encoding="utf-8",
+    )
+    return pfad
+
+
+class TestSync:
+    """``wg sync`` (§19). Der Lauf selbst braucht eine Datenbank; geprüft wird die Hülle."""
+
+    def test_ohne_quelle_und_ohne_all_bricht_es_ab(self, config_file: Path) -> None:
+        result = invoke("sync", "--config", str(config_file))
+
+        assert result.exit_code == 2
+        assert "--source" in result.output
+
+    def test_beides_zugleich_bricht_ebenfalls_ab(self, config_file: Path) -> None:
+        result = invoke("sync", "--config", str(config_file), "--source", "x", "--all")
+
+        assert result.exit_code == 2
+
+    def test_eine_unbekannte_quelle_meldet_sich_verstaendlich(
+        self, config_file: Path, fixture_sources: Path
+    ) -> None:
+        result = invoke(
+            "sync",
+            "--config",
+            str(config_file),
+            "--sources",
+            str(fixture_sources),
+            "--source",
+            "gibtesnicht",
+        )
+
+        assert result.exit_code == 1
+        assert "Unbekannte Quelle" in result.output
+
+
+class TestRuns:
+    """``wg runs`` (§7.4, §16.2)."""
+
+    def test_ein_unbekannter_store_bricht_ab(self, config_file: Path) -> None:
+        result = invoke("runs", "list", "--config", str(config_file), "--store", "gibtesnicht")
+
+        assert result.exit_code == 2
+        assert "Unbekannter Store" in result.output
+
+    def test_eine_ungueltige_lauf_id_wird_erkannt(self, config_file: Path) -> None:
+        result = invoke("runs", "show", "keine-uuid", "--config", str(config_file))
+
+        assert result.exit_code == 2
+        assert "keine gültige Lauf-ID" in result.output
+
+
+class TestWorker:
+    """``wg worker`` (§5.1, §16.3)."""
+
+    def test_ohne_job_beendet_sich_der_einmal_lauf(
+        self, config_file: Path, fixture_sources: Path
+    ) -> None:
+        result = invoke(
+            "worker", "--config", str(config_file), "--sources", str(fixture_sources), "--once"
+        )
+
+        assert result.exit_code == 0
+        assert "0 Job(s)" in result.stdout

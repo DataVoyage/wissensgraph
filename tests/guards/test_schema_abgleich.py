@@ -22,11 +22,13 @@ from wissensgraph.infrastructure.db.tables import (
     change_log,
     concepts,
     edges,
+    runs,
+    source_cursors,
 )
 
 pytestmark = [pytest.mark.guard, pytest.mark.integration]
 
-BESCHRIEBENE_TABELLEN = (concepts, edges, change_log)
+BESCHRIEBENE_TABELLEN = (concepts, edges, change_log, runs, source_cursors)
 
 
 @pytest.fixture

@@ -22,6 +22,7 @@ from typing import Protocol, Self, runtime_checkable
 from wissensgraph.domain.changes import ChangeEntry
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import Edge, EdgeDraft
+from wissensgraph.ports.runs import RunRepository, SourceCursorRepository
 
 
 @runtime_checkable
@@ -154,6 +155,14 @@ class UnitOfWork(Protocol):
     @property
     def changes(self) -> ChangeLogRepository:
         """Das Journal-Repository dieses Stores."""
+
+    @property
+    def runs(self) -> RunRepository:
+        """Das Lauf-Repository dieses Stores (§7.4)."""
+
+    @property
+    def cursors(self) -> SourceCursorRepository:
+        """Das Cursor-Repository dieses Stores (§7.4)."""
 
     def commit(self) -> None:
         """Schreibt alles Angesammelte fest."""

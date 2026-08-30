@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from wissensgraph.infrastructure.db.locks import SqlSourceLocks
 from wissensgraph.infrastructure.db.migrations import (
     MigrationResult,
     downgrade_store,
@@ -19,6 +20,8 @@ from wissensgraph.infrastructure.db.repositories import (
     SqlChangeLogRepository,
     SqlConceptRepository,
     SqlEdgeRepository,
+    SqlRunRepository,
+    SqlSourceCursorRepository,
     StoreMismatchError,
 )
 from wissensgraph.infrastructure.db.uow import SqlUnitOfWork, UnitOfWorkFactory
@@ -34,6 +37,9 @@ __all__ = [
     "SqlChangeLogRepository",
     "SqlConceptRepository",
     "SqlEdgeRepository",
+    "SqlRunRepository",
+    "SqlSourceCursorRepository",
+    "SqlSourceLocks",
     "SqlUnitOfWork",
     "StoreHealth",
     "StoreMismatchError",

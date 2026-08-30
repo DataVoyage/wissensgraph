@@ -248,3 +248,35 @@ class TestKurationstabelle104:
 
         assert plan.concept is not None
         assert plan.concept.source_updated_at == SPAETER
+
+
+class TestRueckkehrAusDemGrabstein:
+    """§7.6: Ein Grabstein ist kein Endzustand — die Quelle kann ein Objekt wieder ausliefern.
+
+    Die Aussage geht am Hash vorbei: Sie betrifft die *Existenz* des Objekts, nicht seinen Inhalt.
+    Ohne diese Regel bliebe ein wiederhergestelltes Objekt für immer ein Grabstein, weil sein Text
+    sich nicht geändert hat (§10.2 Regel 2).
+    """
+
+    def test_ein_wiedergeliefertes_objekt_verlaesst_den_grabstein(self) -> None:
+        draft = entwurf()
+        vorhanden = gespeichert(draft, status=ConceptStatus.TOMBSTONE)
+
+        plan = plane(vorhanden, draft)
+
+        assert plan.outcome is UpsertOutcome.UPDATED
+        assert plan.concept is not None
+        assert plan.concept.status is ConceptStatus.STABLE
+
+    def test_eine_erneute_loeschmeldung_ist_keine_rueckkehr(self) -> None:
+        draft = entwurf(status=ConceptStatus.TOMBSTONE)
+        vorhanden = gespeichert(draft, status=ConceptStatus.TOMBSTONE)
+
+        assert plane(vorhanden, draft).outcome is UpsertOutcome.UNCHANGED
+
+    def test_ein_lokaler_schreibvorgang_holt_nichts_zurueck(self) -> None:
+        """Nur eine Quelle kann sagen, dass ein Quellobjekt wieder da ist."""
+        draft = entwurf(source_name=None, external_id=None)
+        vorhanden = gespeichert(draft, status=ConceptStatus.TOMBSTONE)
+
+        assert plane(vorhanden, draft).outcome is UpsertOutcome.UNCHANGED

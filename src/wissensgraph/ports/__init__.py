@@ -7,12 +7,20 @@ Abhängigkeit nur in diese eine Richtung zeigt.
 
 from __future__ import annotations
 
+from wissensgraph.ports.queue import Job, JobQueue
 from wissensgraph.ports.repositories import (
     ChangeLogRepository,
     ConceptRepository,
     EdgeRepository,
     UnitOfWork,
     UnitOfWorkFactory,
+)
+from wissensgraph.ports.runs import (
+    RunRepository,
+    SourceBusy,
+    SourceCursorRepository,
+    SourceCursorState,
+    SourceLocks,
 )
 from wissensgraph.ports.sources import (
     AdapterCapabilities,
@@ -34,10 +42,17 @@ __all__ = [
     "EdgeRepository",
     "HealthState",
     "HealthStatus",
+    "Job",
+    "JobQueue",
     "NotSupported",
+    "RunRepository",
     "SourceAdapter",
+    "SourceBusy",
+    "SourceCursorRepository",
+    "SourceCursorState",
     "SourceDocument",
     "SourceError",
+    "SourceLocks",
     "SourceUnavailable",
     "UnitOfWork",
     "UnitOfWorkFactory",

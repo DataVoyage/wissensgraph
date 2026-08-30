@@ -422,3 +422,69 @@ class TestPortsWerdenErfuellt:
         )
 
         assert entwurf.from_store == "personal"
+
+
+class TestQuelleMeldetLoeschung:
+    """``mark_source_deleted`` — die Löschbehandlung der Stufe 4 (§7.6, §10.4)."""
+
+    def test_der_status_wird_zum_grabstein(self, service: ConceptService) -> None:
+        service.upsert(seite())
+
+        assert service.mark_source_deleted("confluence:1", store="shared") is True
+
+    def test_inhalt_und_kanten_bleiben_stehen(
+        self, service: ConceptService, uow_factory: MemoryUnitOfWorkFactory
+    ) -> None:
+        """Der Grund aus §7.6: Persönliche Notizen darauf sollen nachvollziehbar bleiben."""
+        service.upsert(seite(body="Inhalt mit [[confluence:2]]"))
+        kanten_vorher = list(uow_factory.state("shared").edges)
+
+        service.mark_source_deleted("confluence:1", store="shared")
+
+        gespeichert = uow_factory.state("shared").concepts["confluence:1"]
+        assert gespeichert.status is ConceptStatus.TOMBSTONE
+        assert gespeichert.body == "Inhalt mit [[confluence:2]]"
+        assert uow_factory.state("shared").edges == kanten_vorher
+
+    def test_die_loeschung_steht_im_journal(
+        self, service: ConceptService, uow_factory: MemoryUnitOfWorkFactory
+    ) -> None:
+        run_id = uuid4()
+        service.upsert(seite())
+
+        service.mark_source_deleted("confluence:1", store="shared", run_id=run_id)
+
+        eintrag = next(
+            entry
+            for entry in uow_factory.state("shared").changes
+            if entry.change_type is ChangeType.SOURCE_DELETED
+        )
+        assert eintrag.concept_id == "confluence:1"
+        assert eintrag.run_id == run_id
+        assert eintrag.detail == {"vorheriger_status": "stable"}
+
+    def test_ein_unbekanntes_konzept_ist_kein_fehler(self, service: ConceptService) -> None:
+        """Eine Quelle darf ein Objekt melden, das nie synchronisiert wurde."""
+        assert service.mark_source_deleted("confluence:99", store="shared") is False
+
+    def test_eine_zweite_meldung_schreibt_nicht_erneut(
+        self, service: ConceptService, uow_factory: MemoryUnitOfWorkFactory
+    ) -> None:
+        """Löschung ist ein Zustand, kein Ereignis — sonst wüchse das Journal bei jedem Lauf."""
+        service.upsert(seite())
+        service.mark_source_deleted("confluence:1", store="shared")
+        vorher = len(uow_factory.state("shared").changes)
+
+        assert service.mark_source_deleted("confluence:1", store="shared") is False
+        assert len(uow_factory.state("shared").changes) == vorher
+
+    def test_kuration_verhindert_den_grabstein_nicht(
+        self, service: ConceptService, uow_factory: MemoryUnitOfWorkFactory
+    ) -> None:
+        """§10.4: "Kuration gewinnt, außer die Quelle meldet Löschung"."""
+        service.upsert(seite(curated=True, status=ConceptStatus.DEPRECATED))
+
+        assert service.mark_source_deleted("confluence:1", store="shared") is True
+        assert (
+            uow_factory.state("shared").concepts["confluence:1"].status is ConceptStatus.TOMBSTONE
+        )

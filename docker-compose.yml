@@ -139,10 +139,17 @@ services:
   worker:
     <<: *app-image
     profiles: [dev, live]
-    command: ["python", "-c", "import time; print('worker bereit (Stufe 4)', flush=True); time.sleep(2**31)"]
+    # Der Worker nimmt Jobs aus der Redis-Queue entgegen und führt die Läufe aus (§5.1, §16.3).
+    # Er migriert nicht: Migrationen laufen ausschließlich im api-Service (§5.5).
+    command: ["wg", "worker"]
     environment: *app-environment
     volumes: *app-volumes
     networks: [wg-personal, wg-shared]
+    # Der Healthcheck des Images fragt /healthz auf Port 8080 ab — den gibt es nur im
+    # api-Service. Ohne diese Zeile stünde ein einwandfrei arbeitender Worker dauerhaft als
+    # 'unhealthy' da, und die Anzeige wäre wertlos für den Fall, auf den es ankommt.
+    healthcheck:
+      disable: true
     depends_on:
       api:
         condition: service_healthy
@@ -156,6 +163,8 @@ services:
     environment: *app-environment
     volumes: *app-volumes
     networks: [wg-personal, wg-shared]
+    healthcheck:
+      disable: true
     depends_on:
       api:
         condition: service_healthy
@@ -181,6 +190,7 @@ services:
       - ./fixtures:/app/fixtures:ro
     ports:
       - "${WG_MOCK_HOST_PORT:-8090}:8090"
+    # Der Mock-Server braucht weder Datenbank noch Broker — er kennt den Graphen nicht (§9.1).
     networks: [wg-shared]
     healthcheck:
       test:

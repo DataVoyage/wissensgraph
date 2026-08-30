@@ -26,6 +26,7 @@ from wissensgraph.domain.ids import (
     split_concept_id,
 )
 from wissensgraph.domain.references import extract_references
+from wissensgraph.domain.runs import Run, RunKind, RunStatus, new_run_id
 from wissensgraph.domain.upsert import UpsertOutcome, UpsertPlan, plan_upsert
 
 __all__ = [
@@ -38,6 +39,9 @@ __all__ = [
     "Edge",
     "EdgeDraft",
     "InvalidConceptIdError",
+    "Run",
+    "RunKind",
+    "RunStatus",
     "UpsertOutcome",
     "UpsertPlan",
     "concept_id",
@@ -47,6 +51,7 @@ __all__ = [
     "new_cluster_id",
     "new_edge_id",
     "new_note_id",
+    "new_run_id",
     "plan_upsert",
     "project_id",
     "source_concept_id",

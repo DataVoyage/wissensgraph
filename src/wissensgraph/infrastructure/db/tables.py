@@ -102,6 +102,29 @@ change_log = Table(
     Column("detail", JSONB),
 )
 
+runs = Table(
+    "runs",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("params", JSONB, nullable=False),
+    Column("status", Text, nullable=False),
+    _timestamp("started_at"),
+    _timestamp("finished_at"),
+    Column("progress", Float, nullable=False),
+    Column("stats", JSONB, nullable=False),
+    Column("error", Text),
+)
+
+source_cursors = Table(
+    "source_cursors",
+    metadata,
+    Column("source_name", Text, primary_key=True),
+    Column("cursor", JSONB, nullable=False),
+    _timestamp("last_full_sync"),
+    _timestamp("updated_at", nullable=False),
+)
+
 #: Spalten, die in der Datenbank stehen, hier aber absichtlich fehlen. ``search_tsv`` ist eine
 #: generierte Spalte (§7.4): Sie lässt sich nicht beschreiben und wird erst mit der lexikalischen
 #: Suche in Stufe 6 gelesen.

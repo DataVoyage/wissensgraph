@@ -12,15 +12,27 @@ Arbeitsteilung ist der Grund, warum sich die Regeln aus §10.2 ohne Datenbank te
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import Connection, and_, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from wissensgraph.config import defaults
 from wissensgraph.domain.changes import CONFLICT_SOURCE_HASH_KEY, ChangeEntry, ChangeType
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import Edge, EdgeDraft, new_edge_id
-from wissensgraph.infrastructure.db.tables import change_log, concepts, edges
+from wissensgraph.domain.runs import Run, RunKind, RunStatus
+from wissensgraph.infrastructure.db.tables import (
+    change_log,
+    concepts,
+    edges,
+    runs,
+    source_cursors,
+)
+from wissensgraph.ports.runs import SourceCursorState
+from wissensgraph.ports.sources import Cursor
 
 
 class StoreMismatchError(ValueError):
@@ -250,6 +262,133 @@ class SqlChangeLogRepository(_StoreBound):
             )
         ).first()
         return found is not None
+
+
+class SqlRunRepository(_StoreBound):
+    """Die Läufe eines Stores in PostgreSQL (§7.4)."""
+
+    def create(self, run: Run) -> None:
+        """Legt einen Lauf an."""
+        self._connection.execute(insert(runs).values(**_lauf_zeile(run)))
+
+    def get(self, run_id: UUID) -> Run | None:
+        """Der Lauf zu einer ID, oder ``None``."""
+        row = self._connection.execute(select(runs).where(runs.c.id == run_id)).mappings().first()
+        return None if row is None else Run.model_validate(dict(row))
+
+    def update(self, run: Run) -> None:
+        """Schreibt die veränderlichen Felder eines Laufs fort.
+
+        ``kind`` und ``params`` fehlen absichtlich: Womit ein Lauf gestartet wurde, ist eine
+        Tatsache. Wäre es überschreibbar, könnte ein abgeschlossener Lauf nachträglich behaupten,
+        er sei mit anderen Parametern gelaufen — und das Journal, das über ``run_id`` an ihm
+        hängt, zeigte auf eine Geschichte, die es so nie gab.
+        """
+        self._connection.execute(
+            update(runs)
+            .where(runs.c.id == run.id)
+            .values(
+                status=str(run.status),
+                started_at=run.started_at,
+                finished_at=run.finished_at,
+                progress=run.progress,
+                stats=run.stats,
+                error=run.error,
+            )
+        )
+
+    def recent(self, *, kind: RunKind | None = None, limit: int = 20) -> tuple[Run, ...]:
+        """Die zuletzt begonnenen Läufe, neueste zuerst.
+
+        Sortiert wird über ``started_at`` mit ``NULLS FIRST``: Ein noch nicht gestarteter Lauf
+        (``queued``) ist das Neueste, was es gibt — er wartet gerade.
+        """
+        statement = select(runs).order_by(runs.c.started_at.desc().nullsfirst()).limit(limit)
+        if kind is not None:
+            statement = statement.where(runs.c.kind == str(kind))
+        rows = self._connection.execute(statement).mappings()
+        return tuple(Run.model_validate(dict(row)) for row in rows)
+
+    def active_for_source(self, source: str) -> Run | None:
+        """Ein noch nicht abgeschlossener Sync-Lauf dieser Quelle (§10.5)."""
+        offen = tuple(str(status) for status in RunStatus if not status.is_final)
+        row = (
+            self._connection.execute(
+                select(runs)
+                .where(
+                    and_(
+                        runs.c.kind == str(RunKind.SYNC),
+                        runs.c.status.in_(offen),
+                        runs.c.params[defaults.RUN_PARAM_SOURCE].astext == source,
+                    )
+                )
+                .order_by(runs.c.started_at.desc().nullsfirst())
+                .limit(1)
+            )
+            .mappings()
+            .first()
+        )
+        return None if row is None else Run.model_validate(dict(row))
+
+
+class SqlSourceCursorRepository(_StoreBound):
+    """Die Fortschrittsmarken der Quellen eines Stores in PostgreSQL (§7.4)."""
+
+    def get(self, source_name: str) -> SourceCursorState | None:
+        """Der gespeicherte Stand einer Quelle, oder ``None``."""
+        row = (
+            self._connection.execute(
+                select(source_cursors).where(source_cursors.c.source_name == source_name)
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            return None
+        daten = dict(row)
+        daten["cursor"] = Cursor(value=daten["cursor"] or {})
+        return SourceCursorState.model_validate(daten)
+
+    def save(
+        self, source_name: str, cursor: Cursor, *, full_sync_at: datetime | None = None
+    ) -> None:
+        """Schreibt den Stand einer Quelle fort (``INSERT … ON CONFLICT DO UPDATE``)."""
+        jetzt = datetime.now(UTC)
+        werte: dict[str, Any] = {
+            "source_name": source_name,
+            "cursor": cursor.value,
+            "updated_at": jetzt,
+            "last_full_sync": full_sync_at,
+        }
+        statement = insert(source_cursors).values(**werte)
+        # ``last_full_sync`` wird nur bei einem Vollabgleich überschrieben: Ein inkrementeller
+        # Lauf soll nicht vergessen machen, wann zuletzt vollständig abgeglichen wurde.
+        aktualisierbar: dict[str, Any] = {
+            "cursor": statement.excluded.cursor,
+            "updated_at": statement.excluded.updated_at,
+        }
+        if full_sync_at is not None:
+            aktualisierbar["last_full_sync"] = statement.excluded.last_full_sync
+        self._connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[source_cursors.c.source_name], set_=aktualisierbar
+            )
+        )
+
+    def delete(self, source_name: str) -> bool:
+        """Vergisst den Stand einer Quelle; der nächste Lauf ist ein Vollabgleich."""
+        result = self._connection.execute(
+            delete(source_cursors).where(source_cursors.c.source_name == source_name)
+        )
+        return result.rowcount > 0
+
+
+def _lauf_zeile(run: Run) -> dict[str, Any]:
+    """Übersetzt einen Lauf in die Spaltenwerte seiner Zeile."""
+    werte: dict[str, Any] = run.model_dump()
+    werte["kind"] = str(run.kind)
+    werte["status"] = str(run.status)
+    return werte
 
 
 def _konzept_zeile(concept: Concept) -> dict[str, Any]:

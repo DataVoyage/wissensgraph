@@ -20,6 +20,8 @@ from wissensgraph.infrastructure.db.repositories import (
     SqlChangeLogRepository,
     SqlConceptRepository,
     SqlEdgeRepository,
+    SqlRunRepository,
+    SqlSourceCursorRepository,
 )
 
 
@@ -38,6 +40,8 @@ class SqlUnitOfWork:
         self._concepts: SqlConceptRepository | None = None
         self._edges: SqlEdgeRepository | None = None
         self._changes: SqlChangeLogRepository | None = None
+        self._runs: SqlRunRepository | None = None
+        self._cursors: SqlSourceCursorRepository | None = None
 
     @property
     def store(self) -> str:
@@ -80,6 +84,20 @@ class SqlUnitOfWork:
             self._changes = SqlChangeLogRepository(self.connection, self._store)
         return self._changes
 
+    @property
+    def runs(self) -> SqlRunRepository:
+        """Das Lauf-Repository dieses Stores."""
+        if self._runs is None:
+            self._runs = SqlRunRepository(self.connection, self._store)
+        return self._runs
+
+    @property
+    def cursors(self) -> SqlSourceCursorRepository:
+        """Das Cursor-Repository dieses Stores."""
+        if self._cursors is None:
+            self._cursors = SqlSourceCursorRepository(self.connection, self._store)
+        return self._cursors
+
     def commit(self) -> None:
         """Schreibt die laufende Transaktion fest."""
         self.connection.commit()
@@ -101,6 +119,7 @@ class SqlUnitOfWork:
         connection = self._connection
         self._connection = None
         self._concepts = self._edges = self._changes = None
+        self._runs = self._cursors = None
         if connection is None:  # pragma: no cover — nur bei doppeltem Verlassen erreichbar
             return
         try:
