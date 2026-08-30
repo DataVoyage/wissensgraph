@@ -76,7 +76,7 @@ ignore_missing_imports = true
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
 markers = [
     "unit: reine Domänen-/Logiktests ohne Infrastruktur",
@@ -152,6 +152,19 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# §4.2 / Leitprinzip 13: Die Dienste sprechen mit den Ports, nicht mit SQLAlchemy. Ohne diese
+# Regel wandert der erste 'select(...)' in einen Service, und die Kernoperation aus §10.2 ist
+# nicht mehr ohne Datenbank testbar.
+name = "Dienste kennen keine Infrastruktur"
+type = "forbidden"
+source_modules = ["wissensgraph.services"]
+forbidden_modules = [
+    "wissensgraph.infrastructure",
+    "wissensgraph.api",
+    "wissensgraph.cli",
+]
+
+[[tool.importlinter.contracts]]
 name = "Schichtenreihenfolge: Interface -> Services -> Domain/Ports"
 type = "layers"
 # Module in Klammern sind optional: Sie entstehen erst mit späteren Stufen des Stufenplans
@@ -159,9 +172,12 @@ type = "layers"
 # Die CLI steht über der API und nicht neben ihr: 'wg serve' ist der Startbefehl des
 # api-Containers und führt erst die Migrationen aus, dann den Server (§5.5). Die Richtung ist
 # damit festgelegt — die CLI darf die API starten, die API nie die CLI aufrufen.
+# Ports stehen über der Domäne und nicht neben ihr: Ein Port beschreibt seine Operationen in
+# Domänenbegriffen ('gib mir das Konzept zu dieser ID'), die Domäne kennt umgekehrt keinen Port.
 layers = [
     "wissensgraph.cli",
     "wissensgraph.api | (wissensgraph.mcp)",
-    "(wissensgraph.services)",
-    "(wissensgraph.domain) | (wissensgraph.ports)",
+    "wissensgraph.services",
+    "wissensgraph.ports",
+    "wissensgraph.domain",
 ]

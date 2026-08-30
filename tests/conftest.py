@@ -56,6 +56,12 @@ def minimal_config_dict() -> dict[str, Any]:
 
 
 @pytest.fixture
+def settings(minimal_config_dict: dict[str, Any]) -> Settings:
+    """Die geprüfte Konfiguration zur minimalen Testkonfiguration."""
+    return Settings.model_validate(minimal_config_dict)
+
+
+@pytest.fixture
 def write_config(tmp_path: Path) -> Iterator[Any]:
     """Schreibt ein Mapping als YAML in eine temporäre Datei und gibt deren Pfad zurück."""
 

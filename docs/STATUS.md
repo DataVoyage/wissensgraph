@@ -14,7 +14,7 @@ festgelegte Abnahme erfüllt.
 |---|---|---|
 | 0 | Projekt-, Container- und Konfigurationsgrundgerüst | **fertig** |
 | 1 | Datenmodell und Migrationen | **fertig** |
-| 2 | Domänenkern: Konzepte, Kanten, Upsert | offen |
+| 2 | Domänenkern: Konzepte, Kanten, Upsert | **fertig** |
 | 3 | Adapter-Framework und Mock-Quellen | offen |
 | 4 | Sync-Orchestrierung | offen |
 | 5 | Store-Trennung und Brücken | offen |
@@ -162,6 +162,100 @@ schreibt — das ist Stufe 2.
 
 ---
 
+## Stufe 2 — was steht
+
+Die Kernoperation `upsert_concept()` aus §10.2 samt allem, worauf sie aufsetzt: Domänenmodelle,
+Content-Hash, `[[id]]`-Referenzen, Kantenpflege, Änderungsjournal und Repositories je Store.
+
+### Die Aufteilung, die alles andere trägt
+
+§10.2 nennt fünf Regeln. Vier davon sind Entscheidungen über Werte, eine ist eine Aussage über
+Infrastruktur. Genau entlang dieser Linie ist der Code geschnitten:
+
+| Ort | Aufgabe |
+|---|---|
+| `domain/upsert.py` | Regeln 1 bis 4 als **reine Funktion** über zwei Zustände — ohne Datenbank |
+| `services/concepts.py` | Regel 5: Konzept, Kanten und Journal in *einer* Transaktion |
+| `ports/repositories.py` | Was gebraucht wird, nie womit es erfüllt wird |
+| `infrastructure/db/` | Repositories, Arbeitseinheit, Tabellenbeschreibungen |
+
+Der Gewinn ist konkret: Die gesamte Kurationslogik aus §10.4 — welches Feld gewinnt, wann eine
+Bestätigung verfällt, wann ein Konflikt entsteht — lässt sich ohne PostgreSQL durchspielen. Ein
+neuer Kurationsfall ist ein Unit-Test, kein Integrationstest.
+
+### Wie die beiden Kurationsregeln zusammenpassen
+
+§10.4 sagt für `title`, `description`, `body`, `resource`: "Quelle gewinnt immer". §10.2 Regel 4
+sagt: "Kuratierte Felder werden von der Quelle nicht überschrieben." Das ist kein Widerspruch,
+sondern eine Fallunterscheidung nach Konzepttyp:
+
+- **quellgespiegelt** (`source_mirrored: true`, §7.2): Die Inhaltsfelder sind für UI, API und
+  Agent ohnehin schreibgeschützt — eine kuratierte Fassung des Bodys kann es dort gar nicht
+  geben. Kuratierbar sind `status`, `tags` und die Verifikationsfelder; für sie gilt die Tabelle
+  aus §10.4 wörtlich.
+- **nicht gespiegelt** (Notiz, Brücken-Konzept): Hier kann ein Mensch den Inhalt geschrieben
+  haben. Versucht eine Quelle später, ihn zu überschreiben, greift Regel 4.
+
+Ein lokaler Schreibvorgang — erkennbar am fehlenden `source_name` — ist davon nicht betroffen:
+Wer von Hand schreibt, überschreibt seine eigene Kuration.
+
+### Abweichungen und Ergänzungen
+
+Drei Stellen gehen über den Wortlaut des Dokuments hinaus. Alle drei folgen aus einer Vorgabe an
+anderer Stelle des Dokuments:
+
+1. **Zwei zusätzliche Änderungsarten.** §7.4 zählt die Werte von `change_log.change_type` auf,
+   ohne `curation_conflict` (von §10.2 Regel 4 verlangt) und ohne `verification_reset` (von §10.4
+   verlangt: `verified_*` "wird bei inhaltlicher Änderung zurückgesetzt, mit change_log-Eintrag").
+   Beide sind ergänzt; die Spalte ist Freitext, das Schema ändert sich dafür nicht.
+
+2. **Ein Kurationskonflikt wird einmal vermerkt, nicht einmal je Lauf.** Ein Konflikt ist ein
+   Zustand, der besteht, bis ein Mensch ihn auflöst — kein Ereignis. Solange die Quelle denselben
+   abgewehrten Inhalt liefert, ist es derselbe Konflikt. Ohne diese Entdopplung wüchse die
+   Kurationsliste (§17.2) mit jedem Sync-Lauf, und ein UPDATE, das nur `updated_at` fortschreibt,
+   käme dazu. Erkennungsmerkmal ist der Hash des Quellinhalts im `detail`.
+
+3. **`[[id]]`-Referenzen zeigen in dieser Stufe in den eigenen Store.** Eine Referenz nennt eine
+   ID, keinen Store. Die Auflösung über die Store-Grenze — eine Notiz in `personal`, die auf eine
+   Confluence-Seite in `shared` zeigt — ist Gegenstand der Brückenlogik in Stufe 5. Bis dahin
+   entsteht eine solche Kante mit `resolved = false`, was genau der Zustand ist, den §8.5 dafür
+   vorsieht: Das Ziel ist hier noch nicht auffindbar.
+
+### Zwei neue Schutzregeln
+
+- **`tests/guards/test_schema_abgleich.py`** vergleicht die Tabellenbeschreibungen in
+  `infrastructure/db/tables.py` Spalte für Spalte mit einer wirklich migrierten Datenbank —
+  Namen, Vorhandensein, Nullbarkeit. Zwei Beschreibungen derselben Sache driften auseinander,
+  sobald jemand nur eine davon ändert; eine fehlende Spalte fiele sonst erst zur Laufzeit auf.
+- **Import-Kontrakt "Dienste kennen keine Infrastruktur".** Ohne ihn wandert das erste
+  `select(...)` in einen Service, und die Kernoperation ist nicht mehr ohne Datenbank testbar.
+  Zusätzlich stehen die Ports jetzt *über* der Domäne statt neben ihr: Ein Port beschreibt seine
+  Operationen in Domänenbegriffen, die Domäne kennt umgekehrt keinen Port.
+
+### Abnahme (§24, Stufe 2)
+
+Jedes Kriterium ist zweimal geprüft: gegen die speicherresidenten Ports (`tests/unit`) und gegen
+echtes PostgreSQL (`tests/integration`).
+
+| Kriterium | Nachweis |
+|---|---|
+| Zweifaches Upsert derselben unveränderten ID erzeugt genau einen `change_log`-Eintrag | `TestAbnahme::test_zweifaches_upsert_erzeugt_genau_einen_eintrag` |
+| Ein geänderter Hash erzeugt einen zweiten | `TestAbnahme::test_geaenderter_hash_erzeugt_den_zweiten_eintrag` |
+| Eine Kante auf ein unbekanntes Ziel entsteht mit `resolved = false` und ohne Fehler | `TestAbnahme::test_kante_auf_unbekanntes_ziel_entsteht_ohne_fehler` |
+| Ein kuratiertes Feld überlebt ein Quell-Update und erzeugt einen Konfliktvermerk | `TestAbnahme::test_kuratiertes_feld_ueberlebt_und_erzeugt_einen_konfliktvermerk` |
+
+Zusätzlich gegen den laufenden `dev`-Stack durchgespielt: Anlegen, unverändertes Wiederholen,
+unaufgelöste Kante, Journal und die Bestätigung, dass der `shared`-Store das Konzept aus
+`personal` nicht kennt.
+
+### Ausdrücklich außen vor
+
+Quellen, Embeddings, API — so vorgesehen in §24. Es gibt noch keinen Adapter, der Entwürfe
+liefert, und keinen Lauf, der sie einsammelt; das sind die Stufen 3 und 4. `runs`,
+`source_cursors` und `model_calls` sind migriert, aber unbenutzt.
+
+---
+
 ## Entwicklung
 
 ### Plattformunabhängigkeit
@@ -209,6 +303,10 @@ Ein Lauf unterhalb der Schwelle schlägt fehl. Ausgenommen ist `cli.py` — eine
 Korrektheit der darunterliegenden Logik aussagt.
 
 Testebenen nach §22.1: `tests/unit`, `tests/contract`, `tests/integration`, `tests/guards`.
+Unter `tests/support` liegt eine speicherresidente Umsetzung der Persistenz-Ports. Sie ist kein
+Zugeständnis an bequemere Tests, sondern der Beweis, dass die Ports tragen: Liefe der
+`ConceptService` nicht ohne Datenbank, wären die Tests in `test_concept_service.py` nicht
+schreibbar.
 
 Die Tests unter `tests/integration` und `tests/guards` brauchen eine echte PostgreSQL-Instanz mit
 `pgvector`. Ohne sie **überspringen sie sich selbst**, damit die Suite auf einem Rechner ohne

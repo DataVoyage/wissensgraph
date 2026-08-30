@@ -92,6 +92,47 @@ HNSW_EF_CONSTRUCTION: Final = 64
 EMBEDDING_DIM_MAX: Final = 2000
 
 # ---------------------------------------------------------------------------
+# Domänenkern: IDs, Hash, Referenzen (§7.1, §7.5, §10.2, §10.3)
+# ---------------------------------------------------------------------------
+
+#: Trennzeichen zwischen Präfix und lokalem Teil einer Konzept-ID (§7.5).
+ID_SEPARATOR: Final = ":"
+
+#: Präfixe der im Code erzeugten IDs. Quellpräfixe stehen dagegen in ``sources.yaml`` (§7.5) —
+#: sie gehören zur Quelle, nicht zum Kern.
+ID_PREFIX_CLUSTER: Final = "cluster"
+ID_PREFIX_NOTE: Final = "note"
+ID_PREFIX_PROJECT: Final = "project"
+
+#: Hash-Verfahren der Änderungserkennung (§10.3).
+CONTENT_HASH_ALGORITHM: Final = "sha256"
+
+#: Trennzeichen zwischen den Feldern, die in den Content-Hash eingehen. ASCII 30 (Record
+#: Separator) kommt in keinem sinnvollen Inhalt vor. Ohne ein Trennzeichen wären
+#: ``title='ab', description=''`` und ``title='a', description='b'`` derselbe Hash — eine
+#: Änderung bliebe unbemerkt.
+CONTENT_HASH_FIELD_SEPARATOR: Final = "\x1e"
+
+#: Muster einer Referenz im ``body`` (§7.1: "Referenzen auf andere Konzepte als ``[[id]]``").
+#: Zeilenumbrüche sind ausgeschlossen, damit zwei unvollständige Klammerpaare in
+#: aufeinanderfolgenden Zeilen nicht zu einer Riesenreferenz verschmelzen.
+REFERENCE_PATTERN: Final = r"\[\[([^\[\]\n]+)\]\]"
+
+#: Erzeuger-Kennungen generierter Kanten. Sie stehen in ``edges.generated_by`` und entscheiden,
+#: welche Kanten ein Lauf ersetzen darf (§10.4).
+GENERATED_BY_BODY_REFERENCE: Final = "code:body-reference"
+GENERATED_BY_SOURCE_REFERENCE: Final = "code:source-reference"
+
+#: Kantenart, die aus einer Referenz entsteht (§8.5).
+EDGE_KIND_REFERENCES: Final = "references"
+
+#: Voreingestellter Status eines Konzepts (§7.4).
+CONCEPT_STATUS_DEFAULT: Final = "stable"
+
+#: Akteur eines Sync-Laufs im Änderungsjournal (§7.4).
+ACTOR_SYNC: Final = "system:sync"
+
+# ---------------------------------------------------------------------------
 # HTTP-API (§16, §20.3)
 # ---------------------------------------------------------------------------
 

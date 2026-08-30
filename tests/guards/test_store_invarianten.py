@@ -13,14 +13,21 @@ Datenbank geschrieben.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from wissensgraph.config.schema import Settings
+from wissensgraph.domain.concepts import Concept, ConceptDraft
+from wissensgraph.domain.edges import EdgeDraft
 from wissensgraph.infrastructure.db import StoreRegistry
 from wissensgraph.infrastructure.db.introspection import constraint_exists
 from wissensgraph.infrastructure.db.migrations import upgrade_all
+from wissensgraph.infrastructure.db.repositories import StoreMismatchError
+from wissensgraph.infrastructure.db.uow import UnitOfWorkFactory
+from wissensgraph.services.concepts import ConceptService
 
 pytestmark = [pytest.mark.guard, pytest.mark.integration]
 
@@ -141,3 +148,73 @@ class TestWeitereInvarianten:
                     "VALUES ('note:1', 'personal', 'personal', 'Note')"
                 )
             )
+
+
+class TestAnwendungsebene:
+    """§20.1, Ebene "Anwendung": Kein Codepfad wählt seinen Store selbst.
+
+    Die Constraints oben sind die letzte Verteidigungslinie. Diese Prüfungen liegen davor: Ein
+    Repository ist an genau einen Store gebunden und weist alles ab, was woandershin gehört —
+    auch dort, wo die Datenbank es durchgehen ließe. Der Fall, den das abfängt, ist ein Konzept
+    aus ``personal``, das versehentlich in ``shared`` landet: Kein CHECK könnte das erkennen,
+    weil die Zeile für sich genommen gültig aussieht.
+    """
+
+    def test_repository_weist_ein_fremdes_konzept_ab(self, migrated: StoreRegistry) -> None:
+        jetzt = datetime.now(UTC)
+        fremd = Concept(
+            id="note:a",
+            store="personal",
+            scope="personal",
+            type="Note",
+            title="Persönlich",
+            content_hash="egal",
+            created_at=jetzt,
+            updated_at=jetzt,
+        )
+
+        with (
+            UnitOfWorkFactory(migrated)("shared") as uow,
+            pytest.raises(StoreMismatchError, match="Registry"),
+        ):
+            uow.concepts.save(fremd)
+
+        with UnitOfWorkFactory(migrated)("personal") as uow:
+            assert uow.concepts.get("note:a") is None
+
+    def test_repository_weist_eine_fremde_kante_ab(self, migrated: StoreRegistry) -> None:
+        fremd = EdgeDraft(
+            from_store="personal",
+            from_id="note:a",
+            to_store="shared",
+            to_id="confluence:1",
+            kind="references",
+        )
+
+        with (
+            UnitOfWorkFactory(migrated)("shared") as uow,
+            pytest.raises(StoreMismatchError, match="Kante"),
+        ):
+            uow.edges.replace_generated(
+                from_id="note:a", generated_by="code:body-reference", drafts=[fremd]
+            )
+
+    def test_jedes_repository_nennt_seinen_store(self, migrated: StoreRegistry) -> None:
+        with UnitOfWorkFactory(migrated)("personal") as uow:
+            assert uow.store == "personal"
+            assert uow.concepts.store == "personal"
+            assert uow.edges.store == "personal"
+            assert uow.changes.store == "personal"
+
+    def test_ein_konzept_ist_im_anderen_store_nicht_auffindbar(
+        self, postgres_settings: Settings, migrated: StoreRegistry
+    ) -> None:
+        factory = UnitOfWorkFactory(migrated)
+        ConceptService(postgres_settings, factory).upsert(
+            ConceptDraft(id="note:a", scope="personal", type="Note", title="Persönlich")
+        )
+
+        with factory("personal") as uow:
+            assert uow.concepts.exists("note:a") is True
+        with factory("shared") as uow:
+            assert uow.concepts.exists("note:a") is False

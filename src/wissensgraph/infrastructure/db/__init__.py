@@ -15,6 +15,13 @@ from wissensgraph.infrastructure.db.registry import (
     StoreRegistry,
     UnknownStoreError,
 )
+from wissensgraph.infrastructure.db.repositories import (
+    SqlChangeLogRepository,
+    SqlConceptRepository,
+    SqlEdgeRepository,
+    StoreMismatchError,
+)
+from wissensgraph.infrastructure.db.uow import SqlUnitOfWork, UnitOfWorkFactory
 from wissensgraph.migrations.context import (
     MigrationError,
     MigrationOptions,
@@ -24,8 +31,14 @@ __all__ = [
     "MigrationError",
     "MigrationOptions",
     "MigrationResult",
+    "SqlChangeLogRepository",
+    "SqlConceptRepository",
+    "SqlEdgeRepository",
+    "SqlUnitOfWork",
     "StoreHealth",
+    "StoreMismatchError",
     "StoreRegistry",
+    "UnitOfWorkFactory",
     "UnknownStoreError",
     "downgrade_store",
     "head_revision",
