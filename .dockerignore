@@ -1,0 +1,38 @@
+# Was nicht in den Build-Kontext gehört.
+#
+# Ohne diese Datei überträgt Docker bei jedem Build unter anderem ui/node_modules — zig Megabyte,
+# die im Image ohnehin neu installiert werden.
+
+# --- Abhängigkeiten und Build-Ergebnisse ---
+.venv/
+ui/node_modules/
+ui/dist/
+ui/coverage/
+**/__pycache__/
+*.egg-info/
+
+# --- Secrets und lokale Konfiguration ---
+# Der Container bekommt seine Konfiguration über ENV und den config/-Bind-Mount (§5.3),
+# nie über das Image.
+.env
+.env.*
+!.env.example
+secrets/
+
+# --- Laufzeitdaten ---
+data/
+var/
+
+# --- Test- und Werkzeugartefakte ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# --- Versionsverwaltung und IDE ---
+.git/
+.github/
+.idea/
+.vscode/

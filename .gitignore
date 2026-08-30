@@ -1,0 +1,49 @@
+# --- Secrets & lokale Konfiguration ---
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# --- uv ---
+# uv.lock wird bewusst NICHT ignoriert (reproduzierbare Builds)
+
+# --- Node / UI ---
+node_modules/
+ui/dist/
+ui/.vite/
+npm-debug.log*
+
+# --- Docker / Daten ---
+data/
+var/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db

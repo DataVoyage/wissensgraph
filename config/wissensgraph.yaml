@@ -1,0 +1,112 @@
+# Kernkonfiguration des Wissensgraphen (§6.3).
+#
+# In dieser Datei stehen KEINE Secrets. Werte, die sich zwischen Umgebungen unterscheiden oder
+# vertraulich sind, stehen als ${WG_...}-Platzhalter hier und kommen zur Startzeit aus der
+# Prozessumgebung. Ein nicht auflösbarer Platzhalter ist ein Startfehler (§6.1 Regel 3).
+
+stores:
+  shared:
+    dsn: ${WG_DB_SHARED_DSN}
+    allow_remote: true
+  personal:
+    dsn: ${WG_DB_PERSONAL_DSN}
+    # Leitprinzip 2: Der personal-Store verlässt den lokalen Rechner nicht. Zeigt der DSN nicht
+    # auf einen lokalen Host, bricht der Start ab (§6.5).
+    allow_remote: false
+
+scopes:
+  - name: global
+    store: shared
+    description: unternehmensweit gültiges Wissen
+  - name: finance
+    store: shared
+  - name: engineering
+    store: shared
+  - name: personal
+    store: personal
+
+# Die Taxonomie ist Konfiguration, nicht Code (§7.2). Eine neue Quelle bringt einen neuen
+# type-Wert mit; das Datenbankschema ändert sich dafür nicht.
+concept_types:
+  - name: Confluence Page
+    stores: [shared]
+    source_mirrored: true
+  - name: Jira Issue
+    stores: [shared]
+    source_mirrored: true
+  - name: Process
+    stores: [shared]
+    source_mirrored: true
+  - name: Cluster
+    stores: [shared, personal]
+    source_mirrored: false
+  - name: Project
+    stores: [personal]
+    source_mirrored: false
+  - name: Note
+    stores: [personal]
+    source_mirrored: false
+
+# Die Unterscheidung steuert das Traversierungsverhalten (abwärts vs. seitwärts) und die
+# Definition eines losen Knotens (§7.7).
+edge_kinds:
+  structural: [member, related]
+  semantic: [depends_on, extends, supersedes, references, contradicts, implements]
+
+clustering:
+  neighbors_k: 8
+  min_cluster_size: 3
+  max_cluster_size: 25
+  stability_runs: 2
+  related_cluster_top_n: 3
+  relabel_on_member_change_pct: 20
+
+orphans:
+  loose_threshold: 1
+  proximity_top_n: 30
+  proximity_auto_commit: 0.85
+  proximity_candidate_band: 0.60
+  use_llm: true
+  cluster_suggestion_limit: 2
+  cluster_preview_members: 15
+  min_confidence: 0.60
+
+traversal:
+  default_hops: 2
+  max_hops: 5
+  max_nodes: 400
+  ranking:
+    hop_weight: 0.5
+    density_weight: 0.3
+    recency_weight: 0.2
+    recency_half_life_days: 90
+
+# Harte Obergrenze je Lauf (§11.6). Der Wächter ist der Schutz davor, dass ein fehlkonfigurierter
+# Lauf unbemerkt große Mengen Token verbraucht.
+budget:
+  max_model_calls_per_run: 2000
+  max_estimated_cost_per_run_eur: 5.0
+  on_exceed: abort
+
+api:
+  host: ${WG_API_HOST:-0.0.0.0}
+  port: ${WG_API_PORT:-8080}
+  auth_mode: ${WG_API_AUTH_MODE:-token}
+  token: ${WG_API_TOKEN:-}
+  cors_origins:
+    - ${WG_API_CORS_ORIGINS:-http://localhost:5173}
+
+mcp:
+  transport: ${WG_MCP_TRANSPORT:-stdio}
+  port: ${WG_MCP_PORT:-8081}
+
+logging:
+  level: ${WG_LOG_LEVEL:-INFO}
+  format: ${WG_LOG_FORMAT:-json}
+
+database:
+  pool_size: ${WG_DB_POOL_SIZE:-5}
+
+embedding_dim: ${WG_EMBEDDING_DIM}
+broker_url: ${WG_BROKER_URL:-}
+personal_allow_remote_models: ${WG_PERSONAL_ALLOW_REMOTE_MODELS:-false}

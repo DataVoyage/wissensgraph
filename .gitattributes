@@ -1,0 +1,10 @@
+# Plattformunabhängigkeit: einheitliche Zeilenenden im Repo (LF), unabhängig vom
+# auschekenden Betriebssystem (Windows/macOS/Linux). Verhindert CRLF/LF-Diffs und
+# Skript-Breakage in Linux-Containern.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

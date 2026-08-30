@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wissensgraph</title>
+    <!--
+      Laufzeitkonfiguration (§17.1). Die Datei wird beim Start des nginx-Containers aus
+      WG_UI_API_BASE_URL erzeugt; im Vite-Dev-Server fehlt sie und die SPA nimmt denselben
+      Ursprung an. Deshalb ist das Fehlen kein Fehler.
+    -->
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

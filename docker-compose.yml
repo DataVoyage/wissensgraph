@@ -1,0 +1,175 @@
+# Gesamter Stack in Containern (§5).
+#
+# Kein Dienst setzt eine Installation auf dem Host voraus außer Docker selbst. Damit läuft das
+# Setup unverändert unter Windows, macOS und Linux.
+#
+# Profile (§5.4):
+#   dev      alle Dienste inkl. mock-sources   -> lokale Entwicklung gegen Mocks
+#   live     alle außer mock-sources           -> Betrieb gegen echte Quellsysteme
+#   minimal  db-*, api, ui                     -> UI-Arbeit ohne Hintergrundläufe
+#   test     db-*, mock-sources                -> Integrationstests in CI
+
+name: wissensgraph
+
+# ---------------------------------------------------------------------------
+# Netzwerksegmentierung (§5.2)
+# ---------------------------------------------------------------------------
+networks:
+  # Der personal-Store liegt in einem Netz ohne Ausgang. Leitprinzip 2 ist damit nicht nur eine
+  # Absprache, sondern eine Eigenschaft des Deployments.
+  wg-personal:
+    internal: true
+  wg-shared:
+  wg-edge:
+
+volumes:
+  pg-personal-data:
+  pg-shared-data:
+
+# ---------------------------------------------------------------------------
+# Wiederverwendbare Bausteine
+# ---------------------------------------------------------------------------
+x-app-image: &app-image
+  build:
+    context: .
+    dockerfile: docker/api.Dockerfile
+  image: wissensgraph-app:local
+
+x-app-environment: &app-environment
+  WG_ENV: ${WG_ENV:-dev}
+  WG_CONFIG_DIR: /app/config
+  WG_LOG_LEVEL: ${WG_LOG_LEVEL:-INFO}
+  WG_LOG_FORMAT: ${WG_LOG_FORMAT:-json}
+  # Innerhalb der Container gelten die Compose-Servicenamen, nicht die Host-Ports.
+  WG_DB_SHARED_DSN: postgresql+psycopg://${WG_POSTGRES_USER:-wg}:${WG_POSTGRES_PASSWORD:-wg}@db-shared:5432/wg_shared
+  WG_DB_PERSONAL_DSN: postgresql+psycopg://${WG_POSTGRES_USER:-wg}:${WG_POSTGRES_PASSWORD:-wg}@db-personal:5432/wg_personal
+  WG_EMBEDDING_DIM: ${WG_EMBEDDING_DIM:?WG_EMBEDDING_DIM muss gesetzt sein - siehe .env.example}
+  WG_API_TOKEN: ${WG_API_TOKEN:-}
+  WG_API_AUTH_MODE: ${WG_API_AUTH_MODE:-token}
+  WG_API_CORS_ORIGINS: ${WG_API_CORS_ORIGINS:-http://localhost:5173}
+  WG_BROKER_URL: redis://broker:6379/0
+  WG_PERSONAL_ALLOW_REMOTE_MODELS: ${WG_PERSONAL_ALLOW_REMOTE_MODELS:-false}
+  WG_PROVIDER_GEMINI__API_KEY: ${WG_PROVIDER_GEMINI__API_KEY:-}
+  WG_SOURCE_CONFLUENCE__BASE_URL: ${WG_SOURCE_CONFLUENCE__BASE_URL:-http://mock-sources:8090/confluence}
+  WG_SOURCE_CONFLUENCE__TOKEN: ${WG_SOURCE_CONFLUENCE__TOKEN:-}
+  WG_SOURCE_JIRA__BASE_URL: ${WG_SOURCE_JIRA__BASE_URL:-http://mock-sources:8090/jira}
+  WG_SOURCE_JIRA__TOKEN: ${WG_SOURCE_JIRA__TOKEN:-}
+
+x-app-volumes: &app-volumes
+  # Config und Secrets read-only in die Container (§5.3). Ein Prozess soll seine eigene
+  # Konfiguration nicht verändern können.
+  - ./config:/app/config:ro
+  - ./secrets:/app/secrets:ro
+
+services:
+  # -------------------------------------------------------------------------
+  # Datenbanken — zwei Dienste statt zweier Datenbanken in einem Dienst (§5.1).
+  # Das macht die Trennung im Deployment sichtbar und den späteren Umzug des
+  # shared-Stores auf einen zentralen Server zu einer reinen Konfigurationsänderung.
+  # -------------------------------------------------------------------------
+  db-shared:
+    image: pgvector/pgvector:pg16
+    profiles: [dev, live, minimal, test]
+    environment:
+      POSTGRES_USER: ${WG_POSTGRES_USER:-wg}
+      POSTGRES_PASSWORD: ${WG_POSTGRES_PASSWORD:-wg}
+      POSTGRES_DB: wg_shared
+    volumes:
+      - pg-shared-data:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${WG_DB_SHARED_HOST_PORT:-5433}:5432"
+    networks: [wg-shared]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WG_POSTGRES_USER:-wg} -d wg_shared"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  db-personal:
+    image: pgvector/pgvector:pg16
+    profiles: [dev, live, minimal, test]
+    environment:
+      POSTGRES_USER: ${WG_POSTGRES_USER:-wg}
+      POSTGRES_PASSWORD: ${WG_POSTGRES_PASSWORD:-wg}
+      POSTGRES_DB: wg_personal
+    volumes:
+      - pg-personal-data:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
+    # Bewusst KEINE Port-Freigabe zum Host. Das Netz wg-personal ist 'internal: true' (§5.2);
+    # eine Freigabe wäre dort ohnehin wirkungslos, und der Verzicht macht die Absicht sichtbar:
+    # An den personal-Store kommt nur heran, wer im selben Docker-Netz liegt — also api, worker
+    # und mcp. Werkzeuge gegen diesen Store laufen deshalb im Container (§19), nicht auf dem Host.
+    networks: [wg-personal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${WG_POSTGRES_USER:-wg} -d wg_personal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  broker:
+    image: redis:7-alpine
+    profiles: [dev, live]
+    networks: [wg-shared]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -------------------------------------------------------------------------
+  # Anwendung — drei Dienste, ein Image, drei Startbefehle (§5.1)
+  # -------------------------------------------------------------------------
+  api:
+    <<: *app-image
+    profiles: [dev, live, minimal]
+    environment: *app-environment
+    volumes: *app-volumes
+    ports:
+      - "${WG_API_HOST_PORT:-8080}:8080"
+    # Nur api, worker und mcp haben Zugang zu beiden Datenbanknetzen (§5.2).
+    networks: [wg-personal, wg-shared, wg-edge]
+    depends_on:
+      db-shared:
+        condition: service_healthy
+      db-personal:
+        condition: service_healthy
+
+  worker:
+    <<: *app-image
+    profiles: [dev, live]
+    command: ["python", "-c", "import time; print('worker bereit (Stufe 4)', flush=True); time.sleep(2**31)"]
+    environment: *app-environment
+    volumes: *app-volumes
+    networks: [wg-personal, wg-shared]
+    depends_on:
+      api:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+
+  mcp:
+    <<: *app-image
+    profiles: [dev, live]
+    command: ["python", "-c", "import time; print('mcp bereit (Stufe 12)', flush=True); time.sleep(2**31)"]
+    environment: *app-environment
+    volumes: *app-volumes
+    networks: [wg-personal, wg-shared]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # Web-UI — erreicht ausschließlich api (§5.2)
+  # -------------------------------------------------------------------------
+  ui:
+    build:
+      context: .
+      dockerfile: docker/ui.Dockerfile
+    image: wissensgraph-ui:local
+    profiles: [dev, live, minimal]
+    environment:
+      WG_UI_API_BASE_URL: ${WG_UI_API_BASE_URL:-http://localhost:8080}
+    ports:
+      - "${WG_UI_HOST_PORT:-5173}:80"
+    networks: [wg-edge]
