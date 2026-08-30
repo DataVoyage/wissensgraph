@@ -1,0 +1,32 @@
+{
+  "id": "100047",
+  "type": "page",
+  "title": "Verzeichnisabgleich",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen.",
+  "body": {
+    "storage": {
+      "value": "Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen. Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token. Rollen bündeln Rechte; ein Recht wird nie direkt an ein Konto vergeben. Ein widerrufenes Token gilt sofort als ungültig, auch vor Ablauf seiner Frist. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-17T12:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "sicherheit"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100047"
+  }
+}

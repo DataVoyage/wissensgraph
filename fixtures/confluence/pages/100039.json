@@ -1,0 +1,32 @@
+{
+  "id": "100039",
+  "type": "page",
+  "title": "Protokollierung der Ladeläufe — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Referenzdaten werden vor den Bewegungsdaten geladen, damit die Zuordnung stimmt.",
+  "body": {
+    "storage": {
+      "value": "Referenzdaten werden vor den Bewegungsdaten geladen, damit die Zuordnung stimmt. Der Backfill läuft getrennt von der täglichen Strecke, um sie nicht zu verzögern. Der Lauf verarbeitet Bewegungsdaten aus dem Bestandssystem und schreibt sie in das Warehouse. Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-09T11:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "warehouse"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100039"
+  }
+}

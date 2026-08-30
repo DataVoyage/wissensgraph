@@ -87,22 +87,24 @@ class MemoryEdgeRepository:
         )
 
     def replace_generated(
-        self, *, from_id: str, generated_by: str, drafts: Sequence[EdgeDraft]
+        self, *, from_id: str, generated_by: Sequence[str], drafts: Sequence[EdgeDraft]
     ) -> tuple[tuple[Edge, ...], tuple[Edge, ...]]:
+        besitz = frozenset(generated_by)
         vorhanden = self.list_outgoing(from_id)
         fremd = {
-            edge.triple for edge in vorhanden if edge.curated or edge.generated_by != generated_by
+            edge.triple for edge in vorhanden if edge.curated or edge.generated_by not in besitz
         }
         eigene = {
             edge.triple: edge
             for edge in vorhanden
-            if not edge.curated and edge.generated_by == generated_by
+            if not edge.curated and edge.generated_by in besitz
         }
         gewuenscht = {draft.triple: draft for draft in drafts if draft.triple not in fremd}
 
         hinzugefuegt: list[Edge] = []
         for triple, draft in gewuenscht.items():
             if triple in eigene:
+                self._aktualisieren(eigene[triple], draft)
                 continue
             edge = Edge(
                 **draft.model_dump(),
@@ -117,6 +119,26 @@ class MemoryEdgeRepository:
             self._state.edges.remove(edge)
 
         return tuple(hinzugefuegt), entfernt
+
+    def _aktualisieren(self, vorhanden: Edge, draft: EdgeDraft) -> None:
+        """Schreibt die veränderlichen Felder einer bestehenden Kante fort — wie das SQL-Pendant.
+
+        Ohne diesen Schritt wäre der Fake bequemer als die Datenbank: Ein Ziel, das inzwischen
+        existiert, bekäme sein ``resolved = true`` nie.
+        """
+        veraenderlich = (
+            "resolved",
+            "weight",
+            "confidence",
+            "reasoning",
+            "generated_at",
+            "generated_by",
+        )
+        neu = {name: getattr(draft, name) for name in veraenderlich}
+        if all(getattr(vorhanden, name) == wert for name, wert in neu.items()):
+            return
+        index = self._state.edges.index(vorhanden)
+        self._state.edges[index] = vorhanden.model_copy(update=neu)
 
     def refresh_resolution(self) -> int:
         anzahl = 0

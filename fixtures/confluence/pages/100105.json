@@ -1,0 +1,32 @@
+{
+  "id": "100105",
+  "type": "page",
+  "title": "Fehlermeldungen für Endkunden — Teil 2",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung.",
+  "body": {
+    "storage": {
+      "value": "Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung. Die Oberfläche ist in Deutsch und Englisch verfügbar; die Sprache folgt dem Profil. Hochgeladene Dokumente werden geprüft und erst danach im Postfach sichtbar. Fehlermeldungen nennen den nächsten Schritt und keine technischen Kennungen. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-14T14:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "kunde"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100105"
+  }
+}

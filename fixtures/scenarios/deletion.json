@@ -1,0 +1,13 @@
+{
+  "description": "Entfernt eine Seite und einen Vorgang aus der Quelle (§9.2).",
+  "confluence": {
+    "delete": [
+      "100003"
+    ]
+  },
+  "jira": {
+    "delete": [
+      "TEAM-2"
+    ]
+  }
+}

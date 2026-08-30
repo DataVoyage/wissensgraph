@@ -1,0 +1,32 @@
+{
+  "id": "100109",
+  "type": "page",
+  "title": "Mobile Darstellung — Teil 2",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Wartungsfenster werden im Portal angekündigt, nicht nur per E-Mail.",
+  "body": {
+    "storage": {
+      "value": "Wartungsfenster werden im Portal angekündigt, nicht nur per E-Mail. Die Suche durchsucht Postfach, Verträge und Dokumente in einem Ergebnis. Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API. Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-18T11:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "portal"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100109"
+  }
+}

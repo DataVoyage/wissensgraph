@@ -96,6 +96,20 @@ class ConceptService:
 
     # -- öffentliche Operationen ------------------------------------------------
 
+    def store_of_scope(self, scope: str) -> str:
+        """Der Store, in dem ein Scope liegt (§7.3).
+
+        Raises:
+            ConceptValidationError: Wenn der Scope nicht konfiguriert ist.
+        """
+        try:
+            return self._settings.store_of_scope(scope)
+        except KeyError as exc:
+            bekannt = ", ".join(item.name for item in self._settings.scopes)
+            raise ConceptValidationError(
+                f"Unbekannter Scope '{scope}'. Konfiguriert sind: {bekannt}."
+            ) from exc
+
     def store_for(self, draft: ConceptDraft) -> str:
         """Der Store, in den ein Entwurf gehört — abgeleitet aus seinem Scope (§7.3).
 
@@ -299,14 +313,27 @@ class ConceptService:
     ) -> tuple[tuple[Edge, ...], tuple[Edge, ...]]:
         """Übersetzt die Referenzen eines Konzepts in Kanten (§8.5).
 
-        Der Zielstore ist in dieser Stufe der eigene: Eine ``[[id]]``-Referenz nennt nur eine ID,
-        keinen Store. Die Auflösung über die Store-Grenze hinweg — eine Notiz in ``personal``, die
-        auf eine Confluence-Seite in ``shared`` zeigt — ist Gegenstand der Brückenlogik in
-        Stufe 5. Bis dahin entsteht eine solche Kante mit ``resolved = false``, was genau der
-        Zustand ist, den §8.5 dafür vorsieht: Das Ziel ist hier noch nicht auffindbar.
+        Zwei Herkünfte, zwei Erzeugerkennungen: Was im Fließtext als ``[[id]]`` steht, bekommt
+        ``code:body-reference``; was die Quelle gemeldet hat, ``code:source-reference`` — so
+        verlangt es §8.5. Der Unterschied ist später wichtig: Verschwindet ein Verweis aus dem
+        Text, soll die Kante gehen; hört die Quelle auf, ihn zu melden, ebenfalls — aber es sind
+        zwei verschiedene Ereignisse, und eine gemeinsame Kennung könnte sie nicht auseinander
+        halten.
+
+        Beide gehen in *einem* Abgleich in die Datenbank. Zwei Aufrufe wären nicht atomar: Ein
+        Verweis, der von der Quelle in den Text wandert, verschwände zwischen ihnen.
+
+        Der Zielstore ist in dieser Stufe der eigene: Eine Referenz nennt nur eine ID, keinen
+        Store. Die Auflösung über die Store-Grenze hinweg — eine Notiz in ``personal``, die auf
+        eine Confluence-Seite in ``shared`` zeigt — ist Gegenstand der Brückenlogik in Stufe 5.
+        Bis dahin entsteht eine solche Kante mit ``resolved = false``, was genau der Zustand ist,
+        den §8.5 dafür vorsieht: Das Ziel ist hier noch nicht auffindbar.
         """
-        referenzen = draft.all_references
-        vorhanden = uow.concepts.existing_ids(referenzen)
+        herkunft = {
+            **dict.fromkeys(draft.body_references, defaults.GENERATED_BY_BODY_REFERENCE),
+            **dict.fromkeys(draft.source_references, defaults.GENERATED_BY_SOURCE_REFERENCE),
+        }
+        vorhanden = uow.concepts.existing_ids(tuple(herkunft))
         jetzt = self._clock()
 
         drafts = [
@@ -317,15 +344,18 @@ class ConceptService:
                 to_id=ziel,
                 kind=defaults.EDGE_KIND_REFERENCES,
                 resolved=ziel in vorhanden,
-                generated_by=defaults.GENERATED_BY_BODY_REFERENCE,
+                generated_by=erzeuger,
                 generated_at=jetzt,
             )
-            for ziel in referenzen
+            for ziel, erzeuger in herkunft.items()
         ]
 
         hinzugefuegt, entfernt = uow.edges.replace_generated(
             from_id=concept.id,
-            generated_by=defaults.GENERATED_BY_BODY_REFERENCE,
+            generated_by=(
+                defaults.GENERATED_BY_BODY_REFERENCE,
+                defaults.GENERATED_BY_SOURCE_REFERENCE,
+            ),
             drafts=drafts,
         )
 

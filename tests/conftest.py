@@ -43,6 +43,7 @@ def minimal_config_dict() -> dict[str, Any]:
         ],
         "concept_types": [
             {"name": "Confluence Page", "stores": ["shared"], "source_mirrored": True},
+            {"name": "Jira Issue", "stores": ["shared"], "source_mirrored": True},
             {"name": "Cluster", "stores": ["shared", "personal"], "source_mirrored": False},
             {"name": "Note", "stores": ["personal"], "source_mirrored": False},
         ],

@@ -1,0 +1,35 @@
+{
+  "id": "100118",
+  "type": "page",
+  "title": "Single Sign-on im Kundenportal",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Das Kundenportal meldet Nutzer über den zentralen Token-Dienst an.",
+  "body": {
+    "storage": {
+      "value": "Das Kundenportal meldet Nutzer über den zentralen Token-Dienst an. Die Oberfläche leitet auf den Identitätsanbieter weiter und erhält ein kurzlebiges Zugangstoken zurück. Rollen aus dem Verzeichnis steuern, welche Ansichten des Portals sichtbar sind. Läuft das Token ab, erneuert die Anwendung es im Hintergrund, ohne den Nutzer abzumelden."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-27T13:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "portal"
+      },
+      {
+        "name": "sso"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100118"
+  }
+}

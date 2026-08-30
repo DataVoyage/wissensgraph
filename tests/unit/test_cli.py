@@ -181,3 +181,83 @@ class TestHilfe:
 
         assert "doctor" in result.output
         assert "config" in result.output
+
+
+class TestSourcesList:
+    """``wg sources list`` — der Quellen-Teil aus §19."""
+
+    @pytest.fixture
+    def sources_file(self, tmp_path: Path) -> Path:
+        pfad = tmp_path / "sources.yaml"
+        pfad.write_text(
+            "sources:\n"
+            "  - name: dummy\n"
+            "    adapter: dummy\n"
+            '    class: "support.dummy_adapter:DummyAdapter"\n'
+            "    id_prefix: dummy\n"
+            "    target:\n"
+            "      scope: engineering\n"
+            "      default_type: Confluence Page\n",
+            encoding="utf-8",
+        )
+        return pfad
+
+    def test_zeigt_die_quelle_mit_zustand_und_faehigkeiten(
+        self, config_file: Path, sources_file: Path
+    ) -> None:
+        result = invoke(
+            "sources", "list", "--config", str(config_file), "--sources", str(sources_file)
+        )
+
+        assert result.exit_code == 0
+        assert "dummy" in result.stdout
+        assert "healthy" in result.stdout
+        assert "incremental" in result.stdout
+
+    def test_json_ausgabe(self, config_file: Path, sources_file: Path) -> None:
+        result = invoke(
+            "sources",
+            "list",
+            "--json",
+            "--config",
+            str(config_file),
+            "--sources",
+            str(sources_file),
+        )
+
+        (eintrag,) = json.loads(result.stdout)
+
+        assert eintrag["name"] == "dummy"
+        assert eintrag["capabilities"]["single_fetch"] is True
+
+    def test_ohne_quellen_ist_das_keine_stoerung(self, config_file: Path, tmp_path: Path) -> None:
+        result = invoke(
+            "sources",
+            "list",
+            "--config",
+            str(config_file),
+            "--sources",
+            str(tmp_path / "gibt-es-nicht.yaml"),
+        )
+
+        assert result.exit_code == 0
+        assert "Keine eingeschaltete Quelle" in result.stdout
+
+    def test_ein_unbekannter_adapter_bricht_ab(self, config_file: Path, tmp_path: Path) -> None:
+        """§6.5: Eine Quelle auf einen unauffindbaren Adapter ist ein Konfigurationsfehler."""
+        pfad = tmp_path / "sources.yaml"
+        pfad.write_text(
+            "sources:\n"
+            "  - name: q\n"
+            "    adapter: gibtesnicht\n"
+            "    id_prefix: q\n"
+            "    target:\n"
+            "      scope: engineering\n"
+            "      default_type: Confluence Page\n",
+            encoding="utf-8",
+        )
+
+        result = invoke("sources", "list", "--config", str(config_file), "--sources", str(pfad))
+
+        assert result.exit_code == 2
+        assert "nirgends auffindbar" in result.output

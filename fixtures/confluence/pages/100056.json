@@ -1,0 +1,32 @@
+{
+  "id": "100056",
+  "type": "page",
+  "title": "Zugriff auf interne Schnittstellen",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token.",
+  "body": {
+    "storage": {
+      "value": "Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token. Rollen bündeln Rechte; ein Recht wird nie direkt an ein Konto vergeben. Ein widerrufenes Token gilt sofort als ungültig, auch vor Ablauf seiner Frist. Der Verzeichnisabgleich läuft stündlich und trägt Gruppenzugehörigkeiten nach. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-26T14:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "sicherheit"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100056"
+  }
+}

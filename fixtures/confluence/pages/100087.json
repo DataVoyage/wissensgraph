@@ -1,0 +1,32 @@
+{
+  "id": "100087",
+  "type": "page",
+  "title": "Benachrichtigungen im Portal",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API.",
+  "body": {
+    "storage": {
+      "value": "Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API. Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe. Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung. Die Oberfläche ist in Deutsch und Englisch verfügbar; die Sprache folgt dem Profil. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-27T10:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "kunde"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100087"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "100088",
+  "type": "page",
+  "title": "Suchfunktion des Portals",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe.",
+  "body": {
+    "storage": {
+      "value": "Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe. Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung. Die Oberfläche ist in Deutsch und Englisch verfügbar; die Sprache folgt dem Profil. Hochgeladene Dokumente werden geprüft und erst danach im Postfach sichtbar. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-28T11:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "portal"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100088"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-22",
+  "id": "10022",
+  "self": "/browse/TEAM-22",
+  "fields": {
+    "summary": "Suche liefert keine Dokumente (TEAM-22)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100101]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-07-22T09:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-33",
+  "id": "10033",
+  "self": "/browse/TEAM-33",
+  "fields": {
+    "summary": "Ladelauf bricht bei Sonderzeichen ab (TEAM-33)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100034]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "datenpipeline",
+      "poc"
+    ],
+    "updated": "2026-08-02T13:00:00+00:00",
+    "status": {
+      "name": "In Progress"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

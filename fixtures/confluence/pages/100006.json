@@ -1,0 +1,32 @@
+{
+  "id": "100006",
+  "type": "page",
+  "title": "Datenqualitätsregeln im Staging",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Das Monitoring meldet, wenn ein Ladefenster überschritten wird.",
+  "body": {
+    "storage": {
+      "value": "Das Monitoring meldet, wenn ein Ladefenster überschritten wird. Referenzdaten werden vor den Bewegungsdaten geladen, damit die Zuordnung stimmt. Der Backfill läuft getrennt von der täglichen Strecke, um sie nicht zu verzögern. Der Lauf verarbeitet Bewegungsdaten aus dem Bestandssystem und schreibt sie in das Warehouse. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-03-07T13:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "warehouse"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100006"
+  }
+}

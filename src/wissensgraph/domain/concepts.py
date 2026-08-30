@@ -123,15 +123,38 @@ class ConceptDraft(ConceptFields):
         return content_hash(title=self.title, description=self.description, body=self.body)
 
     @property
-    def all_references(self) -> tuple[str, ...]:
-        """Referenzen aus dem ``body`` und vom Adapter, ohne Dubletten und ohne Selbstbezug.
+    def body_references(self) -> tuple[str, ...]:
+        """Die ``[[id]]``-Referenzen aus dem Fließtext, ohne Dubletten und ohne Selbstbezug.
 
         Der Selbstbezug fällt hier und nicht erst in der Datenbank weg: ``ck_edges_no_self``
         (§7.4) würde ihn als Fehler abweisen, und ein Konzept, das sich selbst erwähnt, ist kein
         Fehler, sondern gewöhnlicher Text.
         """
+        return self._ohne_selbstbezug(extract_references(self.body))
+
+    @property
+    def source_references(self) -> tuple[str, ...]:
+        """Die vom Adapter gemeldeten Referenzen, die *nicht* schon im Fließtext stehen (§8.5).
+
+        Die Trennung ist keine Buchhaltung, sondern eine Frage der Herkunft: §8.5 verlangt für
+        Referenzen aus der Quelle ``generated_by: 'code:source-reference'``, für die aus dem Text
+        gilt ``code:body-reference``. Steht derselbe Verweis in beidem, gewinnt der Text — er ist
+        der belegbare Nachweis, und zwei Kanten mit demselben Tripel kann es ohnehin nicht geben.
+        """
+        aus_dem_text = set(self.body_references)
+        return tuple(
+            ziel for ziel in self._ohne_selbstbezug(self.references) if ziel not in aus_dem_text
+        )
+
+    @property
+    def all_references(self) -> tuple[str, ...]:
+        """Beide Herkünfte zusammen, Text zuerst — für Prüfungen, denen die Herkunft egal ist."""
+        return (*self.body_references, *self.source_references)
+
+    def _ohne_selbstbezug(self, kandidaten: tuple[str, ...]) -> tuple[str, ...]:
+        """Entdoppelt unter Beibehaltung der Reihenfolge und wirft den Selbstbezug weg."""
         result: list[str] = []
-        for candidate in (*extract_references(self.body), *self.references):
+        for candidate in kandidaten:
             if candidate != self.id and candidate not in result:
                 result.append(candidate)
         return tuple(result)

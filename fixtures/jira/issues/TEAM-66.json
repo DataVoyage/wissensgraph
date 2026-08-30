@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-66",
+  "id": "10066",
+  "self": "/browse/TEAM-66",
+  "fields": {
+    "summary": "Token wird nicht rechtzeitig erneuert (TEAM-66)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100106]]. Betroffen ist das Themenfeld identitaet. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "identitaet",
+      "poc"
+    ],
+    "updated": "2026-09-04T11:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

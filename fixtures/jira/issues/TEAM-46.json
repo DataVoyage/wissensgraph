@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-46",
+  "id": "10046",
+  "self": "/browse/TEAM-46",
+  "fields": {
+    "summary": "Suche liefert keine Dokumente (TEAM-46)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100005]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-08-15T12:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

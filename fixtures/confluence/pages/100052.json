@@ -1,0 +1,32 @@
+{
+  "id": "100052",
+  "type": "page",
+  "title": "Sperrung eines Kontos",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte.",
+  "body": {
+    "storage": {
+      "value": "Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte. Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert. Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten. Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-22T10:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100052"
+  }
+}

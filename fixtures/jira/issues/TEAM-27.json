@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-27",
+  "id": "10027",
+  "self": "/browse/TEAM-27",
+  "fields": {
+    "summary": "Formular meldet Fehler ohne Hinweis (TEAM-27)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100106]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-07-27T14:00:00+00:00",
+    "status": {
+      "name": "Done"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

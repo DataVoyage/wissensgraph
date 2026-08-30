@@ -1,0 +1,32 @@
+{
+  "id": "100067",
+  "type": "page",
+  "title": "Verzeichnisabgleich — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Der Verzeichnisabgleich läuft stündlich und trägt Gruppenzugehörigkeiten nach.",
+  "body": {
+    "storage": {
+      "value": "Der Verzeichnisabgleich läuft stündlich und trägt Gruppenzugehörigkeiten nach. Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte. Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert. Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-07T11:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100067"
+  }
+}

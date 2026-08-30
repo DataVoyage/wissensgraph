@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-63",
+  "id": "10063",
+  "self": "/browse/TEAM-63",
+  "fields": {
+    "summary": "Quarantänetabelle läuft voll (TEAM-63)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100064]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "datenpipeline",
+      "poc"
+    ],
+    "updated": "2026-09-01T08:00:00+00:00",
+    "status": {
+      "name": "Done"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

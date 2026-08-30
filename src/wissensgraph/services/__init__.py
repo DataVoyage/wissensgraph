@@ -1,20 +1,19 @@
-"""Anwendungsdienste — die Abläufe, die API, CLI und MCP-Server gemeinsam benutzen (§4.2).
+"""Dienste — die Anwendungsfälle des Systems (§4.2, §23).
 
-Leitprinzip 14: Jede Fachlogik ist eine Funktion, die auch ohne Schnittstelle aufrufbar ist. Die
-Dienste sprechen ausschließlich mit den Ports aus :mod:`wissensgraph.ports`; ein
-import-linter-Kontrakt hält sie von der Infrastruktur fern.
+Sie sprechen mit den Ports, nie mit der Infrastruktur; ein import-linter-Kontrakt hält das fest.
+Damit ist jeder Anwendungsfall ohne Datenbank und ohne Netzwerk prüfbar.
 """
 
 from __future__ import annotations
 
-from wissensgraph.services.concepts import (
-    ConceptService,
-    ConceptValidationError,
-    UpsertResult,
-)
+from wissensgraph.services.concepts import ConceptService, ConceptValidationError, UpsertResult
+from wissensgraph.services.sources import IngestReport, SourceIngestService, SourceMapper
 
 __all__ = [
     "ConceptService",
     "ConceptValidationError",
+    "IngestReport",
+    "SourceIngestService",
+    "SourceMapper",
     "UpsertResult",
 ]

@@ -115,26 +115,27 @@ class SqlEdgeRepository(_StoreBound):
         return tuple(Edge.model_validate(dict(row)) for row in rows)
 
     def replace_generated(
-        self, *, from_id: str, generated_by: str, drafts: Sequence[EdgeDraft]
+        self, *, from_id: str, generated_by: Sequence[str], drafts: Sequence[EdgeDraft]
     ) -> tuple[tuple[Edge, ...], tuple[Edge, ...]]:
-        """Gleicht die Kanten eines Erzeugers ab und meldet Zugänge und Abgänge (§10.4)."""
+        """Gleicht die Kanten mehrerer Erzeuger ab und meldet Zugänge und Abgänge (§10.4)."""
         for draft in drafts:
             if draft.from_store != self._store:
                 raise StoreMismatchError(
                     erwartet=self._store, erhalten=draft.from_store, was="Kante"
                 )
 
+        besitz = frozenset(generated_by)
         vorhanden = self.list_outgoing(from_id)
-        # Fremde Kanten sind alle, die dieser Erzeuger nicht anfassen darf: von Hand gesetzte,
-        # kuratierte und die eines anderen Laufs. Ein Entwurf, der auf ein solches Tripel trifft,
-        # wird verworfen — "Kanten mit curated = true bleiben unangetastet" (§10.4).
+        # Fremde Kanten sind alle, die dieser Aufruf nicht anfassen darf: von Hand gesetzte,
+        # kuratierte und die eines anderen Erzeugers. Ein Entwurf, der auf ein solches Tripel
+        # trifft, wird verworfen — "Kanten mit curated = true bleiben unangetastet" (§10.4).
         fremd = {
-            edge.triple for edge in vorhanden if edge.curated or edge.generated_by != generated_by
+            edge.triple for edge in vorhanden if edge.curated or edge.generated_by not in besitz
         }
         eigene = {
             edge.triple: edge
             for edge in vorhanden
-            if not edge.curated and edge.generated_by == generated_by
+            if not edge.curated and edge.generated_by in besitz
         }
 
         gewuenscht = {draft.triple: draft for draft in drafts if draft.triple not in fremd}
@@ -194,8 +195,17 @@ class SqlEdgeRepository(_StoreBound):
 
         Das Tripel bleibt gleich — was sich ändern kann, ist die Bewertung: ob das Ziel
         inzwischen auflösbar ist, wie stark die Kante wiegt, wie das Modell sie begründet hat.
+        ``generated_by`` gehört dazu, weil derselbe Verweis seine Herkunft wechseln kann: Ein
+        Ziel, das die Quelle meldete, kann später im Fließtext als ``[[id]]`` auftauchen (§8.5).
         """
-        veraenderlich = {"resolved", "weight", "confidence", "reasoning", "generated_at"}
+        veraenderlich = {
+            "resolved",
+            "weight",
+            "confidence",
+            "reasoning",
+            "generated_at",
+            "generated_by",
+        }
         neu = {name: getattr(draft, name) for name in veraenderlich}
         if all(getattr(vorhanden, name) == wert for name, wert in neu.items()):
             return

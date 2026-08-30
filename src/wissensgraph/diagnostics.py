@@ -14,12 +14,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 from sqlalchemy.exc import SQLAlchemyError
 
+from wissensgraph.config.errors import ConfigError
 from wissensgraph.config.masking import mask_dsn
 from wissensgraph.config.network import is_local_dsn
 from wissensgraph.config.schema import Settings
+from wissensgraph.config.sources import load_sources
+from wissensgraph.infrastructure.adapters import AdapterRegistry
 from wissensgraph.infrastructure.db import StoreRegistry
 from wissensgraph.infrastructure.db.introspection import vector_dimension
 from wissensgraph.infrastructure.db.migrations import (
@@ -266,6 +270,50 @@ def _check_store_schema(
     )
 
 
+def check_sources(settings: Settings, path: Path | None = None) -> tuple[CheckResult, ...]:
+    """Prüft die konfigurierten Quellen: auffindbar, konfigurierbar, erreichbar (§8.3, §19).
+
+    Drei Ergebnisse sind möglich, und die Unterscheidung ist genau die aus §8.3 und §6.5:
+
+    * Die Quellkonfiguration ist fehlerhaft oder ein Adapter nicht auffindbar — ein **Fehler**.
+      Das ist ein Konfigurationsproblem und kein Betriebszustand (§6.5, letzter Punkt).
+    * Eine Quelle ist konfiguriert, aber nicht erreichbar — ein **Fehler** je Quelle, der den
+      Rest des Berichts nicht berührt. Ein ausgefallenes Confluence sagt nichts über Jira.
+    * Keine Quellen konfiguriert — eine **Warnung**. Zulässig (etwa im Profil ``minimal``), aber
+      nichts, was man versehentlich haben will.
+    """
+    try:
+        sources = load_sources(settings, path=path)
+        registered = AdapterRegistry().build_all(sources)
+    except ConfigError as exc:
+        return (
+            CheckResult(
+                name="quellen",
+                status=CheckStatus.FAIL,
+                detail=str(exc).splitlines()[0][:300],
+            ),
+        )
+
+    if not registered:
+        return (
+            CheckResult(
+                name="quellen",
+                status=CheckStatus.WARN,
+                detail="Keine eingeschaltete Quelle konfiguriert (config/sources.yaml).",
+            ),
+        )
+
+    return tuple(
+        CheckResult(
+            name=f"quelle:{item.name}",
+            status=CheckStatus.OK if item.usable else CheckStatus.FAIL,
+            detail=f"{item.health.state}: {item.health.detail}",
+            context={"adapter": item.config.adapter, "scope": item.config.target.scope},
+        )
+        for item in registered
+    )
+
+
 def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsReport:
     """Führt alle Prüfungen aus und fasst sie zu einem Bericht zusammen."""
     settings_checks: tuple[Callable[[Settings], CheckResult], ...] = (
@@ -277,4 +325,5 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     results = [check(settings) for check in settings_checks]
     results.extend(check_stores(registry))
     results.extend(check_schema(settings, registry))
+    results.extend(check_sources(settings))
     return DiagnosticsReport(results=tuple(results))

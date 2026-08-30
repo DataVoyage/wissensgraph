@@ -1,0 +1,32 @@
+{
+  "id": "100060",
+  "type": "page",
+  "title": "Token-Dienst — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte.",
+  "body": {
+    "storage": {
+      "value": "Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte. Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert. Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten. Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-30T11:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "zugang"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100060"
+  }
+}

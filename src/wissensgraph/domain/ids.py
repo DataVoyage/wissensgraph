@@ -20,14 +20,8 @@ from uuid import uuid4
 
 from wissensgraph.config import defaults
 
-#: Erlaubte Form eines Präfixes: kleingeschrieben, beginnt mit einem Buchstaben. Die Enge ist
-#: Absicht — das Präfix erscheint in URLs, Logs und Dateinamen von Exporten.
-_PREFIX_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
-
-#: Erlaubte Form des lokalen Teils. Verboten sind Leerraum (eine ID mit Leerzeichen lässt sich in
-#: ``[[id]]``-Referenzen nicht sauber abgrenzen) und eckige Klammern (sie sind die Syntax der
-#: Referenz selbst).
-_LOCAL_PATTERN = re.compile(r"^[^\s\[\]]+$")
+_PREFIX_PATTERN = re.compile(defaults.ID_PREFIX_PATTERN)
+_LOCAL_PATTERN = re.compile(defaults.ID_LOCAL_PATTERN)
 
 
 class InvalidConceptIdError(ValueError):

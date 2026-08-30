@@ -73,13 +73,22 @@ class EdgeRepository(Protocol):
         """Alle von einem Konzept ausgehenden Kanten."""
 
     def replace_generated(
-        self, *, from_id: str, generated_by: str, drafts: Sequence[EdgeDraft]
+        self, *, from_id: str, generated_by: Sequence[str], drafts: Sequence[EdgeDraft]
     ) -> tuple[tuple[Edge, ...], tuple[Edge, ...]]:
-        """Gleicht die von einem Erzeuger angelegten Kanten eines Konzepts ab (§10.4).
+        """Gleicht die von bestimmten Erzeugern angelegten Kanten eines Konzepts ab (§10.4).
 
-        Angefasst werden ausschließlich Kanten mit genau diesem ``generated_by`` und
-        ``curated = false``: "Kanten mit ``curated = true`` bleiben unangetastet, Kanten mit
-        ``generated_by`` dürfen von Läufen ersetzt werden."
+        Angefasst werden ausschließlich Kanten, deren ``generated_by`` in ``generated_by`` steht
+        und die ``curated = false`` sind: "Kanten mit ``curated = true`` bleiben unangetastet,
+        Kanten mit ``generated_by`` dürfen von Läufen ersetzt werden."
+
+        ``generated_by`` ist eine *Menge* und kein einzelner Wert, weil ein Konzept Verweise aus
+        mehreren Quellen zugleich hat: aus seinem Fließtext (``code:body-reference``) und aus der
+        Meldung der Quelle (``code:source-reference``, §8.5). Mit zwei getrennten Aufrufen wäre
+        der Abgleich nicht mehr atomar — ein Verweis, der von der einen Herkunft in die andere
+        wandert, verschwände zwischen ihnen für die Dauer eines Laufs.
+
+        Jeder Entwurf trägt sein eigenes ``generated_by``; der Parameter sagt nur, welche
+        bestehenden Kanten dieser Aufruf ersetzen darf.
 
         Returns:
             Die hinzugefügten und die entfernten Kanten — Grundlage der Journaleinträge

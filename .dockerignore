@@ -23,6 +23,11 @@ secrets/
 data/
 var/
 
+# --- Seed-Daten der Mock-Quellen (§9.2) ---
+# Sie kommen als Bind-Mount in den Container 'mock-sources' und gehören nicht ins
+# Anwendungsimage: Ein Image mit Testdaten wäre in der Produktion eine Fehlerquelle.
+fixtures/
+
 # --- Test- und Werkzeugartefakte ---
 .pytest_cache/
 .ruff_cache/

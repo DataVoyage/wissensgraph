@@ -1,0 +1,24 @@
+{
+  "description": "Markiert genau eine Seite und einen Vorgang als geändert (§9.2). Bewusst je ein Objekt: So ist beim zweiten Lauf überprüfbar, dass wirklich nur das Geänderte kommt.",
+  "confluence": {
+    "update": [
+      {
+        "id": "100001",
+        "title": "Nächtlicher ETL-Lauf (überarbeitet)",
+        "excerpt": "Der Lauf verarbeitet Bewegungsdaten und schreibt sie in das Warehouse; neu ist ein zweiter Durchgang.",
+        "body": "Der Lauf verarbeitet Bewegungsdaten aus dem Bestandssystem und schreibt sie in das Warehouse. Neu ist ein zweiter Durchgang für spätankommende Datensätze am Vormittag. Fehlerhafte Datensätze landen weiterhin in einer Quarantänetabelle und blockieren den Lauf nicht. Diese Seite gehört zum Themenfeld datenpipeline.",
+        "version_when": "2027-04-06T12:00:00+00:00"
+      }
+    ]
+  },
+  "jira": {
+    "update": [
+      {
+        "key": "TEAM-1",
+        "summary": "Ladelauf bricht bei Sonderzeichen ab (TEAM-1) — nachgestellt",
+        "description": "Nachgestellt in der Umgebung 'staging'. Der Kontext steht jetzt in [[confluence:100010]] statt in der bisher verlinkten Seite. Ursache eingegrenzt auf die Zeichenkodierung der Eingangsdatei.",
+        "updated": "2027-04-08T12:00:00+00:00"
+      }
+    ]
+  }
+}

@@ -10,17 +10,23 @@ Shell aufgerufen oder ein Pfad zusammengesetzt.
 from __future__ import annotations
 
 import json
+import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from wissensgraph.bootstrap import bootstrap
+from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigError
 from wissensgraph.config.masking import mask_config
 from wissensgraph.config.schema import Settings
+from wissensgraph.config.sources import load_sources
 from wissensgraph.diagnostics import CheckStatus, run_diagnostics
+from wissensgraph.infrastructure.adapters import AdapterRegistry
 from wissensgraph.infrastructure.db import StoreRegistry, UnknownStoreError
 from wissensgraph.infrastructure.db.migrations import (
     MigrationResult,
@@ -42,6 +48,9 @@ app = typer.Typer(
 config_app = typer.Typer(name="config", help="Konfiguration einsehen.", no_args_is_help=True)
 app.add_typer(config_app)
 
+sources_app = typer.Typer(name="sources", help="Quellen einsehen (§19).", no_args_is_help=True)
+app.add_typer(sources_app)
+
 ConfigFileOption = Annotated[
     Path | None,
     typer.Option("--config", help="Pfad zur Kern-Config-Datei; sonst aus WG_CONFIG_DIR."),
@@ -56,6 +65,29 @@ DotenvFileOption = Annotated[
 #: Unicode-Unterstützung würde bei Symbolen wie ✓ abbrechen, und ein Diagnosewerkzeug, das an
 #: seiner eigenen Ausgabe scheitert, ist wertlos.
 _SYMBOLS = {CheckStatus.OK: "[ ok ]", CheckStatus.WARN: "[warn]", CheckStatus.FAIL: "[fail]"}
+
+
+@contextmanager
+def _maschinenlesbar() -> Iterator[None]:
+    """Lenkt den Log für die Dauer eines Blocks auf stderr.
+
+    Der Log geht sonst nach stdout (§21.1) — für einen Dienst richtig, für ein Kommando mit
+    ``--json`` fatal: Eine Logzeile mitten in der Ausgabe macht sie unlesbar für ``jq``. Hier ist
+    stdout die Nutzlast, und alles andere gehört auf den Fehlerkanal.
+    """
+    root = logging.getLogger()
+    umgeleitet = [
+        (handler, handler.stream)
+        for handler in root.handlers
+        if isinstance(handler, logging.StreamHandler)
+    ]
+    for handler, _ in umgeleitet:
+        handler.setStream(sys.stderr)
+    try:
+        yield
+    finally:
+        for handler, stream in umgeleitet:
+            handler.setStream(stream)
 
 
 def _load(config_file: Path | None, service: str, dotenv_file: Path | None = None) -> Settings:
@@ -258,6 +290,92 @@ def serve(
         port=settings.api.port,
         log_config=None,
     )
+
+
+@sources_app.command("list")
+def sources_list(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    sources_file: Annotated[
+        Path | None,
+        typer.Option("--sources", help="Pfad zu sources.yaml; sonst aus WG_SOURCES_FILE."),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Als JSON ausgeben statt als Tabelle.")
+    ] = False,
+) -> None:
+    """Listet die konfigurierten Quellen mit Capabilities und Zustand (§19).
+
+    Der Zustand entsteht durch einen echten ``health()``-Aufruf. Eine ausgefallene Quelle
+    erscheint deshalb mit ihrem Grund und nicht einfach gar nicht (§8.3) — und das Kommando
+    endet trotzdem mit 0: Ein Quellausfall ist eine Meldung, kein Werkzeugfehler.
+    """
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with _maschinenlesbar() if as_json else nullcontext():
+        try:
+            sources = load_sources(settings, path=sources_file)
+            registered = AdapterRegistry().build_all(sources)
+        except ConfigError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+
+    if as_json:
+        typer.echo(
+            json.dumps([item.as_dict() for item in registered], indent=2, ensure_ascii=False)
+        )
+        return
+
+    if not registered:
+        typer.echo("Keine eingeschaltete Quelle konfiguriert.")
+        return
+
+    for item in registered:
+        symbol = _SYMBOLS[CheckStatus.OK if item.usable else CheckStatus.FAIL]
+        faehig = ", ".join(
+            name
+            for name, an in (
+                {} if item.adapter is None else item.adapter.capabilities.model_dump()
+            ).items()
+            if an
+        )
+        typer.echo(
+            f"{symbol} {item.name} (adapter '{item.config.adapter}', Präfix "
+            f"'{item.config.id_prefix}' -> Scope '{item.config.target.scope}')"
+        )
+        typer.echo(f"       Fähigkeiten: {faehig or 'keine'}")
+        typer.echo(f"       Zustand: {item.health.state} — {item.health.detail}")
+
+
+@app.command("mock-sources")
+def mock_sources(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    host: Annotated[str, typer.Option("--host", help="Bind-Adresse.")] = defaults.MOCK_HOST,
+    port: Annotated[int, typer.Option("--port", help="Port.")] = defaults.MOCK_PORT,
+    fixtures: Annotated[
+        Path | None, typer.Option("--fixtures", help="Verzeichnis der Seed-Daten (§9.2).")
+    ] = None,
+) -> None:
+    """Startet den Mock-Quellserver — der Startbefehl des Containers ``mock-sources`` (§9).
+
+    Als Kommando und nicht als ``uvicorn``-Aufruf im Compose, damit derselbe Startweg auf jeder
+    Plattform gilt und der Dienst dieselbe Logging-Einrichtung bekommt wie alle anderen.
+    """
+    import uvicorn
+
+    from wissensgraph.mocks import FixturesNotFound, create_mock_app
+
+    # Nur wegen des Loggings: Der Mock-Server benutzt die Konfiguration selbst nicht, soll aber
+    # in dasselbe Format schreiben wie alle anderen Dienste (§21.1).
+    _load(config_file, service="mock-sources", dotenv_file=dotenv_file)
+    try:
+        application = create_mock_app(fixtures)
+    except FixturesNotFound as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"{_SYMBOLS[CheckStatus.WARN]} Entwicklungsdienst ohne Authentifizierung (§9.1).")
+    uvicorn.run(application, host=host, port=port, log_config=None)
 
 
 @app.command("version")

@@ -15,7 +15,7 @@ festgelegte Abnahme erfüllt.
 | 0 | Projekt-, Container- und Konfigurationsgrundgerüst | **fertig** |
 | 1 | Datenmodell und Migrationen | **fertig** |
 | 2 | Domänenkern: Konzepte, Kanten, Upsert | **fertig** |
-| 3 | Adapter-Framework und Mock-Quellen | offen |
+| 3 | Adapter-Framework und Mock-Quellen | **fertig** |
 | 4 | Sync-Orchestrierung | offen |
 | 5 | Store-Trennung und Brücken | offen |
 | 6 | Kernspace-Auflösung und Referenzdichte | offen |
@@ -256,6 +256,151 @@ liefert, und keinen Lauf, der sie einsammelt; das sind die Stufen 3 und 4. `runs
 
 ---
 
+## Stufe 3 — was steht
+
+Quellanbindung so, dass die nächste Quelle nichts am Kern ändert — und Entwicklung ohne Zugang
+zu den echten Systemen.
+
+### Der Kontrakt und die drei Wege zu einem Adapter
+
+`ports/sources.py` beschreibt, was der Kern von einer Quelle verlangt: `SourceDocument`,
+`Cursor`, `AdapterCapabilities`, `HealthStatus` und das Protokoll `SourceAdapter` (§8.2). Es ist
+ein `Protocol` und keine Basisklasse — wer einen Adapter beisteuert, schuldet Methoden, keine
+Abstammung. Der Dummy-Adapter unter `tests/support/dummy_adapter.py` erbt von nichts und besteht
+trotzdem die volle Contract-Suite; das ist der Beleg.
+
+Die Registry (`infrastructure/adapters/registry.py`) findet einen Adapter auf drei Wegen, in
+dieser Rangfolge:
+
+1. **`class: "paket.modul:Klasse"`** in `sources.yaml` — der spezifischste Weg, deshalb der
+   stärkste. Keine Installation, kein Entry Point, keine Zeile Kerncode.
+2. **Entry Point** unter der Gruppe `wissensgraph.adapters` — für ein installiertes Paket, das
+   sich selbst anmeldet. Ein gleichnamiger Entry Point verdrängt eine mitgelieferte Umsetzung.
+3. **Mitgeliefert** — Confluence, Jira, Fixture. Eingebaut, damit ein frisch ausgechecktes
+   Repository ohne Installationsschritt läuft.
+
+Zwei Fehlerarten sind dabei bewusst getrennt, weil das Dokument sie an zwei Stellen verschieden
+behandelt: **Nicht auffindbar** ist ein Startfehler (§6.5, letzter Punkt) — eine Konfiguration,
+die auf einen Adapter zeigt, den es nicht gibt, ist falsch, und zwar jetzt. **Auffindbar, aber
+kaputt** ist keiner: "Ein fehlerhafter Adapter deaktiviert sich selbst und erscheint als
+`unhealthy`, ohne den Start zu verhindern" (§8.3). Eine unerreichbare Confluence-Instanz darf
+nicht verhindern, dass die Jira-Quelle läuft.
+
+### Gemockt wird das Quellsystem, nicht der Adapter
+
+§9.1 ist an dieser Stelle ungewöhnlich streng, und die Strenge lohnt sich. Ein gemockter Adapter
+bewiese nur, dass der Kern mit einem Adapter umgehen kann, der sich wie erwartet verhält. Der
+Dienst `mock-sources` bildet stattdessen die Confluence- und Jira-Endpunkte nach, die die Adapter
+wirklich benutzen — mit ihrer Paginierung (`start`/`limit` gegen `startAt`/`maxResults`) und ihrer
+Verschachtelung. Damit läuft der komplette Codepfad in der Entwicklung tatsächlich, und die
+Umstellung auf die echte Quelle ist eine URL (§9.4).
+
+Die Steuerungs-API aus §9.3 ist vollständig da: `reset`, `scenario/{name}`, `latency`, `fail`,
+`state`. Ihr wichtigster Parameter ist `after_requests` bei `fail` — damit lässt sich ein Abbruch
+*mitten* in einer Iteration auslösen. Ohne ihn wäre die letzte Zusicherung aus §22.3
+("Netzwerkfehler mitten in der Iteration lassen den Cursor unverändert") nicht prüfbar, sondern
+nur behauptet.
+
+Der Seed-Korpus unter `fixtures/` hat den Umfang aus §9.2: 120 Seiten in drei klar trennbaren
+Themenfeldern, 80 Vorgänge, dazu die vier vorbereiteten Sonderfälle — ein Dokument zwischen zwei
+Themenfeldern (Single Sign-on im Kundenportal), ein bewusst isolierter Knoten (Wartungsplan der
+Kaffeemaschine), ein `depends_on`-Paar über Themengrenzen hinweg (Ladestrecke → Token-Dienst) und
+118 interne Verweise für die Referenzauflösung.
+
+### Die Contract-Suite gehört dem Kern
+
+`src/wissensgraph/testing/adapter_contract.py` steht im Paket und nicht unter `tests/`. §8.6
+verlangt das ausdrücklich: "sie ist Teil des Kerns und wird nicht kopiert". Läge sie in der
+Testsuite, könnte ein externer Adapter sie nur abschreiben — und ab der ersten Abschrift gäbe es
+zwei Fassungen.
+
+`tests/contract/test_adapter_contract.py` besteht deshalb aus vier Klassen und keinem einzigen
+eigenen Test. Wer die Quelle steuern kann, überschreibt die Haken `aendern`,
+`rate_limit_erzwingen` und `ausfall_erzwingen`; wer nicht, überspringt die betroffenen Prüfungen
+**mit Begründung**. Eine Zusicherung, die nicht geprüft werden kann, soll als ungeprüft dastehen
+und nicht als bestanden — deshalb die fünf sichtbaren Skips beim Fixture- und Dummy-Adapter.
+
+Confluence und Jira laufen in dieser Suite gegen den echten Mock-Server, nur ohne Socket
+(`starlette.testclient.TestClient` ist ein `httpx.Client`, der direkt in die ASGI-Anwendung
+spricht). Damit prüfen die Contract-Tests wirklich Paginierung, 429-Behandlung und
+Abbruchverhalten — auf jedem Rechner, auch ohne Docker.
+
+### Abweichungen und Ergänzungen
+
+Drei Stellen gehen über den Wortlaut des Dokuments hinaus, jede aus einer anderen Vorgabe
+desselben Dokuments begründet:
+
+1. **`target.store` ist nur Kontrolle, nicht Steuerung.** §8.4 zeigt `store:` im Beispiel einer
+   Quelle. Benutzt wird er nicht: Der Store ergibt sich aus dem Scope, und die Zuordnung
+   Scope → Store steht in `wissensgraph.yaml` (§7.3). Ein angegebener abweichender Store ist ein
+   Startfehler. Sonst gäbe es zwei Wahrheiten darüber, in welche Datenbank eine Quelle schreibt,
+   und die Datenschutzgrenze aus Leitprinzip 2 hinge an der Sorgfalt beim Ausfüllen einer
+   YAML-Datei (§20.1).
+
+2. **JSONPath als bewusst kleine Teilmenge.** §8.4 schreibt Ausdrücke wie
+   `$.metadata.labels[*].name`. Unterstützt sind `$`, `.name`, `['name']`, `[0]` und `[*]` —
+   mehr kommt in einer Mapping-Konfiguration nicht vor. Filterausdrücke, Slices und rekursiver
+   Abstieg fehlen, und zwar sichtbar: Ein nicht unterstützter Ausdruck bricht beim *Laden* ab und
+   nennt Position und Zeichen, statt beim ersten Lauf still einen leeren Titel zu erzeugen.
+
+3. **Quellübergreifende Referenzen über bekannte Präfixe.** §8.5 nennt den Regelfall: externe ID
+   plus Quellpräfix ergibt die interne ID. Ein Jira-Vorgang, der auf eine Confluence-Seite zeigt,
+   kann das mit einer externen ID nicht ausdrücken. Nennt eine Referenz deshalb bereits ein in
+   `sources.yaml` konfiguriertes Präfix, wird sie unverändert übernommen. Die Einschränkung auf
+   *bekannte* Präfixe ist wesentlich — sonst würde eine externe ID, die zufällig einen
+   Doppelpunkt enthält, stillschweigend als fremde Konzept-ID gelesen.
+
+### Zwei Änderungen am Domänenkern der Stufe 2
+
+Beide durch §8.5 veranlasst:
+
+- **`replace_generated` nimmt jetzt eine Menge von Erzeugern.** §8.5 verlangt für Referenzen aus
+  der Quelle `generated_by: 'code:source-reference'`, für die aus dem Fließtext gilt
+  `code:body-reference`. Zwei getrennte Aufrufe wären nicht atomar gewesen: Ein Verweis, der von
+  der einen Herkunft in die andere wandert, verschwände zwischen ihnen für die Dauer eines Laufs.
+  Jeder Entwurf trägt nun sein eigenes `generated_by`; der Parameter sagt nur, welche bestehenden
+  Kanten der Aufruf ersetzen darf.
+- **`ConceptDraft` trennt `body_references` und `source_references`.** Steht derselbe Verweis in
+  beidem, gewinnt der Text — er ist der belegbare Nachweis, und zwei Kanten mit demselben Tripel
+  kann es ohnehin nicht geben.
+
+### Zwei neue Schutzregeln
+
+- **"Adapter kennen den Graphen nicht"** (import-linter). §8.2 Regel 2: "Der Adapter kennt weder
+  `concepts` noch SQL noch Scopes. Er liefert DTOs." Ohne die Regel baut der erste Adapter, dem
+  ein Feld fehlt, sich selbst einen Konzept-Entwurf zusammen — und das Versprechen aus §8.1, dass
+  eine neue Quelle den Kern nicht anfasst, ist weg.
+- **"Mock-Quellen kennen den Graphen nicht"**. Ein Mock-Server, der den Graphen kennt, wäre keiner
+  mehr: Er würde beweisen, dass der Kern mit einer Quelle umgehen kann, die er selbst gebaut hat.
+
+### Abnahme (§24, Stufe 3)
+
+| Kriterium | Wo geprüft | Ergebnis |
+|---|---|---|
+| Beide Adapter bestehen die Contract-Suite | `tests/contract/test_adapter_contract.py` | 59 bestanden, 5 begründet übersprungen |
+| Der Fixture-Korpus ist vollständig als Konzepte abgebildet | `test_ingest.py`, `test_quellen_postgres.py` | 120 + 80 = 200 Konzepte, 217 Kanten |
+| Das Änderungsszenario führt beim zweiten Lauf nur zu den erwarteten Aktualisierungen | dieselben | 1 Dokument, 1 `updated`; ohne Szenario 0 Journaleinträge |
+| Ein im Test angelegter Dummy-Adapter wird allein über einen Config-Eintrag aktiv | `test_adapter_registry.py` | `class:`-Eintrag genügt, kein Kerncode berührt |
+
+Zusätzlich gegen den laufenden Stack geprüft: `wg sources list` und `wg doctor` melden beide
+Quellen als `healthy`, und ein Lauf im `api`-Container gegen den Container `mock-sources` und die
+echten Entwicklungsdatenbanken ergibt 200 Konzepte, 217 Kanten, 0 unaufgelöste Kanten — der
+zweite Lauf schreibt nichts (§22.2 Punkt 1). Die Testdaten wurden danach wieder entfernt.
+
+### Ausdrücklich außen vor
+
+Echte Zugangsdaten und Zeitsteuerung, so vorgesehen in §24. `schedule.cron` wird gelesen und
+validiert, aber nicht ausgeführt. Ebenfalls noch offen und Gegenstand der Stufe 4: `runs`- und
+`source_cursors`-Verwaltung, Löschbehandlung nach Capabilities, Advisory-Lock je Quelle,
+`--dry-run`, Job-Queue und Lauf-Statistik. Der Cursor kommt in `SourceIngestService.ingest` als
+Wert herein und wieder heraus, ohne gespeichert zu werden — genug, um den inkrementellen Lauf
+schon jetzt zu prüfen, und bewusst zu wenig, um eine Orchestrierung zu sein.
+
+Der Endpunkt `GET /api/v1/sources` (§16.2) fehlt noch; die HTTP-API ist Stufe 11. Bis dahin
+beantwortet `wg sources list --json` dieselbe Frage.
+
+---
+
 ## Entwicklung
 
 ### Plattformunabhängigkeit
@@ -288,6 +433,25 @@ uv run python scripts/dev.py migrate         # wg migrate im api-Container
 uv run python scripts/dev.py migrate --check # nur berichten, was aussteht
 ```
 
+### Arbeiten gegen die Mock-Quellen
+
+In den Profilen `dev` und `test` läuft der Dienst `mock-sources` mit; auf dem Host ist er unter
+`http://localhost:8090` erreichbar (`WG_MOCK_HOST_PORT`). Die Seed-Daten kommen als Bind-Mount aus
+`./fixtures` — eine geänderte Fixture wirkt sofort, ohne neuen Build.
+
+```bash
+docker compose exec api wg sources list           # Adapter, Fähigkeiten, Zustand
+docker compose exec api wg sources list --json    # dasselbe maschinenlesbar
+curl -X POST http://localhost:8090/_control/scenario/incremental_update
+curl -X POST http://localhost:8090/_control/reset
+curl http://localhost:8090/_control/state
+```
+
+In `.env` bleiben `WG_SOURCE_*__BASE_URL` **leer**, solange gegen die Mocks entwickelt wird: Docker
+Compose liest diese Datei für seine eigene Variablenersetzung, und ein dort gesetztes
+`http://localhost:8090/...` zeigte im Container auf den Container selbst statt auf den Dienst
+`mock-sources`. Ohne Wert greift der Compose-Default.
+
 Werkzeuge gegen den `personal`-Store laufen grundsätzlich **im Container**: Sein Netz ist
 `internal: true` (§5.2), er ist vom Host aus nicht erreichbar, und das ist beabsichtigt.
 
@@ -306,7 +470,12 @@ Testebenen nach §22.1: `tests/unit`, `tests/contract`, `tests/integration`, `te
 Unter `tests/support` liegt eine speicherresidente Umsetzung der Persistenz-Ports. Sie ist kein
 Zugeständnis an bequemere Tests, sondern der Beweis, dass die Ports tragen: Liefe der
 `ConceptService` nicht ohne Datenbank, wären die Tests in `test_concept_service.py` nicht
-schreibbar.
+schreibbar. Daneben liegen dort seit Stufe 3 der Dummy-Adapter für das vierte Abnahmekriterium
+und die Anbindung an den Mock-Server im selben Prozess.
+
+Die Contract-Tests brauchen kein Docker: Sie sprechen die ASGI-Anwendung des Mock-Servers direkt
+an. Was ihnen fehlt — dass Netz, Port und Bind-Mount stimmen —, prüft der Integrationstest gegen
+den wirklich gestarteten Container.
 
 Die Tests unter `tests/integration` und `tests/guards` brauchen eine echte PostgreSQL-Instanz mit
 `pgvector`. Ohne sie **überspringen sie sich selbst**, damit die Suite auf einem Rechner ohne

@@ -1,0 +1,29 @@
+{
+  "id": "100119",
+  "type": "page",
+  "title": "Wartungsplan der Kaffeemaschine",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Reinigung, Entkalkung und Bohnenbestellung im Erdgeschoss.",
+  "body": {
+    "storage": {
+      "value": "Die Maschine im Erdgeschoss wird montags gereinigt und quartalsweise entkalkt. Bohnen bestellt das Empfangsteam, sobald weniger als zwei Kilogramm vorrätig sind. Störungen meldet man beim Facility-Management, nicht beim IT-Support."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-28T14:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "hausverwaltung"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100119"
+  }
+}

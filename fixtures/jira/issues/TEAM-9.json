@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-9",
+  "id": "10009",
+  "self": "/browse/TEAM-9",
+  "fields": {
+    "summary": "Ladelauf bricht bei Sonderzeichen ab (TEAM-9)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100010]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "datenpipeline",
+      "poc"
+    ],
+    "updated": "2026-07-09T10:00:00+00:00",
+    "status": {
+      "name": "In Progress"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

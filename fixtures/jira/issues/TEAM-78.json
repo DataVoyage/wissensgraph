@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-78",
+  "id": "10078",
+  "self": "/browse/TEAM-78",
+  "fields": {
+    "summary": "Suche liefert keine Dokumente (TEAM-78)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100037]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-09-16T09:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

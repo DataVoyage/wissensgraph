@@ -18,7 +18,7 @@ from wissensgraph.config.network import is_local_dsn
 Probability = Annotated[float, Field(ge=0.0, le=1.0)]
 
 
-def _empty_to_none(value: object) -> object:
+def empty_to_none(value: object) -> object:
     """Behandelt einen leeren String wie einen fehlenden Wert.
 
     Ein Platzhalter mit leerem Fallback (``${WG_BROKER_URL:-}``) liefert einen leeren String.
@@ -229,7 +229,7 @@ class ApiConfig(FrozenModel):
     token: str | None = None
     cors_origins: tuple[str, ...] = (defaults.API_CORS_ORIGINS,)
 
-    _normalize_token = field_validator("token", mode="before")(_empty_to_none)
+    _normalize_token = field_validator("token", mode="before")(empty_to_none)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -322,7 +322,7 @@ class Settings(FrozenModel):
     broker_url: str | None = None
     personal_allow_remote_models: bool = defaults.PERSONAL_ALLOW_REMOTE_MODELS
 
-    _normalize_broker_url = field_validator("broker_url", mode="before")(_empty_to_none)
+    _normalize_broker_url = field_validator("broker_url", mode="before")(empty_to_none)
 
     @model_validator(mode="after")
     def _check_cross_references(self) -> Settings:

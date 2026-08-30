@@ -1,0 +1,32 @@
+{
+  "id": "100069",
+  "type": "page",
+  "title": "Gültigkeitsdauer von Zugangstoken — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert.",
+  "body": {
+    "storage": {
+      "value": "Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert. Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten. Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen. Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-09T13:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "zugang"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100069"
+  }
+}

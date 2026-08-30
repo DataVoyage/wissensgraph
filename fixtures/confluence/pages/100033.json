@@ -1,0 +1,32 @@
+{
+  "id": "100033",
+  "type": "page",
+  "title": "Idempotenz der Ladeschritte — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Der Lauf verarbeitet Bewegungsdaten aus dem Bestandssystem und schreibt sie in das Warehouse.",
+  "body": {
+    "storage": {
+      "value": "Der Lauf verarbeitet Bewegungsdaten aus dem Bestandssystem und schreibt sie in das Warehouse. Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht. Jeder Ladeschritt ist idempotent: ein zweiter Lauf über denselben Zeitraum ändert nichts. Die Partitionierung erfolgt nach Buchungstag, nicht nach Ladezeitpunkt. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-03T12:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "warehouse"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100033"
+  }
+}

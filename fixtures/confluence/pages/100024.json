@@ -1,0 +1,32 @@
+{
+  "id": "100024",
+  "type": "page",
+  "title": "Partitionierung der Faktentabellen — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Der Backfill läuft getrennt von der täglichen Strecke, um sie nicht zu verzögern.",
+  "body": {
+    "storage": {
+      "value": "Der Backfill läuft getrennt von der täglichen Strecke, um sie nicht zu verzögern. Der Lauf verarbeitet Bewegungsdaten aus dem Bestandssystem und schreibt sie in das Warehouse. Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht. Jeder Ladeschritt ist idempotent: ein zweiter Lauf über denselben Zeitraum ändert nichts. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-03-25T10:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "warehouse"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100024"
+  }
+}

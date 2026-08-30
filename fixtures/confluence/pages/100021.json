@@ -1,0 +1,32 @@
+{
+  "id": "100021",
+  "type": "page",
+  "title": "Nächtlicher ETL-Lauf — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Schemaänderungen in der Quelle werden additiv nachgezogen; Spalten werden nie entfernt.",
+  "body": {
+    "storage": {
+      "value": "Schemaänderungen in der Quelle werden additiv nachgezogen; Spalten werden nie entfernt. Das Monitoring meldet, wenn ein Ladefenster überschritten wird. Referenzdaten werden vor den Bewegungsdaten geladen, damit die Zuordnung stimmt. Der Backfill läuft getrennt von der täglichen Strecke, um sie nicht zu verzögern. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-03-22T14:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "warehouse"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100021"
+  }
+}

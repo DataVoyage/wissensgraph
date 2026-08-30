@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-77",
+  "id": "10077",
+  "self": "/browse/TEAM-77",
+  "fields": {
+    "summary": "Rollenzuordnung fehlt nach Verzeichnisabgleich (TEAM-77)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100117]]. Betroffen ist das Themenfeld identitaet. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "identitaet",
+      "poc"
+    ],
+    "updated": "2026-09-15T08:00:00+00:00",
+    "status": {
+      "name": "In Progress"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

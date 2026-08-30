@@ -1,0 +1,72 @@
+# Quell-Adapter und ihre Abbildungsregeln (§8.4, §6.3).
+#
+# Hier stehen KEINE Zugangsdaten. Tokens kommen als ${WG_SOURCE_*__TOKEN} aus der Prozessumgebung
+# (§20.2). Ein nicht auflösbarer Platzhalter ohne Rückfallwert ist ein Startfehler (§6.1 Regel 3).
+#
+# Der Wechsel von den Mock-Quellen auf die echten Systeme ist genau eine Änderung je Quelle:
+# WG_SOURCE_CONFLUENCE__BASE_URL zeigt statt auf den Container 'mock-sources' auf die echte
+# Instanz, plus ein gültiges Token (§9.4). Kein Codepfad kennt den Unterschied.
+#
+# Der Store steht bewusst nur zur Kontrolle dabei. Maßgeblich ist der Scope; wohin ein Scope
+# schreibt, entscheidet allein config/wissensgraph.yaml (§20.1). Weichen beide voneinander ab,
+# bricht der Start ab.
+
+sources:
+  - name: confluence-eng
+    adapter: confluence
+    enabled: true
+    id_prefix: confluence
+    target:
+      store: shared
+      scope: engineering
+      default_type: Confluence Page
+    connection:
+      base_url: ${WG_SOURCE_CONFLUENCE__BASE_URL:-http://mock-sources:8090/confluence}
+      token: ${WG_SOURCE_CONFLUENCE__TOKEN:-}
+      timeout_seconds: 30
+      rate_limit_per_second: 5
+      retries: 3
+      page_size: 50
+    selection:
+      spaces: [ENG, ARCH]
+      exclude_labels: [archiv, entwurf]
+    # Die Ausdrücke schlagen die Vorgaben des Adapters. Ein leeres Ergebnis lässt die Vorgabe
+    # stehen — 'description' darf fehlen und wird später per Task 'summarization' erzeugt (§8.4).
+    mapping:
+      title: $.title
+      description: $.excerpt
+      body: $.body.storage.value
+      resource: $.links.webui
+      tags: $.metadata.labels[*].name
+    schedule:
+      cron: 0 */6 * * *
+      # Zeitsteuerung ist in Stufe 3 ausdrücklich außen vor (§24); Läufe werden von Hand
+      # ausgelöst. Der Eintrag steht hier, damit die Umstellung später keine Strukturänderung ist.
+      enabled: false
+
+  - name: jira-team
+    adapter: jira
+    enabled: true
+    id_prefix: jira
+    target:
+      store: shared
+      scope: engineering
+      default_type: Jira Issue
+    connection:
+      base_url: ${WG_SOURCE_JIRA__BASE_URL:-http://mock-sources:8090/jira}
+      token: ${WG_SOURCE_JIRA__TOKEN:-}
+      timeout_seconds: 30
+      rate_limit_per_second: 5
+      retries: 3
+      page_size: 50
+    selection:
+      boards: [TEAM]
+      jql_filter: project = TEAM
+    mapping:
+      title: $.fields.summary
+      body: $.fields.description
+      resource: $.self
+      tags: $.fields.labels[*]
+    schedule:
+      cron: 0 */6 * * *
+      enabled: false

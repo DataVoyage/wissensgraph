@@ -1,0 +1,32 @@
+{
+  "id": "100093",
+  "type": "page",
+  "title": "Weiterleitung nach der Anmeldung",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Wartungsfenster werden im Portal angekündigt, nicht nur per E-Mail.",
+  "body": {
+    "storage": {
+      "value": "Wartungsfenster werden im Portal angekündigt, nicht nur per E-Mail. Die Suche durchsucht Postfach, Verträge und Dokumente in einem Ergebnis. Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API. Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-02T09:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "kunde"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100093"
+  }
+}

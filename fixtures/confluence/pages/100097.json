@@ -1,0 +1,32 @@
+{
+  "id": "100097",
+  "type": "page",
+  "title": "Rückmeldungen und Bewertungen",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung.",
+  "body": {
+    "storage": {
+      "value": "Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung. Die Oberfläche ist in Deutsch und Englisch verfügbar; die Sprache folgt dem Profil. Hochgeladene Dokumente werden geprüft und erst danach im Postfach sichtbar. Fehlermeldungen nennen den nächsten Schritt und keine technischen Kennungen. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-06T13:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "portal"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100097"
+  }
+}

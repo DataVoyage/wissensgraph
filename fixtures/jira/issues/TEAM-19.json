@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-19",
+  "id": "10019",
+  "self": "/browse/TEAM-19",
+  "fields": {
+    "summary": "Formular meldet Fehler ohne Hinweis (TEAM-19)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100098]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-07-19T13:00:00+00:00",
+    "status": {
+      "name": "Done"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

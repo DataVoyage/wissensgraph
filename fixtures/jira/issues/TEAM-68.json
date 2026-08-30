@@ -1,0 +1,23 @@
+{
+  "key": "TEAM-68",
+  "id": "10068",
+  "self": "/browse/TEAM-68",
+  "fields": {
+    "summary": "Backfill dauert zu lange (TEAM-68)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100069]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "datenpipeline",
+      "poc"
+    ],
+    "updated": "2026-09-06T13:00:00+00:00",
+    "status": {
+      "name": "Open"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": [
+    "TEAM-69"
+  ]
+}

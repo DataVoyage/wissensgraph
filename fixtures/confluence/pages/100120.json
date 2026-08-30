@@ -1,0 +1,35 @@
+{
+  "id": "100120",
+  "type": "page",
+  "title": "Ladestrecke mit technischem Benutzer",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Der nächtliche ETL-Lauf setzt einen gültigen Token des Token-Dienstes voraus.",
+  "body": {
+    "storage": {
+      "value": "Der nächtliche ETL-Lauf setzt einen gültigen Token des Token-Dienstes voraus. Ohne erneuerbares Dienstkonto bricht die Ingestion aus dem Bestandssystem mit einem Berechtigungsfehler ab. Die Ladestrecke hängt damit unmittelbar von der Verfügbarkeit des Token-Dienstes ab. Ein Ausfall der Anmeldung ist deshalb auch ein Ausfall der Datenversorgung."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-29T08:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "etl"
+      },
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "abhaengigkeit"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100120"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "description": "Legt ein thematisch isoliertes Konzept ohne Verweise an (§9.2).",
+  "confluence": {
+    "create": [
+      {
+        "id": "100121",
+        "type": "page",
+        "title": "Fundsachen und Schließfächer",
+        "space": {
+          "key": "ARCH",
+          "name": "Architektur"
+        },
+        "excerpt": "Wo liegengebliebene Gegenstände abgegeben werden.",
+        "body": {
+          "storage": {
+            "value": "Gefundene Gegenstände gibt man am Empfang ab und erhält eine Quittung. Nicht abgeholte Fundsachen werden nach sechs Monaten gespendet. Schließfächer im Untergeschoss vergibt die Hausverwaltung."
+          }
+        },
+        "version": {
+          "number": 1,
+          "when": "2027-04-16T12:00:00+00:00"
+        },
+        "metadata": {
+          "labels": [
+            {
+              "name": "hausverwaltung"
+            }
+          ]
+        },
+        "links": {
+          "webui": "/spaces/ARCH/pages/100121"
+        }
+      }
+    ]
+  }
+}

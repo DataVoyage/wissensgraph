@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-43",
+  "id": "10043",
+  "self": "/browse/TEAM-43",
+  "fields": {
+    "summary": "Formular meldet Fehler ohne Hinweis (TEAM-43)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100002]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-08-12T09:00:00+00:00",
+    "status": {
+      "name": "Done"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

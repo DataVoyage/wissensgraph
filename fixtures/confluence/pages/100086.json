@@ -1,0 +1,32 @@
+{
+  "id": "100086",
+  "type": "page",
+  "title": "Dokumentenupload",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Die Suche durchsucht Postfach, Verträge und Dokumente in einem Ergebnis.",
+  "body": {
+    "storage": {
+      "value": "Die Suche durchsucht Postfach, Verträge und Dokumente in einem Ergebnis. Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API. Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe. Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-26T09:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "frontend"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100086"
+  }
+}

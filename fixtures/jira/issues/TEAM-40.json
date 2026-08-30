@@ -1,0 +1,23 @@
+{
+  "key": "TEAM-40",
+  "id": "10040",
+  "self": "/browse/TEAM-40",
+  "fields": {
+    "summary": "Zweiter Faktor lässt sich nicht zurücksetzen (TEAM-40)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100080]]. Betroffen ist das Themenfeld identitaet. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "identitaet",
+      "poc"
+    ],
+    "updated": "2026-08-09T13:00:00+00:00",
+    "status": {
+      "name": "Open"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": [
+    "TEAM-41"
+  ]
+}

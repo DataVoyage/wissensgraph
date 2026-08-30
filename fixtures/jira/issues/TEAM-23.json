@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-23",
+  "id": "10023",
+  "self": "/browse/TEAM-23",
+  "fields": {
+    "summary": "Quarantänetabelle läuft voll (TEAM-23)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100024]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "datenpipeline",
+      "poc"
+    ],
+    "updated": "2026-07-23T10:00:00+00:00",
+    "status": {
+      "name": "Done"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

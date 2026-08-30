@@ -1,0 +1,32 @@
+{
+  "id": "100041",
+  "type": "page",
+  "title": "Rollen und Berechtigungen",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Rollen bündeln Rechte; ein Recht wird nie direkt an ein Konto vergeben.",
+  "body": {
+    "storage": {
+      "value": "Rollen bündeln Rechte; ein Recht wird nie direkt an ein Konto vergeben. Ein widerrufenes Token gilt sofort als ungültig, auch vor Ablauf seiner Frist. Der Verzeichnisabgleich läuft stündlich und trägt Gruppenzugehörigkeiten nach. Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-11T13:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "sicherheit"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100041"
+  }
+}

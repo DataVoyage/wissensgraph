@@ -1,0 +1,32 @@
+{
+  "id": "100026",
+  "type": "page",
+  "title": "Datenqualitätsregeln im Staging — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht.",
+  "body": {
+    "storage": {
+      "value": "Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht. Jeder Ladeschritt ist idempotent: ein zweiter Lauf über denselben Zeitraum ändert nichts. Die Partitionierung erfolgt nach Buchungstag, nicht nach Ladezeitpunkt. Schemaänderungen in der Quelle werden additiv nachgezogen; Spalten werden nie entfernt. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-03-27T12:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "etl"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100026"
+  }
+}

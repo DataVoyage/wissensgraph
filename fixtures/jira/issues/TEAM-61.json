@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-61",
+  "id": "10061",
+  "self": "/browse/TEAM-61",
+  "fields": {
+    "summary": "Rollenzuordnung fehlt nach Verzeichnisabgleich (TEAM-61)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100101]]. Betroffen ist das Themenfeld identitaet. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "identitaet",
+      "poc"
+    ],
+    "updated": "2026-08-30T13:00:00+00:00",
+    "status": {
+      "name": "In Progress"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

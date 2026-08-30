@@ -1,0 +1,32 @@
+{
+  "id": "100046",
+  "type": "page",
+  "title": "Widerruf eines Tokens",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten.",
+  "body": {
+    "storage": {
+      "value": "Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten. Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen. Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token. Rollen bündeln Rechte; ein Recht wird nie direkt an ein Konto vergeben. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-16T11:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100046"
+  }
+}

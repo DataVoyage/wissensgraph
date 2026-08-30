@@ -161,6 +161,39 @@ services:
         condition: service_healthy
 
   # -------------------------------------------------------------------------
+  # Mock-Quellen (§9) — nur in den Profilen dev und test.
+  #
+  # Gemockt wird das Quellsystem, nicht der Adapter: Die echten Adapter laufen unverändert
+  # dagegen, inklusive Paginierung, Rate-Limits und Fehlerbehandlung (§9.1). Der Dienst liegt
+  # allein im Netz wg-shared — an den personal-Store kommt er nicht heran, und er braucht es
+  # auch nicht: Quellen speisen ausschließlich den geteilten Store.
+  # -------------------------------------------------------------------------
+  mock-sources:
+    <<: *app-image
+    profiles: [dev, test]
+    command: ["wg", "mock-sources", "--fixtures", "/app/fixtures"]
+    environment: *app-environment
+    volumes:
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro
+      # Die Seed-Daten kommen als Bind-Mount und nicht ins Image: So wirkt eine geänderte
+      # Fixture sofort, ohne neuen Build — und das Anwendungsimage bleibt frei von Testdaten.
+      - ./fixtures:/app/fixtures:ro
+    ports:
+      - "${WG_MOCK_HOST_PORT:-8090}:8090"
+    networks: [wg-shared]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/_control/state', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # -------------------------------------------------------------------------
   # Web-UI — erreicht ausschließlich api (§5.2)
   # -------------------------------------------------------------------------
   ui:

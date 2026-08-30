@@ -1,0 +1,32 @@
+{
+  "id": "100076",
+  "type": "page",
+  "title": "Zugriff auf interne Schnittstellen — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte.",
+  "body": {
+    "storage": {
+      "value": "Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte. Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert. Die Gültigkeitsdauer eines Zugangstoken beträgt fünfzehn Minuten. Ein gesperrtes Konto behält seine Rollen, kann sie aber nicht mehr nutzen. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-16T13:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100076"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "100103",
+  "type": "page",
+  "title": "Mehrsprachigkeit der Oberfläche — Teil 2",
+  "space": {
+    "key": "ARCH",
+    "name": "Architektur"
+  },
+  "excerpt": "Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API.",
+  "body": {
+    "storage": {
+      "value": "Das Kundenportal ist eine Single-Page-Anwendung und lädt seine Daten über die Portal-API. Formulare validieren im Browser und noch einmal serverseitig; die Meldung ist dieselbe. Alle Ansichten erfüllen die Anforderungen an Kontrast und Tastaturbedienung. Die Oberfläche ist in Deutsch und Englisch verfügbar; die Sprache folgt dem Profil. Diese Seite gehört zum Themenfeld kundenportal."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-06-12T12:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "portal"
+      },
+      {
+        "name": "kundenportal"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ARCH/pages/100103"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-39",
+  "id": "10039",
+  "self": "/browse/TEAM-39",
+  "fields": {
+    "summary": "Quarantänetabelle läuft voll (TEAM-39)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100040]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "datenpipeline",
+      "poc"
+    ],
+    "updated": "2026-08-08T12:00:00+00:00",
+    "status": {
+      "name": "Done"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

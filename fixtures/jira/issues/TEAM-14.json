@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-14",
+  "id": "10014",
+  "self": "/browse/TEAM-14",
+  "fields": {
+    "summary": "Suche liefert keine Dokumente (TEAM-14)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100093]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-07-14T08:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

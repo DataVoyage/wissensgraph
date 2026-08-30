@@ -1,0 +1,32 @@
+{
+  "id": "100028",
+  "type": "page",
+  "title": "Spätankommende Datensätze — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Die Partitionierung erfolgt nach Buchungstag, nicht nach Ladezeitpunkt.",
+  "body": {
+    "storage": {
+      "value": "Die Partitionierung erfolgt nach Buchungstag, nicht nach Ladezeitpunkt. Schemaänderungen in der Quelle werden additiv nachgezogen; Spalten werden nie entfernt. Das Monitoring meldet, wenn ein Ladefenster überschritten wird. Referenzdaten werden vor den Bewegungsdaten geladen, damit die Zuordnung stimmt. Diese Seite gehört zum Themenfeld datenpipeline."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-03-29T14:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "daten"
+      },
+      {
+        "name": "datenpipeline"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100028"
+  }
+}

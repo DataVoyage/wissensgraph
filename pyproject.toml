@@ -165,6 +165,37 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# §8.2 Regel 2: "Der Adapter kennt weder 'concepts' noch SQL noch Scopes. Er liefert DTOs."
+# Ohne diese Regel baut der erste Adapter, dem ein Feld fehlt, sich selbst einen Konzept-Entwurf
+# zusammen — und das Versprechen aus §8.1, dass eine neue Quelle den Kern nicht anfasst, ist weg.
+name = "Adapter kennen den Graphen nicht"
+type = "forbidden"
+source_modules = ["wissensgraph.infrastructure.adapters"]
+forbidden_modules = [
+    "wissensgraph.domain.concepts",
+    "wissensgraph.domain.edges",
+    "wissensgraph.domain.upsert",
+    "wissensgraph.infrastructure.db",
+    "wissensgraph.services",
+    "wissensgraph.api",
+]
+
+[[tool.importlinter.contracts]]
+# §9.1: Gemockt wird das Quellsystem, nicht der Adapter. Ein Mock-Server, der den Graphen kennt,
+# wäre keiner mehr — er würde beweisen, dass der Kern mit einer Quelle umgehen kann, die er
+# selbst gebaut hat.
+name = "Mock-Quellen kennen den Graphen nicht"
+type = "forbidden"
+source_modules = ["wissensgraph.mocks"]
+forbidden_modules = [
+    "wissensgraph.domain",
+    "wissensgraph.ports",
+    "wissensgraph.services",
+    "wissensgraph.infrastructure",
+    "wissensgraph.api",
+]
+
+[[tool.importlinter.contracts]]
 name = "Schichtenreihenfolge: Interface -> Services -> Domain/Ports"
 type = "layers"
 # Module in Klammern sind optional: Sie entstehen erst mit späteren Stufen des Stufenplans

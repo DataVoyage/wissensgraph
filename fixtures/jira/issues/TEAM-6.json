@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-6",
+  "id": "10006",
+  "self": "/browse/TEAM-6",
+  "fields": {
+    "summary": "Suche liefert keine Dokumente (TEAM-6)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100085]]. Betroffen ist das Themenfeld kundenportal. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "kundenportal",
+      "poc"
+    ],
+    "updated": "2026-07-06T14:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

@@ -14,6 +14,7 @@ from wissensgraph.diagnostics import (
     check_model_policy,
     check_personal_locality,
     check_schema,
+    check_sources,
     check_stores,
     run_diagnostics,
 )
@@ -207,3 +208,53 @@ class TestRunDiagnostics:
         assert payload["healthy"] is True
         assert isinstance(payload["checks"], list)
         assert all("status" in check for check in payload["checks"])
+
+
+class TestQuellenpruefung:
+    """``check_sources`` — der Adapter-Teil von ``wg doctor`` (§19, §8.3)."""
+
+    def test_ohne_konfigurierte_quellen_gibt_es_eine_warnung(self, settings: Settings) -> None:
+        """Zulässig (Profil 'minimal'), aber nichts, was man versehentlich haben will."""
+        (ergebnis,) = check_sources(settings)
+
+        assert ergebnis.name == "quellen"
+        assert ergebnis.status is CheckStatus.WARN
+        assert ergebnis.ok
+
+    def test_eine_gesunde_quelle_erscheint_einzeln(self, settings: Settings, tmp_path: Any) -> None:
+        pfad = tmp_path / "sources.yaml"
+        pfad.write_text(
+            "sources:\n"
+            "  - name: dummy\n"
+            "    adapter: dummy\n"
+            '    class: "support.dummy_adapter:DummyAdapter"\n'
+            "    id_prefix: dummy\n"
+            "    target:\n"
+            "      scope: engineering\n"
+            "      default_type: Confluence Page\n",
+            encoding="utf-8",
+        )
+        (ergebnis,) = check_sources(settings, path=pfad)
+
+        assert ergebnis.name == "quelle:dummy"
+        assert ergebnis.status is CheckStatus.OK
+
+    def test_eine_fehlerhafte_quellkonfiguration_ist_ein_fehler(
+        self, settings: Settings, tmp_path: Any
+    ) -> None:
+        """§6.5: Ein unauffindbarer Adapter ist ein Konfigurationsfehler, kein Betriebszustand."""
+        pfad = tmp_path / "sources.yaml"
+        pfad.write_text(
+            "sources:\n"
+            "  - name: q\n"
+            "    adapter: gibtesnicht\n"
+            "    id_prefix: q\n"
+            "    target:\n"
+            "      scope: engineering\n"
+            "      default_type: Confluence Page\n",
+            encoding="utf-8",
+        )
+        (ergebnis,) = check_sources(settings, path=pfad)
+
+        assert ergebnis.status is CheckStatus.FAIL
+        assert not ergebnis.ok

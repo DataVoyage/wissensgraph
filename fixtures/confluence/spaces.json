@@ -1,0 +1,12 @@
+[
+  {
+    "key": "ENG",
+    "name": "Engineering",
+    "type": "global"
+  },
+  {
+    "key": "ARCH",
+    "name": "Architektur",
+    "type": "global"
+  }
+]

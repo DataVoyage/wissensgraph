@@ -1,0 +1,32 @@
+{
+  "id": "100064",
+  "type": "page",
+  "title": "Zweiter Faktor — Teil 2",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token.",
+  "body": {
+    "storage": {
+      "value": "Der Token-Dienst stellt kurzlebige Zugangstoken aus und erneuert sie über ein Refresh-Token. Rollen bündeln Rechte; ein Recht wird nie direkt an ein Konto vergeben. Ein widerrufenes Token gilt sofort als ungültig, auch vor Ablauf seiner Frist. Der Verzeichnisabgleich läuft stündlich und trägt Gruppenzugehörigkeiten nach. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-05-04T08:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "identitaet"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100064"
+  }
+}

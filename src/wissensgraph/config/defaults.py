@@ -35,6 +35,9 @@ CONFIG_DIR: Final = "/app/config"
 CORE_CONFIG_FILENAME: Final = "wissensgraph.yaml"
 MODELS_CONFIG_FILENAME: Final = "models.yaml"
 SOURCES_CONFIG_FILENAME: Final = "sources.yaml"
+
+#: Umgebungsvariable, die den Pfad der Quellkonfiguration überschreibt (§6.4).
+SOURCES_FILE_ENV: Final = "WG_SOURCES_FILE"
 LOGGING_CONFIG_FILENAME: Final = "logging.yaml"
 
 # ---------------------------------------------------------------------------
@@ -104,6 +107,17 @@ ID_PREFIX_CLUSTER: Final = "cluster"
 ID_PREFIX_NOTE: Final = "note"
 ID_PREFIX_PROJECT: Final = "project"
 
+#: Erlaubte Form eines Präfixes: kleingeschrieben, beginnt mit einem Buchstaben. Die Enge ist
+#: Absicht — das Präfix erscheint in URLs, Logs und Dateinamen von Exporten. Es steht hier und
+#: nicht in der Domäne, weil auch ``sources.yaml`` dagegen geprüft wird: ``id_prefix`` einer
+#: Quelle und Präfix einer Konzept-ID sind dieselbe Konvention (§7.5, §8.4).
+ID_PREFIX_PATTERN: Final = r"^[a-z][a-z0-9_-]*$"
+
+#: Erlaubte Form des lokalen Teils. Verboten sind Leerraum (eine ID mit Leerzeichen lässt sich in
+#: ``[[id]]``-Referenzen nicht sauber abgrenzen) und eckige Klammern (sie sind die Syntax der
+#: Referenz selbst).
+ID_LOCAL_PATTERN: Final = r"^[^\s\[\]]+$"
+
 #: Hash-Verfahren der Änderungserkennung (§10.3).
 CONTENT_HASH_ALGORITHM: Final = "sha256"
 
@@ -131,6 +145,63 @@ CONCEPT_STATUS_DEFAULT: Final = "stable"
 
 #: Akteur eines Sync-Laufs im Änderungsjournal (§7.4).
 ACTOR_SYNC: Final = "system:sync"
+
+# ---------------------------------------------------------------------------
+# Quell-Adapter-Framework (§8, §9)
+# ---------------------------------------------------------------------------
+
+#: Entry-Point-Gruppe, unter der ein installiertes Paket eine Adapter-Factory anmeldet (§8.3).
+#: Der Name ist Teil der öffentlichen Schnittstelle des Systems: Wer ihn ändert, macht jeden
+#: extern gepflegten Adapter unauffindbar.
+ADAPTER_ENTRY_POINT_GROUP: Final = "wissensgraph.adapters"
+
+#: Adapterschlüssel der mitgelieferten Umsetzungen. Sie sind fest eingebaut, damit ein frisch
+#: ausgechecktes Repository ohne Installationsschritt lauffähig ist; ein gleichnamiger Entry
+#: Point hat trotzdem Vorrang (§8.3).
+ADAPTER_CONFLUENCE: Final = "confluence"
+ADAPTER_JIRA: Final = "jira"
+ADAPTER_FIXTURE: Final = "fixture-source"
+
+#: Trennzeichen zwischen Modul und Klasse in ``class: "paket.modul:Klasse"`` (§8.3).
+ADAPTER_CLASS_SEPARATOR: Final = ":"
+
+#: Voreinstellungen einer Quellverbindung (§8.4). Jede davon ist je Quelle überschreibbar.
+SOURCE_TIMEOUT_SECONDS: Final = 30.0
+SOURCE_RATE_LIMIT_PER_SECOND: Final = 5.0
+SOURCE_RETRIES: Final = 3
+SOURCE_PAGE_SIZE: Final = 50
+
+#: Backoff zwischen zwei Versuchen: erste Wartezeit, Verdopplungsfaktor, Obergrenze. §22.3
+#: verlangt, dass eine 429-Antwort zu Backoff führt und nicht zum Abbruch.
+SOURCE_BACKOFF_INITIAL_SECONDS: Final = 0.5
+SOURCE_BACKOFF_FACTOR: Final = 2.0
+SOURCE_BACKOFF_MAX_SECONDS: Final = 30.0
+
+#: Antwortcodes, die als vorübergehend gelten und einen erneuten Versuch rechtfertigen. 429 ist
+#: das Rate-Limit, die 5xx sind Serverfehler; 4xx im Übrigen wiederholt kein Versuch, weil eine
+#: falsche Anfrage beim zweiten Mal genauso falsch ist.
+SOURCE_RETRY_STATUS_CODES: Final = (429, 500, 502, 503, 504)
+
+#: Kopfzeile, mit der ein Server die Wartezeit vorgibt. Sie schlägt den berechneten Backoff.
+SOURCE_RETRY_AFTER_HEADER: Final = "Retry-After"
+
+#: Feldnamen, die eine ``mapping:``-Sektion in ``sources.yaml`` belegen darf (§8.4). Sie
+#: entsprechen den Inhaltsfeldern des ``SourceDocument``.
+SOURCE_MAPPING_FIELDS: Final = ("title", "description", "body", "resource", "tags", "updated_at")
+
+# ---------------------------------------------------------------------------
+# Mock-Quellserver (§9)
+# ---------------------------------------------------------------------------
+
+MOCK_HOST: Final = "0.0.0.0"
+MOCK_PORT: Final = 8090
+
+#: Verzeichnis der Seed-Daten im Container (§9.2). Auf dem Host liegt es als ``./fixtures``.
+MOCK_FIXTURES_DIR: Final = "/app/fixtures"
+
+#: Präfix der Steuerungs-API (§9.3). Es liegt bewusst unter einem eigenen Pfad, damit kein
+#: nachgebildeter Quell-Endpunkt versehentlich damit kollidiert.
+MOCK_CONTROL_PREFIX: Final = "/_control"
 
 # ---------------------------------------------------------------------------
 # HTTP-API (§16, §20.3)

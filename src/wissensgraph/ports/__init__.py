@@ -14,11 +14,31 @@ from wissensgraph.ports.repositories import (
     UnitOfWork,
     UnitOfWorkFactory,
 )
+from wissensgraph.ports.sources import (
+    AdapterCapabilities,
+    Cursor,
+    HealthState,
+    HealthStatus,
+    NotSupported,
+    SourceAdapter,
+    SourceDocument,
+    SourceError,
+    SourceUnavailable,
+)
 
 __all__ = [
+    "AdapterCapabilities",
     "ChangeLogRepository",
     "ConceptRepository",
+    "Cursor",
     "EdgeRepository",
+    "HealthState",
+    "HealthStatus",
+    "NotSupported",
+    "SourceAdapter",
+    "SourceDocument",
+    "SourceError",
+    "SourceUnavailable",
     "UnitOfWork",
     "UnitOfWorkFactory",
 ]

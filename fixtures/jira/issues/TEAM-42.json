@@ -1,0 +1,21 @@
+{
+  "key": "TEAM-42",
+  "id": "10042",
+  "self": "/browse/TEAM-42",
+  "fields": {
+    "summary": "Token wird nicht rechtzeitig erneuert (TEAM-42)",
+    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100082]]. Betroffen ist das Themenfeld identitaet. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "labels": [
+      "identitaet",
+      "poc"
+    ],
+    "updated": "2026-08-11T08:00:00+00:00",
+    "status": {
+      "name": "In Review"
+    },
+    "project": {
+      "key": "TEAM"
+    }
+  },
+  "references": []
+}

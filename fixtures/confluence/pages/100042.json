@@ -1,0 +1,32 @@
+{
+  "id": "100042",
+  "type": "page",
+  "title": "Sitzungsverwaltung",
+  "space": {
+    "key": "ENG",
+    "name": "Engineering"
+  },
+  "excerpt": "Ein widerrufenes Token gilt sofort als ungültig, auch vor Ablauf seiner Frist.",
+  "body": {
+    "storage": {
+      "value": "Ein widerrufenes Token gilt sofort als ungültig, auch vor Ablauf seiner Frist. Der Verzeichnisabgleich läuft stündlich und trägt Gruppenzugehörigkeiten nach. Dienstkonten haben keinen zweiten Faktor und dafür engere Rechte. Jede Anmeldung wird mit Zeitpunkt, Konto und Herkunft protokolliert. Diese Seite gehört zum Themenfeld identitaet."
+    }
+  },
+  "version": {
+    "number": 1,
+    "when": "2026-04-12T14:00:00+00:00"
+  },
+  "metadata": {
+    "labels": [
+      {
+        "name": "zugang"
+      },
+      {
+        "name": "identitaet"
+      }
+    ]
+  },
+  "links": {
+    "webui": "/spaces/ENG/pages/100042"
+  }
+}
