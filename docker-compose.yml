@@ -74,9 +74,11 @@ services:
       POSTGRES_USER: ${WG_POSTGRES_USER:-wg}
       POSTGRES_PASSWORD: ${WG_POSTGRES_PASSWORD:-wg}
       POSTGRES_DB: wg_shared
+    # Kein Init-Skript für die Erweiterungen: Die Migration legt 'vector', 'pg_trgm' und
+    # 'uuid-ossp' selbst an (§7.3). Damit gilt für eine von Hand angelegte oder in einem Test
+    # erzeugte Datenbank dasselbe wie für diesen Container — es gibt nur eine Stelle, die das tut.
     volumes:
       - pg-shared-data:/var/lib/postgresql/data
-      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
     ports:
       - "${WG_DB_SHARED_HOST_PORT:-5433}:5432"
     networks: [wg-shared]
@@ -95,7 +97,6 @@ services:
       POSTGRES_DB: wg_personal
     volumes:
       - pg-personal-data:/var/lib/postgresql/data
-      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
     # Bewusst KEINE Port-Freigabe zum Host. Das Netz wg-personal ist 'internal: true' (§5.2);
     # eine Freigabe wäre dort ohnehin wirkungslos, und der Verzicht macht die Absicht sichtbar:
     # An den personal-Store kommt nur heran, wer im selben Docker-Netz liegt — also api, worker

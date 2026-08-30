@@ -13,7 +13,7 @@ festgelegte Abnahme erfüllt.
 | Stufe | Inhalt | Stand |
 |---|---|---|
 | 0 | Projekt-, Container- und Konfigurationsgrundgerüst | **fertig** |
-| 1 | Datenmodell und Migrationen | offen |
+| 1 | Datenmodell und Migrationen | **fertig** |
 | 2 | Domänenkern: Konzepte, Kanten, Upsert | offen |
 | 3 | Adapter-Framework und Mock-Quellen | offen |
 | 4 | Sync-Orchestrierung | offen |
@@ -87,6 +87,81 @@ Model-Router — das sind Stufe 1, 2 und 7.
 
 ---
 
+## Stufe 1 — was steht
+
+**Zweck laut §24:** "Das Schema aus §7 existiert in beiden Stores, inklusive der Invarianten."
+
+### Ein Skriptbaum, zwei Datenbanken
+
+§7.3 verlangt "zwei PostgreSQL-Datenbanken mit identischem Schema". Getrennte Migrationsbäume je
+Store wären die naheliegende Antwort — und die falsche: Sie driften über die Zeit auseinander,
+und genau das soll ausgeschlossen sein. Es gibt deshalb **einen** Satz Versionsskripte
+(`src/wissensgraph/migrations/`), der beide Datenbanken bedient. Die einzige zulässige Abweichung
+steht als Fallunterscheidung *innerhalb* der Migration.
+
+| Datei | Aufgabe |
+|---|---|
+| `migrations/versions/0001_initial_schema.py` | Die DDL aus §7.4 — Tabellen, Indizes, Sicht, Invarianten |
+| `migrations/context.py` | Store-Name und Vektordimension aus der geprüften Konfiguration |
+| `migrations/env.py` | Alembic-Umgebung; baut bewusst keine Verbindung selbst auf |
+| `infrastructure/db/migrations.py` | Ausführung samt Advisory-Lock (§5.5) |
+| `infrastructure/db/introspection.py` | Nachschlagen dessen, was tatsächlich im Schema steht |
+
+Zwei Werte kommen von außen in die Migration: der **Store-Name**, weil §7.4 den CHECK gegen
+personal-Verweise ausdrücklich nur im shared-Store anlegt, und die **Vektordimension** aus
+`WG_EMBEDDING_DIM`, die als `vector(n)` in den Spaltentyp eingeht. Beides über
+Umgebungsvariablen direkt im Skript zu lesen, würde die Präzedenzkette aus §6.2 umgehen — die
+Werte kommen deshalb aus der bereits validierten Konfiguration.
+
+Getrennt sind die **Versionstabellen**: `alembic_version_shared` und `alembic_version_personal`.
+Der Store steht im Tabellennamen, damit die Trennung auch dann gilt, wenn beide Schemata je in
+derselben Datenbank landen sollten.
+
+### Was sich dadurch am Betrieb ändert
+
+- **`wg migrate`** — beide Stores, wiederholbar. `--check` berichtet nur (Rückgabewert 1 bei
+  ausstehenden Migrationen), `--sql` rendert den Trockenlauf ohne Datenbankzugriff,
+  `--downgrade-to` nimmt zurück und verlangt dafür eine ausdrücklich genannte Revision.
+- **`wg serve`** ist der neue Startbefehl des api-Containers und setzt §5.5 um: erst Migrationen,
+  dann Server. Die Reihenfolge steht als Python-Code und nicht als verkettetes Shell-Kommando —
+  so gilt sie auf jeder Plattform gleich und ist testbar.
+- **Advisory-Lock** (§5.5): Migrationen laufen nie parallel. Benutzt wird `pg_try_advisory_lock`
+  in einer Schleife mit Frist statt des blockierenden `pg_advisory_lock`; ein Container, der beim
+  Start unbegrenzt wartet, ist von einem hängenden Container nicht zu unterscheiden.
+- **`wg doctor`** prüft jetzt zusätzlich das Schema: Ist die Migration durch, und passt die
+  Dimension im Schema noch zur Konfiguration? Die zweite Frage fängt den Fall ab, dass
+  `WG_EMBEDDING_DIM` *nach* der Migration geändert wurde — sonst fiele der Widerspruch erst beim
+  ersten Embedding-Lauf auf (§11.7).
+- **Kein Init-Skript mehr** für die Datenbank-Container. `vector`, `pg_trgm` und `uuid-ossp` legt
+  die Migration selbst an (§7.3). Damit gilt für eine von Hand oder in einem Test angelegte
+  Datenbank dasselbe wie für den Container — es gibt nur eine Stelle, die das tut.
+
+### Abweichung vom Dokument
+
+`concepts.store` ist laut §7.4 "redundant, aber explizit". Redundanz ohne Prüfung driftet
+auseinander, sobald ein Schreibpfad den falschen Wert setzt. Die Migration legt deshalb
+zusätzlich `ck_concepts_store` an, der die Spalte an die Datenbank bindet, in der die Zeile
+tatsächlich liegt. Ein falsch geroutetes Upsert wird damit zum Fehler statt zu stillem
+Datenschaden. Das ist die einzige Ergänzung über die DDL des Dokuments hinaus.
+
+### Abnahme (§24, Stufe 1)
+
+| Kriterium | Stand |
+|---|---|
+| Migration läuft auf leeren Datenbanken durch | erfüllt — der api-Container migriert beide Stores beim Start |
+| Migration ist wiederholbar | erfüllt — zweiter Lauf meldet "unverändert", `--check` gibt 0 zurück |
+| Der Constraint lehnt einen personal-Verweis im shared-Store ab | erfüllt — `ck_shared_no_personal_ref`, geprüft per `INSERT` an der Anwendung vorbei |
+| Ein HNSW-Index existiert | erfüllt — `ix_emb_hnsw`, Zugriffsmethode `hnsw` in beiden Stores |
+
+Guard-Test 4 aus §20.1 ist damit erfüllt und steht in `tests/guards/test_store_invarianten.py`.
+
+### Ausdrücklich außen vor
+
+Repositories und Fachlogik. Es gibt Tabellen, aber noch keinen Code, der Konzepte oder Kanten
+schreibt — das ist Stufe 2.
+
+---
+
 ## Entwicklung
 
 ### Plattformunabhängigkeit
@@ -115,7 +190,12 @@ uv run python scripts/dev.py up --profile minimal
 uv run python scripts/dev.py down --volumes
 uv run python scripts/dev.py logs api
 uv run python scripts/dev.py doctor          # wg doctor im api-Container
+uv run python scripts/dev.py migrate         # wg migrate im api-Container
+uv run python scripts/dev.py migrate --check # nur berichten, was aussteht
 ```
+
+Werkzeuge gegen den `personal`-Store laufen grundsätzlich **im Container**: Sein Netz ist
+`internal: true` (§5.2), er ist vom Host aus nicht erreichbar, und das ist beabsichtigt.
 
 ### Tests und Coverage
 
@@ -129,7 +209,20 @@ Ein Lauf unterhalb der Schwelle schlägt fehl. Ausgenommen ist `cli.py` — eine
 Korrektheit der darunterliegenden Logik aussagt.
 
 Testebenen nach §22.1: `tests/unit`, `tests/contract`, `tests/integration`, `tests/guards`.
-Die letzten drei füllen sich mit den Stufen, die sie brauchen.
+
+Die Tests unter `tests/integration` und `tests/guards` brauchen eine echte PostgreSQL-Instanz mit
+`pgvector`. Ohne sie **überspringen sie sich selbst**, damit die Suite auf einem Rechner ohne
+Docker durchläuft; die Schwelle von 90 % wird auch dann eingehalten. Für einen vollständigen Lauf:
+
+```bash
+docker compose --profile test up -d
+uv run python scripts/dev.py test
+```
+
+Jeder Test legt sich zwei frische, leere Datenbanken an und räumt sie danach wieder ab. Beide
+liegen auf derselben Instanz — für das Deployment wäre das falsch, für diese Tests ist es richtig:
+Was die Migration unterscheidet, ist der *Name* des Stores, nicht sein Host. Eine abweichende
+Instanz lässt sich über `WG_TEST_POSTGRES_DSN` angeben.
 
 ### Umgang mit Modell-Token
 

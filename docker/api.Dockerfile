@@ -42,4 +42,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)"
 
-CMD ["uvicorn", "wissensgraph.api.asgi:app", "--host", "0.0.0.0", "--port", "8080"]
+# 'wg serve' führt erst die Migrationen aus und startet dann den Server — die Reihenfolge aus
+# §5.5. Sie steht bewusst in Python und nicht als verkettetes Shell-Kommando: So gilt sie auf
+# jeder Plattform gleich und ist testbar.
+CMD ["wg", "serve"]

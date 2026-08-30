@@ -101,6 +101,38 @@ class TestConfigureLogging:
         with pytest.raises(json.JSONDecodeError):
             json.loads(output.strip())
 
+    def test_fremde_bibliotheken_werden_ebenso_strukturiert(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Alembic, SQLAlchemy und uvicorn loggen über die Standardbibliothek.
+
+        Ohne die Verdrahtung in :func:`configure_logging` liefen ihre Einträge an den
+        Pflichtfeldern aus §21.1 und an der Secret-Maskierung aus §20.2 vorbei.
+        """
+        import logging
+
+        configure_logging(level="INFO", log_format="json", service="api")
+
+        logging.getLogger("alembic.runtime.migration").info("Running upgrade")
+
+        entry = json.loads(capsys.readouterr().out.strip())
+        assert entry["event"] == "Running upgrade"
+        for field in REQUIRED_FIELDS:
+            assert field in entry
+
+    def test_secrets_fremder_bibliotheken_werden_maskiert(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """§20.2 gilt unabhängig davon, wer den Eintrag geschrieben hat."""
+        import logging
+
+        configure_logging(level="INFO", log_format="json", service="api")
+
+        logging.getLogger("fremd").info("verbindung", extra={"api_key": "sehr-geheim"})
+
+        entry = json.loads(capsys.readouterr().out.strip())
+        assert "sehr-geheim" not in json.dumps(entry)
+
     def test_level_filtert_leisere_eintraege(self, capsys: pytest.CaptureFixture[str]) -> None:
         configure_logging(level="WARNING", log_format="json", service="api")
 

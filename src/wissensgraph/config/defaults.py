@@ -60,6 +60,38 @@ STORE_SHARED: Final = "shared"
 STORE_PERSONAL: Final = "personal"
 
 # ---------------------------------------------------------------------------
+# Migrationen (§5.5, §7.3, §7.4)
+# ---------------------------------------------------------------------------
+
+#: Namensraum, aus dem der Schlüssel des PostgreSQL-Advisory-Locks abgeleitet wird. §5.5 verlangt,
+#: dass Migrationen nie parallel laufen; der Lock ist die Absicherung dagegen, dass zwei
+#: api-Container gleichzeitig hochfahren.
+MIGRATION_LOCK_NAMESPACE: Final = "wissensgraph.migrations"
+
+#: Sekunden, die auf den Migrations-Lock gewartet wird. Läuft die Zeit ab, bricht der Lauf mit
+#: einer klaren Meldung ab, statt unbegrenzt zu hängen — ein Container, der beim Start blockiert,
+#: ist schwerer zu diagnostizieren als einer, der mit Grund abbricht.
+MIGRATION_LOCK_TIMEOUT_SECONDS: Final = 60
+
+#: Präfix der Alembic-Versionstabelle. §7.3 verlangt getrennte Versionstabellen je Store; mit dem
+#: Store im Tabellennamen gilt das auch dann, wenn beide Schemata je in derselben Datenbank
+#: landen sollten.
+MIGRATION_VERSION_TABLE_PREFIX: Final = "alembic_version_"
+
+#: Erweiterungen, die jede Store-Datenbank braucht (§7.3). Die Migration legt sie selbst an; sie
+#: setzt damit nichts voraus, was ein Init-Skript des Container-Images getan haben müsste.
+REQUIRED_EXTENSIONS: Final = ("vector", "pg_trgm", "uuid-ossp")
+
+#: Parameter des HNSW-Index auf ``concept_embeddings.embedding`` (§7.4).
+HNSW_M: Final = 16
+HNSW_EF_CONSTRUCTION: Final = 64
+
+#: Obergrenze der Vektordimension. pgvector kann bis 2000 Dimensionen indizieren; ein größerer
+#: Wert legt die Tabelle zwar an, lässt den HNSW-Index aber scheitern. Der Startfehler ist
+#: verständlicher als ein Indexfehler mitten in der Migration.
+EMBEDDING_DIM_MAX: Final = 2000
+
+# ---------------------------------------------------------------------------
 # HTTP-API (§16, §20.3)
 # ---------------------------------------------------------------------------
 

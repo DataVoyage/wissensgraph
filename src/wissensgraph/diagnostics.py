@@ -15,10 +15,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from wissensgraph.config.masking import mask_dsn
 from wissensgraph.config.network import is_local_dsn
 from wissensgraph.config.schema import Settings
 from wissensgraph.infrastructure.db import StoreRegistry
+from wissensgraph.infrastructure.db.introspection import vector_dimension
+from wissensgraph.infrastructure.db.migrations import (
+    build_options,
+    current_revision,
+    head_revision,
+)
 
 
 class CheckStatus(StrEnum):
@@ -177,6 +185,87 @@ def check_stores(registry: StoreRegistry) -> tuple[CheckResult, ...]:
     return tuple(results)
 
 
+#: Tabelle und Spalte, die die Vektordimension des Schemas tragen (§7.4).
+_EMBEDDING_TABLE = "concept_embeddings"
+_EMBEDDING_COLUMN = "embedding"
+
+
+def check_schema(settings: Settings, registry: StoreRegistry) -> tuple[CheckResult, ...]:
+    """Prüft je Store, ob die Migrationen durch sind und das Schema zur Konfiguration passt.
+
+    Zwei getrennte Fragen, die leicht verwechselt werden: Ein Store kann auf der neuesten Revision
+    stehen und trotzdem nicht zur Konfiguration passen — nämlich dann, wenn ``WG_EMBEDDING_DIM``
+    nach der Migration geändert wurde. Die Dimension steht als ``vector(n)`` im Schema und ändert
+    sich nicht dadurch, dass eine Umgebungsvariable einen anderen Wert bekommt. Ohne diese Prüfung
+    fällt der Widerspruch erst beim ersten Embedding-Lauf auf (§11.7).
+    """
+    head = head_revision()
+    return tuple(
+        _check_store_schema(settings, registry, store, head) for store in registry.store_names
+    )
+
+
+def _check_store_schema(
+    settings: Settings, registry: StoreRegistry, store: str, head: str | None
+) -> CheckResult:
+    """Die Schemaprüfung eines einzelnen Stores."""
+    name = f"schema:{store}"
+    try:
+        options = build_options(settings, store, registry)
+        with registry.engine(store).connect() as connection:
+            if connection.dialect.name != "postgresql":
+                return CheckResult(
+                    name=name,
+                    status=CheckStatus.WARN,
+                    detail=(
+                        f"Schemaprüfung übersprungen: Dialekt '{connection.dialect.name}' ist "
+                        f"keine PostgreSQL-Datenbank."
+                    ),
+                )
+            revision = current_revision(connection, options)
+            dimension = vector_dimension(connection, _EMBEDDING_TABLE, _EMBEDDING_COLUMN)
+    except SQLAlchemyError as exc:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"Migrationsstand nicht feststellbar: {str(exc).splitlines()[0][:200]}",
+        )
+
+    context: dict[str, object] = {"revision": revision, "head": head, "embedding_dim": dimension}
+
+    if revision is None:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail="Nicht migriert. 'wg migrate' ausführen.",
+            context=context,
+        )
+    if revision != head:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=f"Migrationen stehen aus: Store auf '{revision}', erwartet '{head}'.",
+            context=context,
+        )
+    if dimension is not None and dimension != settings.embedding_dim:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.FAIL,
+            detail=(
+                f"Das Schema führt vector({dimension}), konfiguriert ist "
+                f"{settings.embedding_dim}. WG_EMBEDDING_DIM wurde nach der Migration geändert; "
+                f"die Embeddings müssen neu aufgebaut werden (§11.7)."
+            ),
+            context=context,
+        )
+    return CheckResult(
+        name=name,
+        status=CheckStatus.OK,
+        detail=f"Revision '{revision}', vector({dimension}).",
+        context=context,
+    )
+
+
 def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsReport:
     """Führt alle Prüfungen aus und fasst sie zu einem Bericht zusammen."""
     settings_checks: tuple[Callable[[Settings], CheckResult], ...] = (
@@ -187,4 +276,5 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     )
     results = [check(settings) for check in settings_checks]
     results.extend(check_stores(registry))
+    results.extend(check_schema(settings, registry))
     return DiagnosticsReport(results=tuple(results))

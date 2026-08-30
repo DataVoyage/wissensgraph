@@ -126,6 +126,18 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     return run(["docker", "compose", "exec", "api", "wg", "doctor"])
 
 
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Führt ``wg migrate`` im laufenden api-Container aus (§19).
+
+    Im Container und nicht auf dem Host: Der personal-Store liegt in einem Netz ohne Ausgang und
+    ist von außen gar nicht erreichbar (§5.2).
+    """
+    command = ["docker", "compose", "exec", "api", "wg", "migrate"]
+    if args.check:
+        command.append("--check")
+    return run(command)
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Der vollständige Durchlauf vor einem Commit: Lint, Typen, Tests."""
     return cmd_lint(args) or cmd_test(args)
@@ -159,6 +171,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("format", help=cmd_format.__doc__).set_defaults(func=cmd_format)
     subparsers.add_parser("check", help=cmd_check.__doc__).set_defaults(func=cmd_check)
     subparsers.add_parser("doctor", help=cmd_doctor.__doc__).set_defaults(func=cmd_doctor)
+
+    migrate_parser = subparsers.add_parser("migrate", help="Migrationen im api-Container laufen.")
+    migrate_parser.add_argument(
+        "--check", action="store_true", help="Nur berichten, ob Migrationen ausstehen."
+    )
+    migrate_parser.set_defaults(func=cmd_migrate)
 
     up_parser = subparsers.add_parser("up", help="Stack starten.")
     up_parser.add_argument("--profile", choices=PROFILES, default="dev")

@@ -13,6 +13,7 @@ from wissensgraph.diagnostics import (
     check_configuration,
     check_model_policy,
     check_personal_locality,
+    check_schema,
     check_stores,
     run_diagnostics,
 )
@@ -126,6 +127,36 @@ class TestCheckStores:
         assert "weg" in results[0].detail
 
 
+class TestCheckSchema:
+    """Die Schemaprüfung aus §7.4 / §11.7 — beantwortet zwei getrennte Fragen."""
+
+    def test_ohne_postgresql_wird_die_pruefung_als_uebersprungen_gemeldet(
+        self, settings: Settings
+    ) -> None:
+        """Eine Warnung statt eines Fehlers: 'nicht geprüft' ist nicht dasselbe wie 'kaputt'."""
+        with StoreRegistry(settings) as registry:
+            results = check_schema(settings, registry)
+
+        assert {result.name for result in results} == {"schema:shared", "schema:personal"}
+        assert all(result.status is CheckStatus.WARN for result in results)
+        assert all("übersprungen" in result.detail for result in results)
+
+    def test_nicht_erreichbarer_store_wird_als_fehler_gemeldet(
+        self, settings: Settings, mocker: Any
+    ) -> None:
+        from sqlalchemy.exc import OperationalError
+
+        mocker.patch.object(
+            StoreRegistry, "engine", side_effect=OperationalError("SELECT 1", {}, Exception("weg"))
+        )
+
+        with StoreRegistry(settings) as registry:
+            results = check_schema(settings, registry)
+
+        assert all(result.status is CheckStatus.FAIL for result in results)
+        assert all("nicht feststellbar" in result.detail for result in results)
+
+
 class TestRunDiagnostics:
     def test_bericht_ist_gesund(self, settings: Settings) -> None:
         with StoreRegistry(settings) as registry:
@@ -162,6 +193,12 @@ class TestRunDiagnostics:
 
         assert report.healthy is False
         assert report.exit_code == 1
+
+    def test_bericht_enthaelt_die_schemapruefung(self, settings: Settings) -> None:
+        with StoreRegistry(settings) as registry:
+            report = run_diagnostics(settings, registry)
+
+        assert {"schema:shared", "schema:personal"} <= {r.name for r in report.results}
 
     def test_as_dict_ist_serialisierbar(self, settings: Settings) -> None:
         with StoreRegistry(settings) as registry:

@@ -94,6 +94,12 @@ source = ["src/wissensgraph"]
 branch = true
 omit = [
     "*/cli.py",              # dünne Hülle, per E2E/CLI-Smoketest statt Unit-Coverage geprüft
+    # Alembic lädt env.py und die Versionsskripte selbst und unter eigenen Modulnamen; die
+    # Zeilenabdeckung eines pytest-Laufs bildet das nicht ab. Geprüft werden sie dort, wo es
+    # zählt: in den Integrationstests gegen eine echte PostgreSQL-Instanz, die das *Ergebnis*
+    # der Migration untersuchen statt der ausgeführten Zeilen.
+    "*/migrations/env.py",
+    "*/migrations/versions/*",
 ]
 
 [tool.coverage.report]
@@ -120,6 +126,7 @@ forbidden_modules = [
     "wissensgraph.infrastructure",
     "wissensgraph.api",
     "wissensgraph.cli",
+    "wissensgraph.migrations",
 ]
 
 [[tool.importlinter.contracts]]
@@ -131,12 +138,30 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+# Die Migrationen sind die unterste Schicht: Sie beschreiben das Schema und dürfen dafür die
+# Konfiguration lesen, aber nichts aus der Anwendung. Ohne diese Regel entsteht schnell ein
+# Zyklus — infrastructure startet die Migration, und eine Migration greift auf ein Repository zu.
+name = "Migrationen kennen die Anwendung nicht"
+type = "forbidden"
+source_modules = ["wissensgraph.migrations"]
+forbidden_modules = [
+    "wissensgraph.infrastructure",
+    "wissensgraph.services",
+    "wissensgraph.api",
+    "wissensgraph.cli",
+]
+
+[[tool.importlinter.contracts]]
 name = "Schichtenreihenfolge: Interface -> Services -> Domain/Ports"
 type = "layers"
 # Module in Klammern sind optional: Sie entstehen erst mit späteren Stufen des Stufenplans
 # (§24) und sollen die Regel nicht schon vorher scheitern lassen.
+# Die CLI steht über der API und nicht neben ihr: 'wg serve' ist der Startbefehl des
+# api-Containers und führt erst die Migrationen aus, dann den Server (§5.5). Die Richtung ist
+# damit festgelegt — die CLI darf die API starten, die API nie die CLI aufrufen.
 layers = [
-    "wissensgraph.api | wissensgraph.cli | (wissensgraph.mcp)",
+    "wissensgraph.cli",
+    "wissensgraph.api | (wissensgraph.mcp)",
     "(wissensgraph.services)",
     "(wissensgraph.domain) | (wissensgraph.ports)",
 ]

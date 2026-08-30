@@ -13,6 +13,7 @@ Zwei Festlegungen aus dem Dokument prägen dieses Modul:
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import MutableMapping
 from typing import Any
 
@@ -86,6 +87,13 @@ def ensure_required_fields(
 def configure_logging(*, level: str, log_format: str, service: str) -> None:
     """Richtet ``structlog`` und das Standard-Logging für einen Prozess ein.
 
+    Beide Wege enden im selben Handler. Das ist keine Kosmetik: Fremde Bibliotheken — Alembic,
+    SQLAlchemy, uvicorn, später die Provider-Clients — loggen über das ``logging``-Modul der
+    Standardbibliothek. Ohne diese Verdrahtung liefen ihre Einträge an den Prozessoren vorbei und
+    damit an den Pflichtfeldern aus §21.1, an der Secret-Maskierung aus §20.2 und an der
+    Entfernung inhaltstragender Felder. Genau das darf nicht passieren: Was der Prozess über
+    seine Bibliotheken schreibt, ist derselben Regel unterworfen wie das, was er selbst schreibt.
+
     Args:
         level: Log-Level aus der Konfiguration (``WG_LOG_LEVEL``).
         log_format: ``json`` für den Betrieb, ``console`` für die lokale Entwicklung.
@@ -99,23 +107,45 @@ def configure_logging(*, level: str, log_format: str, service: str) -> None:
         else structlog.processors.JSONRenderer()
     )
 
+    # Diese Prozessoren laufen über beide Wege: über structlog-Aufrufe und über Einträge, die aus
+    # der Standardbibliothek kommen.
+    gemeinsam: list[Any] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        ensure_required_fields(service),
+        drop_forbidden_fields,
+        mask_secret_fields,
+    ]
+
     structlog.configure(
         processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso", utc=True),
-            ensure_required_fields(service),
-            drop_forbidden_fields,
-            mask_secret_fields,
+            *gemeinsam,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            renderer,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=False,
     )
-    logging.basicConfig(level=numeric_level, format="%(message)s")
+
+    # Ausgabe nach stdout, nicht nach stderr: Der Log ist die normale Ausgabe eines Dienstes und
+    # nicht sein Fehlerkanal. Nur so lässt er sich in einer Pipeline weiterverarbeiten.
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=gemeinsam,
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                renderer,
+            ],
+        )
+    )
+
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(numeric_level)
 
 
 def get_logger(name: str) -> Any:

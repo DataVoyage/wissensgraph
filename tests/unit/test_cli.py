@@ -130,6 +130,43 @@ class TestDoctor:
         assert "sehr-geheim" not in result.stdout
 
 
+class TestMigrate:
+    """``wg migrate`` (§19). Der tatsächliche Lauf gegen PostgreSQL steht in den Integrationstests.
+
+    Hier wird nur geprüft, was die CLI ohne Datenbank beantworten kann — und das ist mehr, als es
+    scheint: ``--sql`` rendert die vollständige Migration im Trockenlauf.
+    """
+
+    def test_sql_gibt_die_migration_aus_ohne_datenbank(self, config_file: Path) -> None:
+        result = invoke("migrate", "--sql", "--config", str(config_file))
+
+        assert result.exit_code == 0
+        assert "-- Store: shared" in result.stdout
+        assert "-- Store: personal" in result.stdout
+        assert "CREATE TABLE concepts (" in result.stdout
+
+    def test_check_meldet_ausstehende_migrationen_mit_rueckgabewert_eins(
+        self, config_file: Path
+    ) -> None:
+        """Damit ist der Befehl in einem Startskript oder in CI verwendbar."""
+        result = invoke("migrate", "--check", "--config", str(config_file))
+
+        assert result.exit_code == 1
+        assert "ausstehend" in result.stdout
+
+    def test_unbekannter_store_wird_abgelehnt(self, config_file: Path) -> None:
+        result = invoke("migrate", "--store", "gibtsnicht", "--config", str(config_file))
+
+        assert result.exit_code == 1
+        assert "Unbekannter Store" in result.output
+
+    def test_beschraenkt_sich_auf_den_gewaehlten_store(self, config_file: Path) -> None:
+        result = invoke("migrate", "--sql", "--store", "personal", "--config", str(config_file))
+
+        assert "-- Store: personal" in result.stdout
+        assert "-- Store: shared" not in result.stdout
+
+
 class TestVersion:
     def test_gibt_paketversion_aus(self) -> None:
         result = runner.invoke(app, ["version"])
