@@ -270,6 +270,73 @@ MODEL_MAX_RETRIES: Final = 3
 MODEL_CACHE_ENABLED: Final = True
 MODEL_CACHE_TTL_HOURS: Final = 168
 
+#: Dateiname und ENV-Variable der Router-Konfiguration (§6.3, §6.4).
+MODELS_FILE_ENV: Final = "WG_MODELS_FILE"
+
+#: Version des Routers. Sie steht in jeder Provenienz-Kennung
+#: (``"<provider>:<model>/<task>@v<router-version>"``, §11.6) und ist damit die Antwort auf die
+#: Frage, nach welchen Regeln ein erzeugter Datensatz zustande kam. Sie wird erhöht, wenn sich das
+#: *Verhalten* des Routers ändert — nicht, wenn ein Modell getauscht wird; das steht schon im
+#: Modellnamen.
+ROUTER_VERSION: Final = 1
+
+#: Die Task-Profile aus §11.3. Aufrufer nennen nie ein Modell, immer eine dieser Aufgaben; das ist
+#: die Regel, die den Router wirksam macht. Sie stehen als Konstanten hier und nicht als Literale
+#: in den Diensten, damit ein Tippfehler beim Start auffällt und nicht beim ersten Aufruf.
+TASK_EMBEDDING: Final = "embedding"
+TASK_CLUSTER_LABELING: Final = "cluster_labeling"
+TASK_RELATION_EXTRACTION: Final = "relation_extraction"
+TASK_CLUSTER_MATCHING: Final = "cluster_matching"
+TASK_SUMMARIZATION: Final = "summarization"
+TASK_QUERY_EXPANSION: Final = "query_expansion"
+
+#: Aufgaben, für die §11.6 ``temperature = 0`` als **Pflichtwert** nennt: "die Validierung lehnt
+#: andere Werte ab". Beide erzeugen Daten, die als Kante im Graphen landen; ein Zufallsanteil
+#: darin wäre nicht reproduzierbar und damit nicht überprüfbar.
+DETERMINISTIC_TASKS: Final = (TASK_RELATION_EXTRACTION, TASK_CLUSTER_MATCHING)
+
+#: Provider-Typen, die der Router bauen kann (§11.4). Sie benennen eine LangChain-Integration,
+#: nicht einen Anbieter: ``openai_compatible`` deckt Ollama, vLLM und jeden weiteren Dienst mit
+#: OpenAI-Schnittstelle ab, ohne dass dafür Code entsteht.
+PROVIDER_TYPE_GOOGLE_GENAI: Final = "google_genai"
+PROVIDER_TYPE_VERTEX: Final = "vertex"
+PROVIDER_TYPE_OPENAI_COMPATIBLE: Final = "openai_compatible"
+
+#: Modelle der Entwicklungsumgebung. Sie stehen hier als *Default*, nicht als Festlegung: Welches
+#: Modell eine Aufgabe benutzt, entscheidet ``config/models.yaml`` (§11.1) — diese Werte greifen
+#: nur, wo dort nichts anderes steht.
+DEV_CHAT_MODEL: Final = "gemini-3.5-flash-lite"
+DEV_EMBEDDING_MODEL: Final = "gemini-embedding-2"
+
+#: Wie viele Texte ein Embedding-Aufruf höchstens bündelt (§11.6, "Batching").
+MODEL_BATCH_SIZE: Final = 64
+
+#: Backoff zwischen zwei Modellversuchen. Gleiche Form wie beim Quell-Adapter, eigene Werte:
+#: Ein Modellanbieter drosselt gröber als eine Wiki-API, und ein zu schnelles Nachfassen erzeugt
+#: nur weitere abgewiesene Anfragen.
+MODEL_BACKOFF_INITIAL_SECONDS: Final = 1.0
+MODEL_BACKOFF_FACTOR: Final = 2.0
+MODEL_BACKOFF_MAX_SECONDS: Final = 30.0
+
+#: Präfix der Cache-Schlüssel in Redis (§11.6). Der Hash dahinter deckt ``task``, ``model_key``
+#: und den normalisierten Prompt ab — ein Modellwechsel macht den Zwischenspeicher damit von
+#: selbst ungültig, ohne dass ihn jemand leeren müsste.
+MODEL_CACHE_PREFIX: Final = "wg:model:"
+
+#: Werte der Spalte ``model_calls.status`` (§7.4, §11.5, §11.6). ``budget_denied`` deckt beide
+#: Fälle ab, in denen ein Aufruf gar nicht erst hinausgeht: den überschrittenen Budgetrahmen und
+#: den nach §11.5 unzulässigen Provider. §11.5 nennt für den zweiten Fall ausdrücklich diesen
+#: Wert — ein Aufruf, der nicht stattfinden darf, ist aus Sicht der Abrechnung derselbe Vorgang
+#: wie einer, der nicht mehr stattfinden darf.
+MODEL_CALL_OK: Final = "ok"
+MODEL_CALL_CACHE_HIT: Final = "cache_hit"
+MODEL_CALL_INVALID_OUTPUT: Final = "invalid_output"
+MODEL_CALL_ERROR: Final = "error"
+MODEL_CALL_BUDGET_DENIED: Final = "budget_denied"
+
+#: Wie viele Einträge ``wg models usage`` ohne weitere Angabe auswertet.
+MODEL_USAGE_LIMIT: Final = 500
+
 # ---------------------------------------------------------------------------
 # Läufe: Clustering (§6.3, §13)
 # ---------------------------------------------------------------------------
@@ -280,6 +347,67 @@ CLUSTERING_MAX_CLUSTER_SIZE: Final = 25
 CLUSTERING_STABILITY_RUNS: Final = 2
 CLUSTERING_RELATED_CLUSTER_TOP_N: Final = 3
 CLUSTERING_RELABEL_ON_MEMBER_CHANGE_PCT: Final = 20
+
+#: Die "Kantenschwelle" aus §13.2 Schritt 2: Ab welcher Kosinusähnlichkeit zwei Nachbarn im
+#: k-nächste-Nachbarn-Graphen überhaupt verbunden werden. §6.3 führt den Wert nicht auf, §13.2
+#: verlangt ihn aber — ohne ihn wäre jede Menge von Konzepten eine einzige Zusammenhangskomponente,
+#: weil der k-NN-Graph auch die entferntesten Nachbarn verbindet, solange nur k groß genug ist.
+CLUSTERING_MIN_SIMILARITY: Final = 0.55
+
+#: Akteure der generierten Läufe im Änderungsjournal (§7.4). Sie tragen ein ``system:``-Präfix und
+#: zählen damit nicht als Kuration — ein späterer Lauf darf ersetzen, was sie geschrieben haben.
+ACTOR_EMBED: Final = "system:embed"
+ACTOR_CLUSTER: Final = "system:cluster"
+ACTOR_RELATIONS: Final = "system:relations"
+ACTOR_ORPHANS: Final = "system:orphans"
+
+#: Kantenart zwischen ähnlichen, aber nicht zusammengehörigen Konzepten (§7.7, §13.2 Schritt 6).
+EDGE_KIND_RELATED: Final = "related"
+
+#: Der Konzepttyp, den das Clustering selbst anlegt (§13.2 Schritt 4). Er ist die einzige
+#: Ausnahme von der Regel, dass die Taxonomie reine Konfiguration ist (§7.2): Wer Cluster
+#: *erzeugt*, muss ihren Typ benennen können. Damit die Ausnahme nicht stillschweigend bleibt,
+#: prüft die Konfigurationsvalidierung, dass dieser Typ in ``concept_types`` vorkommt.
+CONCEPT_TYPE_CLUSTER: Final = "Cluster"
+
+#: Erzeuger-Kennungen der code-basierten Kanten aus §13.2. Sie sind bewusst *nicht* die
+#: Provenienz des Modells: Welche Konzepte zusammengehören, entscheidet der Zusammenhang im
+#: k-NN-Graphen — also Code. Vom Modell kommt allein der Titel. Wären beide gleich benannt,
+#: verlöre ein Lauf nach einem Modellwechsel seine eigenen Mitgliedskanten aus den Augen (§10.4).
+GENERATED_BY_CLUSTERING: Final = "code:clustering"
+GENERATED_BY_CLUSTER_SIMILARITY: Final = "code:cluster-similarity"
+
+#: Erzeuger-Kennungen der code-basierten Kanten aus §15.2. Sie stehen neben den Modellkennungen
+#: aus §11.6 und sind absichtlich anders gebaut: ``code:`` heißt, dass die Kante *nachprüfbar* ist
+#: — ein wörtlicher Treffer im Text oder eine gemessene Ähnlichkeit, keine Vermutung.
+GENERATED_BY_TEXT_MATCH: Final = "code:text-match"
+GENERATED_BY_PROXIMITY: Final = "code:embedding-proximity"
+
+# ---------------------------------------------------------------------------
+# Läufe: Semantische Kantenerkennung (§14)
+# ---------------------------------------------------------------------------
+
+#: Unterhalb dieser Paarähnlichkeit findet kein Modellaufruf statt (§14.2 Schritt 2, §14.5). Der
+#: Vorfilter ist der wirksamste Kostenhebel des ganzen Systems: Er wirkt vor dem Aufruf, nicht
+#: danach.
+RELATIONS_MIN_PAIR_SIMILARITY: Final = 0.60
+
+#: Ab welcher Confidence eine erkannte Beziehung als Kante geschrieben wird (§14.2 Schritt 5).
+RELATIONS_MIN_CONFIDENCE: Final = 0.60
+
+#: Wie viele der zentralsten Mitglieder zweier über ``related`` verbundener Cluster gegeneinander
+#: geprüft werden (§14.2 Schritt 6). Ohne Deckel wäre dieser Schritt quadratisch in der
+#: Clustergröße und damit teurer als der Schritt, den er ergänzt.
+RELATIONS_CROSS_CLUSTER_MEMBERS: Final = 3
+
+#: Die Richtungen, die eine erkannte Beziehung haben kann (§14.3).
+RELATION_DIRECTION_A_TO_B: Final = "a_to_b"
+RELATION_DIRECTION_B_TO_A: Final = "b_to_a"
+RELATION_DIRECTION_SYMMETRIC: Final = "symmetric"
+
+#: Die Beziehungsart, die nach §14.4 **nicht** automatisch wirkt, sondern eine Kuratierungsaufgabe
+#: erzeugt: Ein automatisches Deprecaten aufgrund einer Modellvermutung widerspräche Leitprinzip 6.
+EDGE_KIND_SUPERSEDES: Final = "supersedes"
 
 # ---------------------------------------------------------------------------
 # Läufe: Verwaiste Knoten (§15.4)
@@ -326,6 +454,23 @@ SEARCH_TRIGRAM_THRESHOLD: Final = 0.3
 #: dämpft die Wirkung der vordersten Plätze gerade so weit, dass ein einzelnes Verfahren das
 #: Ergebnis nicht allein bestimmt.
 SEARCH_RRF_K: Final = 60
+
+#: Ab welcher Ähnlichkeit ein Cluster-Zentroid als Anker einer Suche gilt (§12.4 Stufe 1).
+#: Trifft ein Cluster über dieser Schwelle, wird *es* geliefert und nicht seine Mitglieder — die
+#: Antwort auf "worum geht es hier?" ist ein Thema, keine Liste von Dokumenten.
+SEARCH_CLUSTER_HIT_THRESHOLD: Final = 0.75
+
+#: Die Modi, die eine Suche im Ergebnis ausweist (§12.4). ``lexical`` ist keine Notlösung, die man
+#: verschweigt: Ohne Embedding-Modell ist er der einzige Modus, und ein stiller Qualitätsverlust
+#: ohne Hinweis wäre die schlechtere Variante.
+SEARCH_MODE_LEXICAL: Final = "lexical"
+SEARCH_MODE_HYBRID: Final = "hybrid"
+SEARCH_MODE_CLUSTER: Final = "cluster"
+
+#: Auf welcher Ebene gesucht wird (§12.4). ``auto`` heißt: erst Cluster, bei Fehlschlag Dokumente.
+SEARCH_GRANULARITY_AUTO: Final = "auto"
+SEARCH_GRANULARITY_CLUSTER: Final = "cluster"
+SEARCH_GRANULARITY_DOCUMENT: Final = "document"
 
 # ---------------------------------------------------------------------------
 # Budget-Wächter (§11.6) — schützt vor unbeabsichtigtem Token-Verbrauch

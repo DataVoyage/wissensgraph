@@ -86,10 +86,13 @@ traversal:
 
 # Harte Obergrenze je Lauf (§11.6). Der Wächter ist der Schutz davor, dass ein fehlkonfigurierter
 # Lauf unbemerkt große Mengen Token verbraucht.
+# Die Werte stehen als Platzhalter und nicht als Zahlen, weil sie genau das sind, was §6.2 unter
+# "laufbezogene Parameter" fasst: Auf einem Entwicklerrechner will man den Rahmen eng ziehen, im
+# Betrieb weit — und beides ohne Codeänderung und ohne eine zweite Config-Datei.
 budget:
-  max_model_calls_per_run: 2000
-  max_estimated_cost_per_run_eur: 5.0
-  on_exceed: abort
+  max_model_calls_per_run: ${WG_BUDGET_MAX_MODEL_CALLS_PER_RUN:-2000}
+  max_estimated_cost_per_run_eur: ${WG_BUDGET_MAX_COST_PER_RUN_EUR:-5.0}
+  on_exceed: ${WG_BUDGET_ON_EXCEED:-abort}
 
 api:
   host: ${WG_API_HOST:-0.0.0.0}

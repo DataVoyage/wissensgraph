@@ -144,6 +144,14 @@ class ClusteringConfig(FrozenModel):
     relabel_on_member_change_pct: int = Field(
         default=defaults.CLUSTERING_RELABEL_ON_MEMBER_CHANGE_PCT, ge=0, le=100
     )
+    min_similarity: Probability = Field(
+        default=defaults.CLUSTERING_MIN_SIMILARITY,
+        description=(
+            "Die 'Kantenschwelle' aus §13.2 Schritt 2: Ab welcher Kosinusähnlichkeit zwei "
+            "Nachbarn im k-NN-Graphen verbunden werden. Ohne sie wäre alles eine einzige "
+            "Zusammenhangskomponente."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_sizes(self) -> ClusteringConfig:
@@ -177,6 +185,28 @@ class OrphansConfig(FrozenModel):
                 f"kein Kandidatenband für Stufe 2 (§15.2)."
             )
         return self
+
+
+class RelationsConfig(FrozenModel):
+    """Parameter der semantischen Kantenerkennung (§14.2, §14.5).
+
+    §6.3 führt diesen Abschnitt nicht auf, §14 verlangt seine beiden Schwellen aber namentlich
+    (``relations.min_pair_similarity``, ``relations.min_confidence``). Er steht deshalb hier und
+    nicht als Literal im Dienst — sonst ließe sich der wirksamste Kostenhebel des Systems nur
+    durch eine Codeänderung verstellen.
+    """
+
+    min_pair_similarity: Probability = defaults.RELATIONS_MIN_PAIR_SIMILARITY
+    min_confidence: Probability = defaults.RELATIONS_MIN_CONFIDENCE
+    cross_cluster_members: int = Field(default=defaults.RELATIONS_CROSS_CLUSTER_MEMBERS, ge=0)
+    allowed_relationships: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Erlaubte Beziehungstypen für §14.3. Leer heißt: alle semantischen Kantenarten aus "
+            "'edge_kinds.semantic'. Die Liste dient dazu, das Modell auf eine Teilmenge "
+            "einzugrenzen, ohne die Taxonomie des Graphen zu beschneiden."
+        ),
+    )
 
 
 class RankingConfig(FrozenModel):
@@ -213,6 +243,28 @@ class TraversalConfig(FrozenModel):
                 f"überschreiten."
             )
         return self
+
+
+class SearchConfig(FrozenModel):
+    """Parameter der zweistufigen Suche (§12.4)."""
+
+    limit: int = Field(default=defaults.SEARCH_LIMIT, ge=1)
+    cluster_hit_threshold: Probability = Field(
+        default=defaults.SEARCH_CLUSTER_HIT_THRESHOLD,
+        description=(
+            "Ab welcher Ähnlichkeit ein Cluster als Anker gilt (§12.4 Stufe 1). Darunter fällt "
+            "die Suche auf die Dokumentebene zurück."
+        ),
+    )
+    rrf_k: int = Field(
+        default=defaults.SEARCH_RRF_K,
+        ge=1,
+        description=(
+            "Die Konstante der Reciprocal Rank Fusion. Sie dämpft die Wirkung der vordersten "
+            "Plätze gerade so weit, dass ein einzelnes Verfahren das Ergebnis nicht allein "
+            "bestimmt."
+        ),
+    )
 
 
 class BudgetConfig(FrozenModel):
@@ -323,8 +375,10 @@ class Settings(FrozenModel):
     edge_kinds: EdgeKindsConfig
 
     clustering: ClusteringConfig = ClusteringConfig()
+    relations: RelationsConfig = RelationsConfig()
     orphans: OrphansConfig = OrphansConfig()
     traversal: TraversalConfig = TraversalConfig()
+    search: SearchConfig = SearchConfig()
     budget: BudgetConfig = BudgetConfig()
 
     api: ApiConfig
@@ -366,7 +420,36 @@ class Settings(FrozenModel):
         if duplicate_types:
             raise ValueError(f"Konzepttypen müssen eindeutig sein, doppelt: {duplicate_types}.")
 
+        # Die eine Ausnahme von "Taxonomie ist Konfiguration" (§7.2): Das Clustering *erzeugt*
+        # Konzepte dieses Typs (§13.2 Schritt 4) und muss ihn deshalb benennen können. Statt die
+        # Ausnahme zu verstecken, wird sie hier geprüft — ein fehlender Eintrag wäre sonst erst im
+        # ersten Clustering-Lauf aufgefallen, und zwar mitten darin.
+        if defaults.CONCEPT_TYPE_CLUSTER not in {item.name for item in self.concept_types}:
+            raise ValueError(
+                f"Die Taxonomie muss den Konzepttyp '{defaults.CONCEPT_TYPE_CLUSTER}' führen — "
+                f"das Clustering legt Konzepte dieses Typs selbst an (§13.2). Konfiguriert sind: "
+                f"{', '.join(item.name for item in self.concept_types)}."
+            )
+
+        unknown_kinds = set(self.relations.allowed_relationships) - set(self.edge_kinds.semantic)
+        if unknown_kinds:
+            raise ValueError(
+                f"relations.allowed_relationships nennt die Kantenarten {sorted(unknown_kinds)}, "
+                f"die in edge_kinds.semantic nicht vorkommen. Eine Beziehungsart, die das Modell "
+                f"vorschlagen darf, muss der Graph auch führen können (§7.7, §14.3)."
+            )
+
         return self
+
+    @property
+    def relation_kinds(self) -> tuple[str, ...]:
+        """Die Beziehungstypen, die die Kantenerkennung vorschlagen darf (§14.3).
+
+        Ohne eigene Einschränkung sind das alle semantischen Kantenarten. Die Liste geht wörtlich
+        in den Prompt: Ein Modell, das eine Art vorschlägt, die der Graph nicht führt, hätte
+        umsonst gearbeitet.
+        """
+        return self.relations.allowed_relationships or self.edge_kinds.semantic
 
     def scopes_for_store(self, store: str) -> tuple[ScopeConfig, ...]:
         """Alle Scopes, die in einem bestimmten Store liegen."""

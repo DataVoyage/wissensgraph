@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Connection, and_, delete, or_, select, text, update
+from sqlalchemy import Connection, and_, case, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from wissensgraph.config import defaults
@@ -26,12 +26,24 @@ from wissensgraph.domain.edges import Edge, EdgeDraft, new_edge_id
 from wissensgraph.domain.runs import Run, RunKind, RunStatus
 from wissensgraph.infrastructure.db.tables import (
     change_log,
+    cluster_assignment_candidates,
+    cluster_centroids,
+    concept_embeddings,
     concepts,
     edges,
+    loose_concepts,
+    model_calls,
     runs,
     source_cursors,
 )
-from wissensgraph.ports.repositories import LexicalHit
+from wissensgraph.ports.models import ModelCall, UsageSummary
+from wissensgraph.ports.repositories import (
+    AssignmentCandidate,
+    Centroid,
+    LexicalHit,
+    LooseConcept,
+    Neighbour,
+)
 from wissensgraph.ports.runs import SourceCursorState
 from wissensgraph.ports.sources import Cursor
 
@@ -190,6 +202,38 @@ class SqlConceptRepository(_StoreBound):
             for row in rows
         )
 
+    def in_scope(self, scope: str, *, concept_type: str | None = None) -> tuple[Concept, ...]:
+        """Alle lebenden Konzepte eines Scopes, wahlweise auf einen Typ eingeschränkt."""
+        statement = select(concepts).where(
+            and_(
+                concepts.c.scope == scope,
+                concepts.c.status != str(ConceptStatus.TOMBSTONE),
+            )
+        )
+        if concept_type is not None:
+            statement = statement.where(concepts.c.type == concept_type)
+        rows = self._connection.execute(statement.order_by(concepts.c.id)).mappings()
+        return tuple(Concept.model_validate(dict(row)) for row in rows)
+
+    def loose(self, *, threshold: int, scope: str | None = None) -> tuple[LooseConcept, ...]:
+        """Die losen Knoten aus ``v_loose_concepts`` (§15.1)."""
+        statement = select(loose_concepts).where(loose_concepts.c.semantic_degree < threshold)
+        if scope is not None:
+            statement = statement.where(loose_concepts.c.scope == scope)
+        rows = self._connection.execute(
+            statement.order_by(loose_concepts.c.semantic_degree, loose_concepts.c.id)
+        ).mappings()
+        return tuple(
+            LooseConcept(
+                id=row["id"],
+                scope=row["scope"],
+                type=row["type"],
+                title=row["title"],
+                semantic_degree=int(row["semantic_degree"]),
+            )
+            for row in rows
+        )
+
     def save(self, concept: Concept) -> None:
         """Legt ein Konzept an oder überschreibt es (``INSERT … ON CONFLICT DO UPDATE``).
 
@@ -308,6 +352,52 @@ class SqlEdgeRepository(_StoreBound):
                 self._aktualisieren(eigene[triple], draft)
 
         return hinzugefuegt, entfernt
+
+    def add(self, draft: EdgeDraft) -> Edge | None:
+        """Legt eine einzelne Kante an, sofern es ihr Tripel noch nicht gibt (§14.2 Schritt 5)."""
+        if draft.from_store != self._store:
+            raise StoreMismatchError(erwartet=self._store, erhalten=draft.from_store, was="Kante")
+
+        werte: dict[str, Any] = draft.model_dump()
+        werte["id"] = new_edge_id()
+        # ``ON CONFLICT DO NOTHING`` statt einer vorherigen Abfrage: Zwischen Prüfen und Schreiben
+        # läge sonst ein Zeitfenster, und ``ux_edges_triple`` würde den zweiten Lauf mit einem
+        # Datenbankfehler abbrechen statt mit einem "gibt es schon".
+        row = (
+            self._connection.execute(
+                insert(edges)
+                .values(**werte)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        edges.c.from_store,
+                        edges.c.from_id,
+                        edges.c.to_store,
+                        edges.c.to_id,
+                        edges.c.kind,
+                    ]
+                )
+                .returning(edges)
+            )
+            .mappings()
+            .first()
+        )
+        return None if row is None else Edge.model_validate(dict(row))
+
+    def kinds_between(self, *, from_id: str, to_id: str) -> frozenset[str]:
+        """Die Kantenarten zwischen zwei Konzepten dieses Stores — in beiden Richtungen."""
+        rows = self._connection.execute(
+            select(edges.c.kind).where(
+                and_(
+                    edges.c.from_store == self._store,
+                    edges.c.to_store == self._store,
+                    or_(
+                        and_(edges.c.from_id == from_id, edges.c.to_id == to_id),
+                        and_(edges.c.from_id == to_id, edges.c.to_id == from_id),
+                    ),
+                )
+            )
+        ).scalars()
+        return frozenset(rows)
 
     def refresh_resolution(self) -> int:
         """Gleicht ``resolved`` für alle Kanten innerhalb dieses Stores ab (§8.5, §7.6).
@@ -442,6 +532,446 @@ class SqlEdgeRepository(_StoreBound):
         if all(getattr(vorhanden, name) == wert for name, wert in neu.items()):
             return
         self._connection.execute(update(edges).where(edges.c.id == vorhanden.id).values(**neu))
+
+
+class SqlEmbeddingRepository(_StoreBound):
+    """Die Vektoren eines Stores in PostgreSQL (§7.4, §13.1).
+
+    Die Kosinus*distanz* von pgvector wird an dieser Grenze in eine Ähnlichkeit umgerechnet
+    (``1 - distanz``). Weiter innen gibt es dann nur noch eine Richtung: größer ist ähnlicher.
+    Jede Schwelle aus §13 und §15 ist so formuliert, und eine zweite Konvention wäre eine
+    Fehlerquelle, die niemand beim Lesen bemerkt.
+    """
+
+    def outdated(self, *, model_key: str, scope: str | None = None) -> tuple[str, ...]:
+        """Konzepte ohne Vektor oder mit veraltetem ``source_hash`` (§13.1)."""
+        vorhanden = concept_embeddings.alias("e")
+        statement = (
+            select(concepts.c.id)
+            .select_from(
+                concepts.outerjoin(
+                    vorhanden,
+                    and_(
+                        vorhanden.c.concept_id == concepts.c.id,
+                        vorhanden.c.model_key == model_key,
+                    ),
+                )
+            )
+            .where(
+                and_(
+                    concepts.c.status != str(ConceptStatus.TOMBSTONE),
+                    or_(
+                        vorhanden.c.concept_id.is_(None),
+                        vorhanden.c.source_hash != concepts.c.content_hash,
+                    ),
+                )
+            )
+            .order_by(concepts.c.id)
+        )
+        if scope is not None:
+            statement = statement.where(concepts.c.scope == scope)
+        return tuple(self._connection.execute(statement).scalars())
+
+    def save(
+        self, *, concept_id: str, model_key: str, vector: Sequence[float], source_hash: str
+    ) -> None:
+        """Legt einen Vektor ab oder ersetzt ihn."""
+        werte: dict[str, Any] = {
+            "concept_id": concept_id,
+            "model_key": model_key,
+            "dim": len(vector),
+            "embedding": list(vector),
+            "source_hash": source_hash,
+            "created_at": datetime.now(UTC),
+        }
+        statement = insert(concept_embeddings).values(**werte)
+        self._connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[concept_embeddings.c.concept_id, concept_embeddings.c.model_key],
+                set_={
+                    "dim": statement.excluded.dim,
+                    "embedding": statement.excluded.embedding,
+                    "source_hash": statement.excluded.source_hash,
+                    "created_at": statement.excluded.created_at,
+                },
+            )
+        )
+
+    def get(self, *, concept_id: str, model_key: str) -> tuple[float, ...] | None:
+        """Der abgelegte Vektor eines Konzepts, oder ``None``."""
+        row = self._connection.execute(
+            select(concept_embeddings.c.embedding).where(
+                and_(
+                    concept_embeddings.c.concept_id == concept_id,
+                    concept_embeddings.c.model_key == model_key,
+                )
+            )
+        ).first()
+        return None if row is None else tuple(float(zahl) for zahl in row[0])
+
+    def count(self, *, model_key: str, scope: str | None = None) -> int:
+        """Wie viele Konzepte unter diesem Modellschlüssel eingebettet sind."""
+        statement = (
+            select(func.count())
+            .select_from(
+                concept_embeddings.join(concepts, concepts.c.id == concept_embeddings.c.concept_id)
+            )
+            .where(concept_embeddings.c.model_key == model_key)
+        )
+        if scope is not None:
+            statement = statement.where(concepts.c.scope == scope)
+        return int(self._connection.execute(statement).scalar_one())
+
+    def neighbours(
+        self,
+        *,
+        concept_id: str,
+        model_key: str,
+        k: int,
+        scope: str | None = None,
+        min_similarity: float = 0.0,
+    ) -> tuple[Neighbour, ...]:
+        """Die k nächsten Nachbarn eines Konzepts (§13.2 Schritt 1)."""
+        eigen = self.get(concept_id=concept_id, model_key=model_key)
+        if eigen is None:
+            return ()
+        return self.search(
+            vector=eigen,
+            model_key=model_key,
+            limit=k,
+            scope=scope,
+            exclude=(concept_id,),
+            min_similarity=min_similarity,
+        )
+
+    def search(
+        self,
+        *,
+        vector: Sequence[float],
+        model_key: str,
+        limit: int,
+        scope: str | None = None,
+        exclude: Sequence[str] = (),
+        min_similarity: float = 0.0,
+    ) -> tuple[Neighbour, ...]:
+        """Die ähnlichsten Konzepte zu einem Vektor — über den HNSW-Index (§12.4, §15.2b)."""
+        if limit < 1:
+            return ()
+        distanz = concept_embeddings.c.embedding.cosine_distance(list(vector))
+        statement = (
+            select(concept_embeddings.c.concept_id, distanz.label("distanz"))
+            .select_from(
+                concept_embeddings.join(concepts, concepts.c.id == concept_embeddings.c.concept_id)
+            )
+            .where(
+                and_(
+                    concept_embeddings.c.model_key == model_key,
+                    concepts.c.status != str(ConceptStatus.TOMBSTONE),
+                )
+            )
+            .order_by(distanz)
+            .limit(limit)
+        )
+        if scope is not None:
+            statement = statement.where(concepts.c.scope == scope)
+        if exclude:
+            statement = statement.where(concepts.c.id.notin_(tuple(exclude)))
+
+        treffer = [
+            Neighbour(concept_id=row[0], similarity=1.0 - float(row[1]))
+            for row in self._connection.execute(statement)
+        ]
+        return tuple(hit for hit in treffer if hit.similarity >= min_similarity)
+
+
+class SqlClusterRepository(_StoreBound):
+    """Zentroide und Zuordnungskandidaten eines Stores in PostgreSQL (§13.2, §13.3)."""
+
+    def save_centroid(
+        self, *, cluster_id: str, model_key: str, vector: Sequence[float], member_count: int
+    ) -> None:
+        """Legt den Mittelpunkt eines Clusters ab oder ersetzt ihn."""
+        werte: dict[str, Any] = {
+            "cluster_id": cluster_id,
+            "model_key": model_key,
+            "embedding": list(vector),
+            "member_count": member_count,
+            "updated_at": datetime.now(UTC),
+        }
+        statement = insert(cluster_centroids).values(**werte)
+        self._connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[cluster_centroids.c.cluster_id],
+                set_={
+                    "model_key": statement.excluded.model_key,
+                    "embedding": statement.excluded.embedding,
+                    "member_count": statement.excluded.member_count,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+        )
+
+    def centroids(self, *, model_key: str) -> tuple[Centroid, ...]:
+        """Alle Zentroide dieses Stores unter einem Modellschlüssel."""
+        rows = self._connection.execute(
+            select(cluster_centroids)
+            .where(cluster_centroids.c.model_key == model_key)
+            .order_by(cluster_centroids.c.cluster_id)
+        ).mappings()
+        return tuple(
+            Centroid(
+                cluster_id=row["cluster_id"],
+                model_key=row["model_key"],
+                vector=tuple(float(zahl) for zahl in row["embedding"]),
+                member_count=int(row["member_count"]),
+            )
+            for row in rows
+        )
+
+    def search_centroids(
+        self, *, vector: Sequence[float], model_key: str, limit: int
+    ) -> tuple[Neighbour, ...]:
+        """Die ähnlichsten Zentroide zu einem freien Vektor — Stufe 1 der Suche (§12.4)."""
+        if limit < 1:
+            return ()
+        distanz = cluster_centroids.c.embedding.cosine_distance(list(vector))
+        rows = self._connection.execute(
+            select(cluster_centroids.c.cluster_id, distanz.label("distanz"))
+            .where(cluster_centroids.c.model_key == model_key)
+            .order_by(distanz)
+            .limit(limit)
+        )
+        return tuple(Neighbour(concept_id=row[0], similarity=1.0 - float(row[1])) for row in rows)
+
+    def similar_centroids(
+        self, *, cluster_id: str, model_key: str, limit: int
+    ) -> tuple[Neighbour, ...]:
+        """Die ähnlichsten anderen Zentroide (§13.2 Schritt 6)."""
+        if limit < 1:
+            return ()
+        eigen = (
+            select(cluster_centroids.c.embedding)
+            .where(cluster_centroids.c.cluster_id == cluster_id)
+            .scalar_subquery()
+        )
+        distanz = cluster_centroids.c.embedding.cosine_distance(eigen)
+        rows = self._connection.execute(
+            select(cluster_centroids.c.cluster_id, distanz.label("distanz"))
+            .where(
+                and_(
+                    cluster_centroids.c.model_key == model_key,
+                    cluster_centroids.c.cluster_id != cluster_id,
+                )
+            )
+            .order_by(distanz)
+            .limit(limit)
+        )
+        return tuple(Neighbour(concept_id=row[0], similarity=1.0 - float(row[1])) for row in rows)
+
+    def bump(self, *, concept_id: str, cluster_id: str, score: float, run_id: UUID) -> int:
+        """Zählt eine beobachtete Zuordnung hoch und meldet den neuen Stand (§13.3).
+
+        ``seen_count`` wächst nur, wenn der Lauf ein anderer ist als der letzte. Sonst brächte ein
+        Lauf, der dieselbe Zuordnung zweimal sieht — etwa über zwei Nachbarn desselben Clusters —,
+        die Schwelle im Alleingang zum Auslösen, und die Bedingung "über mehrere Läufe hinweg"
+        wäre nicht mehr das, was sie sagt.
+        """
+        jetzt = datetime.now(UTC)
+        statement = insert(cluster_assignment_candidates).values(
+            concept_id=concept_id,
+            cluster_id=cluster_id,
+            score=score,
+            seen_count=1,
+            first_seen_run=run_id,
+            last_seen_run=run_id,
+            last_seen_at=jetzt,
+            excluded=False,
+        )
+        row = (
+            self._connection.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[
+                        cluster_assignment_candidates.c.concept_id,
+                        cluster_assignment_candidates.c.cluster_id,
+                    ],
+                    set_={
+                        "score": statement.excluded.score,
+                        "seen_count": case(
+                            (
+                                cluster_assignment_candidates.c.last_seen_run == run_id,
+                                cluster_assignment_candidates.c.seen_count,
+                            ),
+                            else_=cluster_assignment_candidates.c.seen_count + 1,
+                        ),
+                        "last_seen_run": statement.excluded.last_seen_run,
+                        "last_seen_at": statement.excluded.last_seen_at,
+                    },
+                ).returning(cluster_assignment_candidates.c.seen_count)
+            )
+            .mappings()
+            .one()
+        )
+        return int(row["seen_count"])
+
+    def candidates(self, *, min_seen: int = 1) -> tuple[AssignmentCandidate, ...]:
+        """Die vorgemerkten Zuordnungen, meistbestätigte zuerst."""
+        rows = self._connection.execute(
+            select(cluster_assignment_candidates)
+            .where(cluster_assignment_candidates.c.seen_count >= min_seen)
+            .order_by(
+                cluster_assignment_candidates.c.seen_count.desc(),
+                cluster_assignment_candidates.c.score.desc(),
+                cluster_assignment_candidates.c.concept_id,
+            )
+        ).mappings()
+        return tuple(
+            AssignmentCandidate(
+                concept_id=row["concept_id"],
+                cluster_id=row["cluster_id"],
+                score=float(row["score"]),
+                seen_count=int(row["seen_count"]),
+                excluded=bool(row["excluded"]),
+            )
+            for row in rows
+        )
+
+    def expire(self, *, run_id: UUID) -> int:
+        """Verwirft Kandidaten, die dieser Lauf nicht bestätigt hat (§13.3)."""
+        result = self._connection.execute(
+            delete(cluster_assignment_candidates).where(
+                and_(
+                    cluster_assignment_candidates.c.last_seen_run != run_id,
+                    cluster_assignment_candidates.c.excluded.is_(False),
+                )
+            )
+        )
+        return result.rowcount
+
+    def exclude(self, *, concept_id: str, cluster_id: str) -> None:
+        """Vermerkt eine von Hand entfernte Zuordnung als gesperrt (§13.4).
+
+        Der Ausschluss braucht keine Beobachtung, auf der er aufsetzt: Er kann für ein Paar
+        entstehen, das nie Kandidat war — etwa wenn jemand eine von Hand angelegte Mitgliedschaft
+        wieder entfernt.
+        """
+        jetzt = datetime.now(UTC)
+        leer = UUID(int=0)
+        statement = insert(cluster_assignment_candidates).values(
+            concept_id=concept_id,
+            cluster_id=cluster_id,
+            score=0.0,
+            seen_count=0,
+            first_seen_run=leer,
+            last_seen_run=leer,
+            last_seen_at=jetzt,
+            excluded=True,
+        )
+        self._connection.execute(
+            statement.on_conflict_do_update(
+                index_elements=[
+                    cluster_assignment_candidates.c.concept_id,
+                    cluster_assignment_candidates.c.cluster_id,
+                ],
+                set_={"excluded": True, "last_seen_at": statement.excluded.last_seen_at},
+            )
+        )
+
+    def exclusions(self) -> frozenset[tuple[str, str]]:
+        """Alle gesperrten Paare aus Konzept und Cluster."""
+        rows = self._connection.execute(
+            select(
+                cluster_assignment_candidates.c.concept_id,
+                cluster_assignment_candidates.c.cluster_id,
+            ).where(cluster_assignment_candidates.c.excluded.is_(True))
+        )
+        return frozenset((row[0], row[1]) for row in rows)
+
+
+class SqlModelCallRepository(_StoreBound):
+    """Die Modellaufrufe eines Stores in PostgreSQL (§7.4, §11.6)."""
+
+    def record(self, call: ModelCall) -> None:
+        """Hängt einen Aufruf an."""
+        self._connection.execute(
+            insert(model_calls).values(
+                run_id=call.run_id,
+                task=call.task,
+                provider=call.provider,
+                model=call.model,
+                store=call.store,
+                tokens_in=call.tokens_in,
+                tokens_out=call.tokens_out,
+                latency_ms=call.latency_ms,
+                cost_estimate=call.cost_estimate,
+                cache_hit=call.cache_hit,
+                attempt=call.attempt,
+                status=call.status,
+                created_at=call.created_at or datetime.now(UTC),
+            )
+        )
+
+    def usage(
+        self, *, run_id: UUID | None = None, limit: int = defaults.MODEL_USAGE_LIMIT
+    ) -> tuple[UsageSummary, ...]:
+        """Die Auswertung, gruppiert nach Aufgabe und Modell, teuerste zuerst."""
+        kosten = func.coalesce(func.sum(model_calls.c.cost_estimate), 0)
+        statement = (
+            select(
+                model_calls.c.task,
+                model_calls.c.provider,
+                model_calls.c.model,
+                func.count().label("calls"),
+                func.count().filter(model_calls.c.cache_hit.is_(True)).label("cache_hits"),
+                func.coalesce(func.sum(model_calls.c.tokens_in), 0).label("tokens_in"),
+                func.coalesce(func.sum(model_calls.c.tokens_out), 0).label("tokens_out"),
+                kosten.label("cost_estimate"),
+                func.count()
+                .filter(model_calls.c.status != defaults.MODEL_CALL_OK)
+                .filter(model_calls.c.status != defaults.MODEL_CALL_CACHE_HIT)
+                .label("failures"),
+            )
+            .group_by(model_calls.c.task, model_calls.c.provider, model_calls.c.model)
+            .order_by(kosten.desc(), func.count().desc())
+            .limit(limit)
+        )
+        if run_id is not None:
+            statement = statement.where(model_calls.c.run_id == run_id)
+
+        rows = self._connection.execute(statement).mappings()
+        return tuple(
+            UsageSummary(
+                task=row["task"],
+                provider=row["provider"],
+                model=row["model"],
+                calls=int(row["calls"]),
+                cache_hits=int(row["cache_hits"]),
+                tokens_in=int(row["tokens_in"]),
+                tokens_out=int(row["tokens_out"]),
+                cost_estimate_eur=float(row["cost_estimate"]),
+                failures=int(row["failures"]),
+            )
+            for row in rows
+        )
+
+    def spent(self, run_id: UUID) -> tuple[int, float]:
+        """Aufrufzahl und geschätzte Kosten eines Laufs — die Eingabe des Budget-Wächters (§11.6).
+
+        Gezählt werden nur Aufrufe, die wirklich hinausgingen: Ein Cache-Treffer hat nichts
+        verbraucht, und ein wegen des Budgets abgewiesener Aufruf würde den Wächter sonst gegen
+        sich selbst zählen lassen.
+        """
+        row = self._connection.execute(
+            select(
+                func.count(),
+                func.coalesce(func.sum(model_calls.c.cost_estimate), 0),
+            ).where(
+                and_(
+                    model_calls.c.run_id == run_id,
+                    model_calls.c.status == defaults.MODEL_CALL_OK,
+                )
+            )
+        ).one()
+        return int(row[0]), float(row[1])
 
 
 class SqlChangeLogRepository(_StoreBound):

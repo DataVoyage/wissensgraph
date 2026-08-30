@@ -62,6 +62,16 @@ app.add_typer(concepts_app)
 graph_app = typer.Typer(name="graph", help="Den Graphen abfragen (§12, §19).", no_args_is_help=True)
 app.add_typer(graph_app)
 
+models_app = typer.Typer(
+    name="models", help="Den Model-Router einsehen (§11, §19).", no_args_is_help=True
+)
+app.add_typer(models_app)
+
+ModelsFileOption = Annotated[
+    Path | None,
+    typer.Option("--models", help="Pfad zu models.yaml; sonst aus WG_MODELS_FILE."),
+]
+
 SourcesFileOption = Annotated[
     Path | None,
     typer.Option("--sources", help="Pfad zu sources.yaml; sonst aus WG_SOURCES_FILE."),
@@ -686,19 +696,26 @@ def graph_search(
     config_file: ConfigFileOption = None,
     dotenv_file: DotenvFileOption = None,
     store: StoreOption = defaults.STORE_SHARED,
-    limit: Annotated[int, typer.Option("--limit")] = defaults.SEARCH_LIMIT,
+    limit: Annotated[int | None, typer.Option("--limit")] = None,
+    granularity: Annotated[
+        str,
+        typer.Option(
+            "--granularity",
+            help="auto | cluster | document — erst Cluster, dann Dokumente (§12.4).",
+        ),
+    ] = defaults.SEARCH_GRANULARITY_AUTO,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    """Lexikalische Suche über Volltext und Trigramm (§12.4).
+    """Zweistufige Suche: erst Cluster, dann Dokumente (§12.4).
 
-    Solange es keine Embeddings gibt, ist das der einzige Modus — und er steht im Ergebnis. Ein
-    stiller Qualitätsverlust wäre die schlechtere Variante.
+    Der Modus steht im Ergebnis. Ohne verfügbares Embedding-Modell ist er ``lexical`` — ein
+    stiller Qualitätsverlust ohne Hinweis wäre die schlechtere Variante.
     """
     from wissensgraph.runtime import Runtime
 
     settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
     with _maschinenlesbar() if as_json else nullcontext(), Runtime(settings) as runtime:
-        ergebnis = runtime.graph.search(query, store=store, limit=limit)
+        ergebnis = runtime.graph.search(query, store=store, limit=limit, granularity=granularity)
 
     if as_json:
         typer.echo(json.dumps(ergebnis.as_dict(), indent=2, ensure_ascii=False))
@@ -709,6 +726,277 @@ def graph_search(
             f"  {hit.score:6.4f}  {hit.concept.id} ({hit.concept.type}) — "
             f"{hit.concept.title or '—'}"
         )
+
+
+ScopeOption = Annotated[str, typer.Option("--scope", help="Zu bearbeitender Scope (§6.3).")]
+
+
+def _lauf_ausgeben(run: object, *, as_json: bool) -> None:
+    """Ein Lauf der semantischen Schicht: als JSON oder als Zeilen mit seinen Zählern."""
+    from wissensgraph.domain.runs import Run, RunStatus
+
+    assert isinstance(run, Run)
+    if as_json:
+        typer.echo(json.dumps(run.as_dict(), indent=2, ensure_ascii=False))
+        return
+
+    zustand = CheckStatus.OK if run.status is RunStatus.SUCCEEDED else CheckStatus.FAIL
+    dauer = f"{run.duration_seconds:.1f}s" if run.duration_seconds is not None else "—"
+    typer.echo(f"{_SYMBOLS[zustand]} {run.kind} ({dauer})")
+    if run.error:
+        typer.echo(f"       {run.error}")
+    for name, wert in run.stats.items():
+        if wert not in (0, False, "", [], None):
+            typer.echo(f"       {name}: {wert}")
+
+
+@app.command("embed")
+def embed(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    models_file: ModelsFileOption = None,
+    scope: ScopeOption = "",
+    rebuild: Annotated[
+        bool,
+        typer.Option("--rebuild", help="Alles neu einbetten — nach einem Modellwechsel (§11.7)."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Berechnet die fehlenden Embeddings eines Scopes (§13.1, §19).
+
+    Idempotent: Ein zweiter Lauf über einen unveränderten Bestand kostet keinen einzigen Token —
+    verglichen wird der gespeicherte ``source_hash`` mit dem aktuellen ``content_hash``.
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with (
+        _maschinenlesbar() if as_json else nullcontext(),
+        Runtime(settings, models_file=models_file) as runtime,
+    ):
+        run = runtime.run_embed(_scope_pruefen(settings, scope), rebuild=rebuild)
+    _lauf_ausgeben(run, as_json=as_json)
+
+
+@app.command("cluster")
+def cluster(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    models_file: ModelsFileOption = None,
+    scope: ScopeOption = "",
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Bildet Cluster aus den Embeddings eines Scopes (§13.2, §19).
+
+    Eine Zuordnung wird erst geschrieben, wenn sie ``clustering.stability_runs`` Läufe überlebt
+    hat (§13.3) — der erste Lauf legt also Cluster an, ohne Mitglieder zu verknüpfen.
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with (
+        _maschinenlesbar() if as_json else nullcontext(),
+        Runtime(settings, models_file=models_file) as runtime,
+    ):
+        run = runtime.run_cluster(_scope_pruefen(settings, scope))
+    _lauf_ausgeben(run, as_json=as_json)
+
+
+@app.command("relations")
+def relations(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    models_file: ModelsFileOption = None,
+    scope: ScopeOption = "",
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Fragen stellen, nichts schreiben.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Erkennt typisierte Beziehungen in den stabilen Clustern eines Scopes (§14, §19).
+
+    "Keine Beziehung" ist die erwartete Mehrheitsantwort; ein Lauf mit wenigen neuen Kanten ist
+    der Regelfall und kein Fehlschlag.
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with (
+        _maschinenlesbar() if as_json else nullcontext(),
+        Runtime(settings, models_file=models_file) as runtime,
+    ):
+        run = runtime.run_relations(_scope_pruefen(settings, scope), dry_run=dry_run)
+    _lauf_ausgeben(run, as_json=as_json)
+
+
+@app.command("link-orphans")
+def link_orphans(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    models_file: ModelsFileOption = None,
+    scope: ScopeOption = "",
+    loose_threshold: Annotated[int | None, typer.Option("--loose-threshold")] = None,
+    proximity_top_n: Annotated[int | None, typer.Option("--proximity-top-n")] = None,
+    proximity_auto_commit: Annotated[float | None, typer.Option("--proximity-auto-commit")] = None,
+    proximity_candidate_band: Annotated[
+        float | None, typer.Option("--proximity-candidate-band")
+    ] = None,
+    use_llm: Annotated[
+        bool | None, typer.Option("--use-llm/--no-use-llm", help="Ob Stufe 2 läuft (§15.3).")
+    ] = None,
+    cluster_suggestion_limit: Annotated[
+        int | None, typer.Option("--cluster-suggestion-limit")
+    ] = None,
+    cluster_preview_members: Annotated[
+        int | None, typer.Option("--cluster-preview-members")
+    ] = None,
+    min_confidence: Annotated[float | None, typer.Option("--min-confidence")] = None,
+    patterns: Annotated[
+        list[Path] | None,
+        typer.Option("--text-match-patterns", help="Musterdateien für §15.2a."),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Nur berichten, nichts schreiben (§15.4).")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Vernetzt lose Knoten in zwei Stufen — erst Code, dann Modell (§15, §19).
+
+    Jeder Parameter aus §15.4 ist hier überschreibbar; ohne Angabe gilt der Wert aus
+    ``config/wissensgraph.yaml`` (§6.2).
+    """
+    from wissensgraph.runtime import OrphanRequest, Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    request = OrphanRequest(
+        scope=_scope_pruefen(settings, scope),
+        loose_threshold=loose_threshold,
+        proximity_top_n=proximity_top_n,
+        proximity_auto_commit=proximity_auto_commit,
+        proximity_candidate_band=proximity_candidate_band,
+        use_llm=use_llm,
+        cluster_suggestion_limit=cluster_suggestion_limit,
+        cluster_preview_members=cluster_preview_members,
+        min_confidence=min_confidence,
+        pattern_files=tuple(str(pfad) for pfad in patterns or ()),
+        dry_run=dry_run,
+    )
+    with (
+        _maschinenlesbar() if as_json else nullcontext(),
+        Runtime(settings, models_file=models_file) as runtime,
+    ):
+        run = runtime.run_orphans(request)
+    _lauf_ausgeben(run, as_json=as_json)
+    if dry_run and not as_json:
+        typer.echo(f"{_SYMBOLS[CheckStatus.WARN]} Trockenlauf: nichts geschrieben.")
+
+
+def _scope_pruefen(settings: Settings, scope: str) -> str:
+    """Beendet die CLI verständlich, wenn der Scope fehlt oder unbekannt ist (§6.5)."""
+    bekannt = [item.name for item in settings.scopes]
+    if not scope:
+        typer.echo(f"--scope ist Pflicht. Konfiguriert sind: {', '.join(bekannt)}.", err=True)
+        raise typer.Exit(code=2)
+    if scope not in bekannt:
+        typer.echo(
+            f"Unbekannter Scope '{scope}'. Konfiguriert sind: {', '.join(bekannt)}.", err=True
+        )
+        raise typer.Exit(code=2)
+    return scope
+
+
+@models_app.command("describe")
+def models_describe(
+    task: Annotated[
+        str | None,
+        typer.Argument(help="Eine einzelne Aufgabe; ohne Angabe alle konfigurierten."),
+    ] = None,
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    models_file: ModelsFileOption = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Zeigt, welches Modell für welche Aufgabe greifen würde (§11.2, §19).
+
+    Ruft kein Modell auf. Das Kommando beantwortet genau die Frage, die ein Modellwechsel
+    aufwirft — "wirkt die Änderung in models.yaml?" —, und zwar ohne einen einzigen Token.
+    """
+    from wissensgraph.config.models import UnknownTaskError
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with (
+        _maschinenlesbar() if as_json else nullcontext(),
+        Runtime(settings, models_file=models_file) as runtime,
+    ):
+        try:
+            routen = runtime.router.routes() if task is None else (runtime.router.describe(task),)
+        except UnknownTaskError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+
+    if as_json:
+        typer.echo(json.dumps([route.as_dict() for route in routen], indent=2, ensure_ascii=False))
+        return
+
+    if not routen:
+        typer.echo("Keine Task-Profile konfiguriert. Sie stehen in config/models.yaml (§11.3).")
+        return
+    for route in routen:
+        # 'configured' sagt nur, ob das Nötigste dasteht — nicht, ob der Schlüssel gilt. Ein
+        # Startvorgang, der jeden Anbieter anspräche, verbrauchte Token für eine Frage, die
+        # niemand gestellt hat.
+        zustand = CheckStatus.OK if route.configured else CheckStatus.WARN
+        ort = "lokal" if route.local else "extern"
+        typer.echo(f"{_SYMBOLS[zustand]} {route.task:<20} {route.model_key} ({ort})")
+        if route.dim is not None:
+            typer.echo(f"         Dimension {route.dim}, Bündel zu {route.batch_size}")
+        if route.fallbacks:
+            typer.echo(f"         Fallback: {', '.join(route.fallbacks)}")
+        if not route.configured:
+            typer.echo("         Zugangsdaten fehlen — siehe .env.example (§11.4).")
+
+
+@models_app.command("usage")
+def models_usage(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    models_file: ModelsFileOption = None,
+    store: StoreOption = defaults.STORE_SHARED,
+    limit: Annotated[int, typer.Option("--limit")] = defaults.MODEL_USAGE_LIMIT,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Wertet ``model_calls`` aus: Aufrufe, Cache-Treffer, Token und geschätzte Kosten (§11.6).
+
+    Je Store, nicht über beide: Ein Aufruf wird dort verbucht, wo der Inhalt herkommt. Was der
+    persönliche Store gekostet hat, steht deshalb nur in seiner eigenen Abrechnung
+    (Leitprinzip 2).
+    """
+    from wissensgraph.runtime import Runtime
+
+    settings = _load(config_file, service="cli", dotenv_file=dotenv_file)
+    with (
+        _maschinenlesbar() if as_json else nullcontext(),
+        Runtime(settings, models_file=models_file) as runtime,
+    ):
+        zeilen = runtime.router.usage(store=store, limit=limit)
+
+    if as_json:
+        typer.echo(json.dumps([zeile.as_dict() for zeile in zeilen], indent=2, ensure_ascii=False))
+        return
+
+    if not zeilen:
+        typer.echo(f"Keine Modellaufrufe im Store '{store}' verbucht.")
+        return
+    typer.echo(f"{'Aufgabe':<20} {'Modell':<34} {'Aufr.':>6} {'Cache':>6} {'Token':>9} {'EUR':>9}")
+    for zeile in zeilen:
+        typer.echo(
+            f"{zeile.task:<20} {zeile.provider + ':' + zeile.model:<34} "
+            f"{zeile.calls:>6} {zeile.cache_hits:>6} "
+            f"{zeile.tokens_in + zeile.tokens_out:>9} {zeile.cost_estimate_eur:>9.4f}"
+        )
+        if zeile.failures:
+            typer.echo(f"{'':<20} davon nicht erfolgreich oder verhindert: {zeile.failures}")
 
 
 @app.command("worker")

@@ -11,6 +11,7 @@ Schnappschuss genommen und bei einer Ausnahme wiederhergestellt. Nur so lässt s
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
@@ -20,17 +21,35 @@ from types import TracebackType
 from typing import Self
 from uuid import UUID
 
+from wissensgraph.config import defaults
 from wissensgraph.domain.changes import CONFLICT_SOURCE_HASH_KEY, ChangeEntry, ChangeType
 from wissensgraph.domain.concepts import Concept, ConceptStatus
 from wissensgraph.domain.edges import Edge, EdgeDraft, new_edge_id
 from wissensgraph.domain.runs import Run, RunKind
-from wissensgraph.ports.repositories import LexicalHit
+from wissensgraph.ports.models import ModelCall, UsageSummary
+from wissensgraph.ports.repositories import (
+    AssignmentCandidate,
+    Centroid,
+    LexicalHit,
+    LooseConcept,
+    Neighbour,
+)
 from wissensgraph.ports.runs import SourceBusy, SourceCursorState
 from wissensgraph.ports.sources import Cursor
 
 #: Ersatzzeitpunkt, wenn ein Kantenentwurf keinen Erzeugungszeitpunkt trägt. In der Datenbank
 #: setzt ``DEFAULT now()`` den Wert; hier braucht es einen deterministischen Ersatz.
 _EPOCHE = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+@dataclass
+class _Kandidat:
+    """Eine Zeile aus ``cluster_assignment_candidates`` — veränderlich wegen ``seen_count``."""
+
+    score: float
+    seen_count: int
+    last_run: UUID
+    excluded: bool
 
 
 @dataclass
@@ -42,6 +61,13 @@ class StoreState:
     changes: list[ChangeEntry] = field(default_factory=list)
     runs: dict[UUID, Run] = field(default_factory=dict)
     cursors: dict[str, SourceCursorState] = field(default_factory=dict)
+    #: Vektor und Quell-Hash je (Konzept, Modellschlüssel) — der Inhalt von
+    #: ``concept_embeddings`` (§7.4). Der Hash steht daneben, weil §13.1 an ihm entscheidet,
+    #: ob neu eingebettet werden muss.
+    embeddings: dict[tuple[str, str], tuple[tuple[float, ...], str]] = field(default_factory=dict)
+    centroids: dict[str, Centroid] = field(default_factory=dict)
+    candidates: dict[tuple[str, str], _Kandidat] = field(default_factory=dict)
+    model_calls: list[ModelCall] = field(default_factory=list)
 
 
 class MemoryConceptRepository:
@@ -100,6 +126,51 @@ class MemoryConceptRepository:
             LexicalHit(concept=concept, score=1.0 / (1 + rang))
             for rang, concept in enumerate(treffer[:limit])
         )
+
+    def in_scope(self, scope: str, *, concept_type: str | None = None) -> tuple[Concept, ...]:
+        treffer = [
+            concept
+            for concept in self._state.concepts.values()
+            if concept.scope == scope
+            and concept.status is not ConceptStatus.TOMBSTONE
+            and (concept_type is None or concept.type == concept_type)
+        ]
+        treffer.sort(key=lambda concept: concept.id)
+        return tuple(treffer)
+
+    def loose(self, *, threshold: int, scope: str | None = None) -> tuple[LooseConcept, ...]:
+        """Nachbildung von ``v_loose_concepts``: nur nicht-strukturelle Kanten zählen (§7.7).
+
+        Die Sicht zählt ``member`` bewusst nicht mit. Ein Konzept, das ausschließlich in einem
+        Cluster hängt, ist thematisch weiterhin unvernetzt — und genau darum geht es §15.1.
+        """
+        treffer: list[LooseConcept] = []
+        for concept in self._state.concepts.values():
+            if concept.status is ConceptStatus.TOMBSTONE:
+                continue
+            if scope is not None and concept.scope != scope:
+                continue
+            grad = sum(
+                1
+                for edge in self._state.edges
+                if edge.kind != defaults.EDGE_KIND_MEMBER
+                and (
+                    (edge.from_store == concept.store and edge.from_id == concept.id)
+                    or (edge.to_store == concept.store and edge.to_id == concept.id)
+                )
+            )
+            if grad < threshold:
+                treffer.append(
+                    LooseConcept(
+                        id=concept.id,
+                        scope=concept.scope,
+                        type=concept.type,
+                        title=concept.title,
+                        semantic_degree=grad,
+                    )
+                )
+        treffer.sort(key=lambda item: (item.semantic_degree, item.id))
+        return tuple(treffer)
 
     def save(self, concept: Concept) -> None:
         if concept.store != self._store:
@@ -258,6 +329,26 @@ class MemoryEdgeRepository:
         index = self._state.edges.index(vorhanden)
         self._state.edges[index] = vorhanden.model_copy(update=neu)
 
+    def add(self, draft: EdgeDraft) -> Edge | None:
+        if draft.from_store != self._store:
+            raise ValueError(f"Kante gehört zu '{draft.from_store}', nicht zu '{self._store}'.")
+        if any(edge.triple == draft.triple for edge in self._state.edges):
+            return None
+        edge = Edge(
+            **draft.model_dump(), id=new_edge_id(), created_at=draft.generated_at or _EPOCHE
+        )
+        self._state.edges.append(edge)
+        return edge
+
+    def kinds_between(self, *, from_id: str, to_id: str) -> frozenset[str]:
+        return frozenset(
+            edge.kind
+            for edge in self._state.edges
+            if edge.from_store == self._store
+            and edge.to_store == self._store
+            and {edge.from_id, edge.to_id} == {from_id, to_id}
+        )
+
     def refresh_resolution(self) -> int:
         anzahl = 0
         for index, edge in enumerate(self._state.edges):
@@ -372,6 +463,268 @@ class MemorySourceCursorRepository:
         return self._state.cursors.pop(source_name, None) is not None
 
 
+class MemoryEmbeddingRepository:
+    """Vektoren eines Stores im Speicher.
+
+    Die Kosinusähnlichkeit wird hier wirklich gerechnet und nicht nachgeahmt. Nur so prüft ein
+    Test über §13.2 die Cluster-Bildung und nicht seine eigene Vorbereitung — eine Nachbildung,
+    die etwa nach Titelgleichheit sortierte, hätte jede Schwelle bedeutungslos gemacht.
+    """
+
+    def __init__(self, state: StoreState, store: str) -> None:
+        self._state = state
+        self._store = store
+
+    @property
+    def store(self) -> str:
+        return self._store
+
+    def outdated(self, *, model_key: str, scope: str | None = None) -> tuple[str, ...]:
+        offen = []
+        for concept in self._state.concepts.values():
+            if concept.status is ConceptStatus.TOMBSTONE:
+                continue
+            if scope is not None and concept.scope != scope:
+                continue
+            eintrag = self._state.embeddings.get((concept.id, model_key))
+            if eintrag is None or eintrag[1] != concept.content_hash:
+                offen.append(concept.id)
+        return tuple(sorted(offen))
+
+    def save(
+        self, *, concept_id: str, model_key: str, vector: Sequence[float], source_hash: str
+    ) -> None:
+        self._state.embeddings[(concept_id, model_key)] = (tuple(vector), source_hash)
+
+    def get(self, *, concept_id: str, model_key: str) -> tuple[float, ...] | None:
+        eintrag = self._state.embeddings.get((concept_id, model_key))
+        return None if eintrag is None else eintrag[0]
+
+    def count(self, *, model_key: str, scope: str | None = None) -> int:
+        return len(self._passende(model_key=model_key, scope=scope))
+
+    def neighbours(
+        self,
+        *,
+        concept_id: str,
+        model_key: str,
+        k: int,
+        scope: str | None = None,
+        min_similarity: float = 0.0,
+    ) -> tuple[Neighbour, ...]:
+        eigen = self.get(concept_id=concept_id, model_key=model_key)
+        if eigen is None:
+            return ()
+        return self.search(
+            vector=eigen,
+            model_key=model_key,
+            limit=k,
+            scope=scope,
+            exclude=(concept_id,),
+            min_similarity=min_similarity,
+        )
+
+    def search(
+        self,
+        *,
+        vector: Sequence[float],
+        model_key: str,
+        limit: int,
+        scope: str | None = None,
+        exclude: Sequence[str] = (),
+        min_similarity: float = 0.0,
+    ) -> tuple[Neighbour, ...]:
+        ausgeschlossen = frozenset(exclude)
+        treffer = [
+            Neighbour(concept_id=kandidat, similarity=_kosinus(vector, eigen))
+            for kandidat, eigen in self._passende(model_key=model_key, scope=scope).items()
+            if kandidat not in ausgeschlossen
+        ]
+        treffer.sort(key=lambda hit: (-hit.similarity, hit.concept_id))
+        return tuple(hit for hit in treffer[:limit] if hit.similarity >= min_similarity)
+
+    def _passende(self, *, model_key: str, scope: str | None) -> dict[str, tuple[float, ...]]:
+        """Alle Vektoren dieses Modells, deren Konzept lebt und im Scope liegt."""
+        gefunden: dict[str, tuple[float, ...]] = {}
+        for (concept_id, schluessel), (vektor, _) in self._state.embeddings.items():
+            if schluessel != model_key:
+                continue
+            concept = self._state.concepts.get(concept_id)
+            if concept is None or concept.status is ConceptStatus.TOMBSTONE:
+                continue
+            if scope is not None and concept.scope != scope:
+                continue
+            gefunden[concept_id] = vektor
+        return gefunden
+
+
+class MemoryClusterRepository:
+    """Zentroide und Zuordnungskandidaten eines Stores im Speicher (§13.2, §13.3)."""
+
+    def __init__(self, state: StoreState, store: str) -> None:
+        self._state = state
+        self._store = store
+
+    @property
+    def store(self) -> str:
+        return self._store
+
+    def save_centroid(
+        self, *, cluster_id: str, model_key: str, vector: Sequence[float], member_count: int
+    ) -> None:
+        self._state.centroids[cluster_id] = Centroid(
+            cluster_id=cluster_id,
+            model_key=model_key,
+            vector=tuple(vector),
+            member_count=member_count,
+        )
+
+    def centroids(self, *, model_key: str) -> tuple[Centroid, ...]:
+        return tuple(
+            sorted(
+                (item for item in self._state.centroids.values() if item.model_key == model_key),
+                key=lambda item: item.cluster_id,
+            )
+        )
+
+    def search_centroids(
+        self, *, vector: Sequence[float], model_key: str, limit: int
+    ) -> tuple[Neighbour, ...]:
+        treffer = [
+            Neighbour(concept_id=item.cluster_id, similarity=_kosinus(vector, item.vector))
+            for item in self.centroids(model_key=model_key)
+        ]
+        treffer.sort(key=lambda hit: (-hit.similarity, hit.concept_id))
+        return tuple(treffer[:limit])
+
+    def similar_centroids(
+        self, *, cluster_id: str, model_key: str, limit: int
+    ) -> tuple[Neighbour, ...]:
+        eigen = self._state.centroids.get(cluster_id)
+        if eigen is None:
+            return ()
+        treffer = [
+            Neighbour(concept_id=item.cluster_id, similarity=_kosinus(eigen.vector, item.vector))
+            for item in self.centroids(model_key=model_key)
+            if item.cluster_id != cluster_id
+        ]
+        treffer.sort(key=lambda hit: (-hit.similarity, hit.concept_id))
+        return tuple(treffer[:limit])
+
+    def bump(self, *, concept_id: str, cluster_id: str, score: float, run_id: UUID) -> int:
+        schluessel = (concept_id, cluster_id)
+        vorhanden = self._state.candidates.get(schluessel)
+        if vorhanden is None:
+            self._state.candidates[schluessel] = _Kandidat(
+                score=score, seen_count=1, last_run=run_id, excluded=False
+            )
+            return 1
+        # Wie das SQL-Pendant: derselbe Lauf zählt nicht zweimal.
+        if vorhanden.last_run != run_id:
+            vorhanden.seen_count += 1
+        vorhanden.score = score
+        vorhanden.last_run = run_id
+        return vorhanden.seen_count
+
+    def candidates(self, *, min_seen: int = 1) -> tuple[AssignmentCandidate, ...]:
+        treffer = [
+            AssignmentCandidate(
+                concept_id=concept_id,
+                cluster_id=cluster_id,
+                score=eintrag.score,
+                seen_count=eintrag.seen_count,
+                excluded=eintrag.excluded,
+            )
+            for (concept_id, cluster_id), eintrag in self._state.candidates.items()
+            if eintrag.seen_count >= min_seen
+        ]
+        treffer.sort(key=lambda item: (-item.seen_count, -item.score, item.concept_id))
+        return tuple(treffer)
+
+    def expire(self, *, run_id: UUID) -> int:
+        veraltet = [
+            schluessel
+            for schluessel, eintrag in self._state.candidates.items()
+            if eintrag.last_run != run_id and not eintrag.excluded
+        ]
+        for schluessel in veraltet:
+            del self._state.candidates[schluessel]
+        return len(veraltet)
+
+    def exclude(self, *, concept_id: str, cluster_id: str) -> None:
+        schluessel = (concept_id, cluster_id)
+        vorhanden = self._state.candidates.get(schluessel)
+        if vorhanden is None:
+            self._state.candidates[schluessel] = _Kandidat(
+                score=0.0, seen_count=0, last_run=UUID(int=0), excluded=True
+            )
+            return
+        vorhanden.excluded = True
+
+    def exclusions(self) -> frozenset[tuple[str, str]]:
+        return frozenset(
+            schluessel for schluessel, eintrag in self._state.candidates.items() if eintrag.excluded
+        )
+
+
+class MemoryModelCallRepository:
+    """Die Modellaufrufe eines Stores im Speicher (§7.4, §11.6)."""
+
+    def __init__(self, state: StoreState, store: str) -> None:
+        self._state = state
+        self._store = store
+
+    @property
+    def store(self) -> str:
+        return self._store
+
+    def record(self, call: ModelCall) -> None:
+        self._state.model_calls.append(call)
+
+    def usage(self, *, run_id: UUID | None = None, limit: int = 500) -> tuple[UsageSummary, ...]:
+        gruppen: dict[tuple[str, str, str], list[ModelCall]] = {}
+        for call in self._state.model_calls:
+            if run_id is not None and call.run_id != run_id:
+                continue
+            gruppen.setdefault((call.task, call.provider, call.model), []).append(call)
+
+        ergebnis = [
+            UsageSummary(
+                task=task,
+                provider=provider,
+                model=model,
+                calls=len(calls),
+                cache_hits=sum(1 for call in calls if call.cache_hit),
+                tokens_in=sum(call.tokens_in or 0 for call in calls),
+                tokens_out=sum(call.tokens_out or 0 for call in calls),
+                cost_estimate_eur=sum(call.cost_estimate or 0.0 for call in calls),
+                failures=sum(
+                    1
+                    for call in calls
+                    if call.status not in (defaults.MODEL_CALL_OK, defaults.MODEL_CALL_CACHE_HIT)
+                ),
+            )
+            for (task, provider, model), calls in gruppen.items()
+        ]
+        ergebnis.sort(key=lambda item: (-item.cost_estimate_eur, -item.calls))
+        return tuple(ergebnis[:limit])
+
+    def spent(self, run_id: UUID) -> tuple[int, float]:
+        passend = [
+            call
+            for call in self._state.model_calls
+            if call.run_id == run_id and call.status == defaults.MODEL_CALL_OK
+        ]
+        return len(passend), sum(call.cost_estimate or 0.0 for call in passend)
+
+
+def _kosinus(links: Sequence[float], rechts: Sequence[float]) -> float:
+    """Die Kosinusähnlichkeit zweier Vektoren; 0.0, wenn einer die Länge null hat."""
+    produkt = sum(a * b for a, b in zip(links, rechts, strict=False))
+    laenge = math.sqrt(sum(a * a for a in links)) * math.sqrt(sum(b * b for b in rechts))
+    return 0.0 if laenge == 0.0 else produkt / laenge
+
+
 class MemorySourceLocks:
     """Sperren je Quelle im Speicher — erfüllt den Port :class:`SourceLocks`.
 
@@ -431,6 +784,18 @@ class MemoryUnitOfWork:
     @property
     def cursors(self) -> MemorySourceCursorRepository:
         return MemorySourceCursorRepository(self._state, self._store)
+
+    @property
+    def embeddings(self) -> MemoryEmbeddingRepository:
+        return MemoryEmbeddingRepository(self._state, self._store)
+
+    @property
+    def clusters(self) -> MemoryClusterRepository:
+        return MemoryClusterRepository(self._state, self._store)
+
+    @property
+    def model_calls(self) -> MemoryModelCallRepository:
+        return MemoryModelCallRepository(self._state, self._store)
 
     def commit(self) -> None:
         self._snapshot = deepcopy(self._state)

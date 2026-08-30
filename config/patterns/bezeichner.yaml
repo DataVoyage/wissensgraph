@@ -1,0 +1,24 @@
+# Muster für den textbasierten Abgleich (§15.2a).
+#
+# Sie gehören zum Unternehmen und nicht zum System: Wie ein Vorgangsschlüssel oder eine
+# Dokumentnummer aussieht, weiß niemand außerhalb der jeweiligen Organisation. Eine neue
+# Konvention ist deshalb eine neue Zeile hier und keine Codeänderung.
+#
+# Ein Treffer wird nur dann zur Kante, wenn er WÖRTLICH im Text eines anderen Konzepts vorkommt.
+# Die Übereinstimmung ist der Beleg — ein Modell wäre an dieser Stelle reine Verschwendung.
+
+patterns:
+  - name: jira-key
+    regex: '\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b'
+    description: Vorgangsschlüssel wie PROJ-1234. Groß geschrieben, sonst ist es kein Verweis.
+    case_sensitive: true
+
+  - name: confluence-page-id
+    regex: '\bconfluence:\d{4,}\b'
+    description: Direkte Seitenverweise in der ID-Form des Graphen.
+    case_sensitive: false
+
+  - name: adr-nummer
+    regex: '\bADR-\d{3,4}\b'
+    description: Architekturentscheidungen (Architecture Decision Records).
+    case_sensitive: true

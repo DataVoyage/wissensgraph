@@ -19,10 +19,10 @@ festgelegte Abnahme erfüllt.
 | 4 | Sync-Orchestrierung | **fertig** |
 | 5 | Store-Trennung und Brücken | **fertig** |
 | 6 | Kernspace-Auflösung und Referenzdichte | **fertig** |
-| 7 | Model-Router (Gemini als erster Provider) | offen |
-| 8 | Embeddings und Clustering | offen |
-| 9 | Semantische Kantenerkennung | offen |
-| 10 | Verwaiste-Knoten-Vernetzung | offen |
+| 7 | Model-Router über LangChain (Gemini als Entwicklungsmodell) | **fertig** |
+| 8 | Embeddings und Clustering | **fertig** |
+| 9 | Semantische Kantenerkennung | **fertig** |
+| 10 | Verwaiste-Knoten-Vernetzung | **fertig** |
 | 11 | HTTP-API und Web-UI | offen |
 | 12 | MCP-Retrieval-Layer | offen |
 | 13 | Anbindung der echten Quellen | offen |
@@ -770,12 +770,262 @@ einbindet und den Schreibpfad gar nicht erst mitbringt (§18.3).
 
 ### Ausdrücklich außen vor
 
-Embeddings und Vektorsuche, so vorgesehen in §24. Die Cluster-Ebene der zweistufigen Suche (§12.4)
-fehlt damit noch; es gibt bisher nur die Dokument-Ebene.
+Embeddings und Vektorsuche, so vorgesehen in §24 — sie kommen mit Stufe 8, und mit ihnen die
+Cluster-Ebene der zweistufigen Suche (§12.4).
 
 `wg graph overview` aus §19 fehlt ebenfalls. Es ist eine Bestandsübersicht und gehört zu den
 Ansichten der Stufe 11; die Abnahme der Stufe 6 verlangt es nicht.
 
+---
+
+## Stufe 7 — was steht
+
+**Zweck (§24):** Modellzugriff an genau einer Stelle, austauschbar per Konfiguration.
+
+### Abweichung vom Dokument: LangChain statt eigener Provider-Hüllen
+
+§11.4 zählt Provider-Typen auf und überlässt offen, womit sie angesprochen werden. Umgesetzt ist
+das über **LangChain** — auf ausdrücklichen Wunsch und aus einem Grund, der über Bequemlichkeit
+hinausgeht: §11.1 verlangt, dass ein Modellwechsel eine Änderung in `models.yaml` ist,
+*einschließlich eines anderen Anbieters*. Mit eigenen Hüllen wäre jede neue Integration neuer
+Code. So sind `ChatGoogleGenerativeAI` und `ChatOpenAI` zwei Zeilen derselben Fallunterscheidung,
+und `openai_compatible` deckt Ollama und vLLM ohne eine weitere ab.
+
+**Was LangChain hier ausdrücklich nicht tut:** Es routet nicht, wiederholt nicht, speichert nicht
+zwischen und validiert keine Struktur. All das liegt im Router, weil es dort protokolliert,
+budgetiert und geprüft werden muss. Die Clients werden deshalb mit `max_retries=0` gebaut — zwei
+Wiederholungsmechanismen übereinander ergäben im ungünstigen Fall das Produkt beider
+Versuchszahlen, und keiner der zusätzlichen Aufrufe stünde in `model_calls`.
+
+### Die zwei Ebenen
+
+| Ebene | Datei | Kennt |
+|---|---|---|
+| Was die Dienste sehen | `ports/models.py` (`ModelRouter`) | eine **Aufgabe** und einen **Store** — nie ein Modell |
+| Was ein Anbieter erfüllt | `ports/models.py` (`ChatClient`, `EmbeddingClient`) | einen Aufruf und seine Antwort |
+| Dazwischen | `services/router.py` | Policy, Budget, Cache, Retries, Fallback, Protokoll |
+| Das SDK | `infrastructure/models/langchain.py` | als einziges Modul überhaupt ein Modell-SDK |
+
+Diese Trennung ist der Grund, warum kein einziger Test der Stufen 7 bis 10 ein echtes Modell
+braucht: `wissensgraph/testing/models.py` erfüllt die untere Ebene, und die obere ist davon
+unberührt.
+
+### Die Reihenfolge der Prüfungen
+
+**Policy → Cache → Budget → Aufruf.** Keine der drei Stellen ist beliebig:
+
+- Die **Policy zuerst**, weil ihre Verletzung als einzige nicht rückgängig zu machen ist: Ein
+  Inhalt, der den Rechner verlassen hat, ist draußen (§11.5).
+- Der **Cache vor dem Budget**, weil ein Treffer nichts kostet. Ein Wächter, der Treffer
+  mitzählte, brächte einen Wiederholungslauf zum Erliegen, obwohl er nichts verbraucht.
+- Das **Budget zuletzt und vor dem Aufruf**. Eine Grenze, die nach der Antwort greift, hat sie
+  schon bezahlt.
+
+Ein Policy-Verstoß führt **nie** zu einem Fallback. §11.5 ist dort ausdrücklich: nie "ein stiller
+Fallback auf einen erlaubten, aber schlechteren Anbieter".
+
+### Die Datenschutzgrenze hat zwei Hälften
+
+`domain/policies.py` entscheidet beide, ohne Netzwerk und ohne Provider-Objekt:
+
+- `check_store_policy` — die **Ortsregel**: Persönliche Inhalte nur an einen als `local: true`
+  deklarierten Anbieter. `WG_PERSONAL_ALLOW_REMOTE_MODELS=true` weicht sie bewusst auf und wird
+  protokolliert.
+- `check_allowed_providers` — die **Freigabeliste** aus `policies.<store>.allowed_providers`. Eine
+  *fehlende* Liste erlaubt alles, eine *leere* nichts; der Unterschied steht im Rückgabetyp.
+
+Ein Verstoß hinterlässt einen `model_calls`-Eintrag mit `budget_denied` — so verlangt es §11.5
+wörtlich. Der Wert wirkt schief und ist richtig: Aus Sicht der Abrechnung ist ein Aufruf, der
+nicht stattfinden *darf*, derselbe Vorgang wie einer, der nicht mehr stattfinden *kann*.
+
+### Abnahme (§24, Stufe 7)
+
+| Kriterium | Ergebnis |
+|---|---|
+| Ein Modellwechsel in `models.yaml` wirkt ohne Codeänderung und ohne Neubau des Images | erfüllt — `config/` ist read-only gemountet, `wg models describe` zeigt die neue Route |
+| Ein Aufruf mit `store = personal` gegen einen nicht-lokalen Provider wirft | live: `wg embed --scope personal` endet mit `skipped_policy: 1`, kein Byte geht hinaus |
+| Ungültiges JSON löst genau **einen** Reparaturversuch aus | Unit-Test zählt die Aufrufe: zwei, nicht drei |
+| Ein wiederholter identischer Aufruf ist ein Cache-Treffer | live gegen Redis: zwei Aufrufe, **eine** HTTP-Anfrage, 21 gegen 0 Token |
+| Ein Budgetüberschritt beendet den Lauf sauber mit Teilergebnis | live: `WG_BUDGET_MAX_MODEL_CALLS_PER_RUN=0` → `considered: 200`, `budget_exceeded: True`, Lauf erfolgreich |
+
+### Das Budget ist jetzt eine ENV-Variable
+
+`WG_BUDGET_MAX_MODEL_CALLS_PER_RUN`, `WG_BUDGET_MAX_COST_PER_RUN_EUR` und
+`WG_BUDGET_ON_EXCEED` stehen als Platzhalter in `wissensgraph.yaml`. §6.2 zählt Schwellen und
+Limits ausdrücklich zu den laufbezogenen Parametern; auf einem Entwicklerrechner will man den
+Rahmen eng ziehen, im Betrieb weit. **`0` schaltet jeden Modellaufruf ab** und ist damit der
+sicherste Weg, eine Pipeline einmal vollständig durchlaufen zu lassen, ohne ein Token zu
+verbrauchen.
+
+---
+
+## Stufe 8 — was steht
+
+**Zweck (§24):** Die semantische Schicht, auf der Cluster, Suche und Vernetzung aufsetzen.
+
+### Der Content-Hash bleibt beim Erzeugen einer Beschreibung stehen
+
+§13.1 lässt eine fehlende `description` einmalig über Task `summarization` erzeugen. Der
+`content_hash` wird dabei **nicht** neu berechnet, und das ist mehr als ein Detail: Er ist der
+Hash des *Quellinhalts* (§10.3) und beantwortet die Frage „hat sich die Quelle geändert?". Eine
+hier erzeugte Beschreibung ist keine Quelländerung. Würde sie den Hash verschieben, meldete der
+nächste Sync eine Änderung, überschriebe die Beschreibung mit `NULL`, und der nächste
+Embedding-Lauf erzeugte sie neu — ein Kreislauf, der bei jedem Lauf Token kostet und nichts
+verbessert.
+
+### Cluster-Identität über Läufe hinweg
+
+Die Stabilitätsschwelle aus §13.3 hat eine Folge, die im Dokument nicht ausgeschrieben steht: In
+den Läufen bis zum Erreichen der Schwelle hat ein Cluster **keine einzige Kante**. Eine Zuordnung
+allein über geschriebene `member`-Kanten fände deshalb im zweiten Lauf keine Überschneidung, legte
+ein zweites Cluster an — und die Schwelle wäre nie zu erreichen, weil jeder Lauf von vorn begänne.
+`_bestehende_cluster` zählt darum Kanten **und** Kandidaten. Die Kandidatentabelle *ist* die
+Erinnerung an eine vorläufige Zuordnung.
+
+Die ID eines neuen Clusters ist zufällig und nicht aus seinen Mitgliedern abgeleitet. Eine
+abgeleitete ID wäre verlockend und falsch: Sie änderte sich mit jeder Mitgliederänderung, und
+damit wäre kein Cluster über zwei Läufe hinweg dasselbe.
+
+### Was Code entscheidet und was das Modell entscheidet
+
+| Schritt | Wer |
+|---|---|
+| Welche Konzepte zusammengehören | **Code** — k-nächste Nachbarn, Kantenschwelle, Zusammenhangskomponenten |
+| Wie die Gruppe heißt | **Modell** — Task `cluster_labeling` |
+| Ob die Zuordnung geschrieben wird | **Code** — die Stabilitätsschwelle aus §13.3 |
+
+Deshalb tragen `member`- und `related`-Kanten die Kennung `code:clustering` beziehungsweise
+`code:cluster-similarity` und **nicht** die Provenienz des Modells: Wären beide gleich benannt,
+verlöre ein Lauf nach einem Modellwechsel seine eigenen Mitgliedskanten aus den Augen (§10.4).
+
+### Eine neue Migration
+
+`0002_cluster_exclusions` ergänzt `cluster_assignment_candidates` um `excluded`. §13.4 verlangt
+für ein von Hand entferntes Mitglied einen Ausschlussvermerk, und der brauchte einen Ort: Eine
+gelöschte `member`-Kante hinterlässt nichts. Ohne Vermerk fände der nächste Lauf dieselbe Nähe
+wieder und schriebe dieselbe Zuordnung — die Handarbeit wäre nach einem Lauf verschwunden, und das
+ist genau der Fall, den Leitprinzip 15 ausschließt.
+
+### Abnahme (§24, Stufe 8)
+
+| Kriterium | Ergebnis |
+|---|---|
+| Die drei Themenfelder des Korpus ergeben mindestens drei Cluster | erfüllt — Unit-Test: genau drei; live über den Mock-Korpus: 20 Cluster aus 200 Konzepten |
+| Das Grenzdokument landet stabil | erfüllt — es berührt zwei Themen und bleibt über drei Läufe in demselben Cluster |
+| Mindestens zwei Cluster sind über `related` verbunden | erfüllt — live 60 `related`-Kanten zwischen 20 Clustern |
+| Eine Zuordnung entsteht erst im zweiten Lauf | erfüllt — live: Lauf 1 `candidates: 171`, `members_added: 0`; Lauf 2 `members_added: 171` |
+| Eine kuratierte Zuordnung überlebt zwei Läufe | erfüllt — `curated = true` bleibt unangetastet (§10.4) |
+| Ohne verfügbares Embedding-Modell degradiert die Suche sichtbar auf `mode: lexical` | erfüllt — live alle drei Modi beobachtet: `lexical`, `cluster`, `hybrid` |
+
+### Die zweistufige Suche in Zahlen
+
+Live gegen Gemini-Embeddings, gemessene Ähnlichkeit zwischen Anfrage und Zentroid:
+
+| Anfrage | bester Zentroid | Modus |
+|---|---|---|
+| „Wie läuft der nächtliche ETL-Lauf?" | 0,775 | `cluster` — über der Schwelle 0,75 |
+| „Data Warehouse ETL" | 0,747 | `hybrid` — knapp darunter, Rückfall auf die Dokumentebene |
+| „Kaffeemaschine entkalken" | — | `hybrid` |
+
+Die Schwelle `search.cluster_hit_threshold` sitzt damit dort, wo sie sitzen soll: Eine klar
+gestellte Frage bekommt ein Thema, eine vage bekommt Dokumente.
+
+---
+
+## Stufe 9 — was steht
+
+**Zweck (§24):** Typisierte Beziehungen statt bloßer Nähe.
+
+### „Keine Beziehung" steht im Prompt
+
+§14.2 Schritt 4 sagt es, und der Prompt sagt es dem Modell ebenso ausdrücklich. Ohne diesen Satz
+erfindet ein Sprachmodell zuverlässig einen Zusammenhang, weil die Frage einen nahelegt — und der
+Graph füllt sich mit Kanten, die niemand nachvollziehen kann.
+
+### Der Vorfilter, und was er live wirklich leistet
+
+§14.5 nennt `relations.min_pair_similarity` als wichtigsten Kostenhebel. Live über den
+Mock-Korpus zeigt sich: **Er filtert weniger, als das Dokument annimmt.** Von 1162 Paaren fielen
+bei der Vorgabe 0,60 nur 8 weg — Gemini-Embeddings zweier Dokumente desselben Clusters liegen fast
+immer über 0,60. Der wirksame Schutz war der Budget-Wächter, der den Lauf nach 51 Aufrufen sauber
+mit einem Teilergebnis von 31 Kanten beendete.
+
+Das ist eine Beobachtung über die *Kalibrierung*, nicht über das Verfahren: Wer diesen Schritt
+regelmäßig laufen lässt, sollte `relations.min_pair_similarity` deutlich höher ansetzen — die
+Größenordnung 0,80 bis 0,85 entspricht bei diesem Modell dem, was 0,60 im Dokument meint.
+
+### `supersedes` wirkt nicht
+
+§14.4: Eine erkannte Ablösung setzt **nicht** `status = 'deprecated'`. Die Kante wird geschrieben,
+die Folge zieht ein Mensch — als `change_log`-Eintrag mit `vorschlag: deprecate`. Ein Konzept auf
+Verdacht eines Modells stillzulegen widerspräche Leitprinzip 6 und wäre schwer zurückzunehmen: Ein
+`deprecated` steht in jeder Ansicht und in jedem Export.
+
+### Abnahme (§24, Stufe 9)
+
+| Kriterium | Ergebnis |
+|---|---|
+| Im Testcluster entsteht mindestens eine typisierte Kante mit nachvollziehbarer Provenienz | live 31 Kanten: `references` 15, `depends_on` 10, `extends` 5, `implements` 1 — alle mit `gemini:gemini-3.5-flash-lite/relation_extraction@v1` |
+| Die Mehrheit der Paare liefert „keine Beziehung" | live 20 von 51 Aufrufen; im Unit-Test bei neutralem Skript alle |
+| Ein Wiederholungslauf erzeugt fast ausschließlich Cache-Treffer | erfüllt — Unit-Test: `wieder.cached == wieder.calls`; live gegen Redis für einen Einzelaufruf bestätigt |
+| Kein Konzept wird automatisch deprecated | live: 0 Konzepte mit `status = 'deprecated'` |
+
+---
+
+## Stufe 10 — was steht
+
+**Zweck (§24):** Die Fälle einfangen, die Clustering nicht nebeneinanderstellt.
+
+### Erst Code, dann Modell — und das ist keine Reihenfolge, sondern der Kern
+
+Live über den Mock-Korpus, mit `--loose-threshold 2` und **ohne einen einzigen Modellaufruf**:
+
+| Schritt | Ergebnis |
+|---|---|
+| Stufe 1a, Textabgleich (§15.2a) | 33 Kanten, `confidence: 1.0`, `generated_by: code:text-match` |
+| Stufe 1b, Nähe über `proximity_auto_commit` (§15.2b) | 898 Kanten, `generated_by: code:embedding-proximity` |
+| Stufe 2, Modell | gar nicht erst erreicht |
+
+931 Kanten für null Token. Genau das meint §15.2a mit „Die Übereinstimmung ist der Beleg; ein
+Modell wäre hier reine Verschwendung."
+
+**Auch hier eine Kalibrierungsbeobachtung:** 898 Kanten aus dem Auto-Commit sind für 37 lose
+Knoten viel. Die Vorgabe `proximity_auto_commit: 0.85` aus §15.2 ist für ein anderes
+Embedding-Modell gedacht; bei `gemini-embedding-2` laufen die Ähnlichkeiten höher. Wer den Lauf
+regelmäßig fährt, zieht die Schwelle nach oben — der Wert ist genau dafür ein Config-Eintrag und
+ein CLI-Flag.
+
+### Die Musterdateien
+
+`config/patterns/*.yaml` — Regex-Muster für Vorgangsschlüssel, Seiten-IDs und
+Architekturentscheidungen. Sie stehen in Dateien und nicht im Code, weil sie zum *Unternehmen*
+gehören und nicht zum System: Wie ein Jira-Key aussieht, weiß niemand außerhalb der jeweiligen
+Organisation. Ein nicht übersetzbarer Ausdruck ist ein **Startfehler** (§6.5) — er soll auffallen,
+bevor er mitten in einer nächtlichen Vernetzung auffällt.
+
+Der Index über alle Treffer wird **einmal** je Lauf gebaut und nicht je losem Knoten neu. Ohne ihn
+wäre ausgerechnet der Schritt quadratisch, dessen Vorzug seine Billigkeit ist.
+
+### Aufruf B ist dieselbe Methode wie §14
+
+§15.3 verlangt für die Paarprüfung „identisches Format zu §14.3". Statt es dort noch einmal zu
+bauen, ruft `OrphanService` die Methode `RelationService.check_pairs` auf. Ein zweites
+Prompt-Format für dieselbe Frage wäre die Stelle, an der die beiden Läufe auseinanderdriften.
+
+### Abnahme (§24, Stufe 10)
+
+| Kriterium | Ergebnis |
+|---|---|
+| Der isoliert angelegte Knoten wird gefunden | erfüllt — `v_loose_concepts` zählt `member` bewusst nicht mit (§7.7) |
+| Mit `--use-llm false` entstehen nur Stufe-1-Kanten | erfüllt — live `calls: 0`, `model_edges: 0`, 931 Code-Kanten |
+| Mit `true` mindestens eine Modellkante über der Schwelle | live: `model_edges: 4` |
+| Ein Knoten ohne passendes Cluster erzeugt nachvollziehbar ein neues Cluster | erfüllt — mit Provenienz, `verified_by = NULL`, plus `member`-Kante (§15.3) |
+| Die Zahl loser Knoten sinkt über aufeinanderfolgende Läufe | live: `loose_before: 1` → `loose_after: 0` |
+
+### Ausdrücklich außen vor
+
+Periodisches Scheduling, so vorgesehen in §24. Die vier Läufe sind als `RunKind` in der Queue
+angemeldet und laufen über den Worker; was fehlt, ist allein der Auslöser über die Zeit.
 
 ---
 
@@ -858,6 +1108,33 @@ docker compose exec api wg graph search "Partitionierung" --store shared
 `wg concepts add` gilt als menschliche Kuration (`user:cli`) und wird von keinem Lauf
 überschrieben (§10.4). Der Store folgt aus dem Scope, nie aus einer Angabe (§20.1) — ein `Project`
 liegt deshalb immer in `personal`.
+
+### Model-Router und semantische Läufe
+
+```bash
+docker compose exec api wg models describe                  # welches Modell greift wofür (§11.2)
+docker compose exec api wg models describe embedding --json
+docker compose exec api wg models usage --store shared      # Aufrufe, Cache, Token, Kosten (§11.6)
+
+docker compose exec api wg embed  --scope engineering                # §13.1
+docker compose exec api wg embed  --scope engineering --rebuild      # nach einem Modellwechsel
+docker compose exec api wg cluster --scope engineering               # §13.2, zweimal für §13.3
+docker compose exec api wg relations --scope engineering --dry-run   # §14, ohne zu schreiben
+docker compose exec api wg link-orphans --scope engineering --no-use-llm   # §15, nur Stufe 1
+docker compose exec api wg graph search "…" --granularity cluster    # §12.4 Stufe 1
+```
+
+**Der billigste Weg, alles einmal durchlaufen zu lassen, ohne ein Token zu verbrauchen:**
+
+```bash
+docker compose exec -e WG_BUDGET_MAX_MODEL_CALLS_PER_RUN=0 api wg embed --scope engineering
+```
+
+Der Wächter greift **vor** jedem Aufruf; der Lauf endet erfolgreich mit `budget_exceeded: true`
+und einer vollständigen Statistik darüber, was er getan hätte (§11.6).
+
+`wg models describe` ruft kein Modell auf. Es beantwortet genau die Frage, die ein Modellwechsel
+aufwirft — „wirkt die Änderung in `models.yaml`?" —, und zwar ohne einen einzigen Token.
 
 `wg concepts show` rekonstruiert die eingehenden Kanten aus den Stores, die Brücken schlagen
 dürfen. Der geteilte Store selbst führt keine einzige Kante über die Grenze; er weiß nicht, dass

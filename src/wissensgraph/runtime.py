@@ -16,7 +16,9 @@ from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Self
+from uuid import UUID
 
+from wissensgraph.config.models import ModelsConfig, load_models
 from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import SourcesConfig, load_sources
 from wissensgraph.domain.runs import Run, RunKind
@@ -24,12 +26,23 @@ from wissensgraph.infrastructure.adapters import AdapterRegistry, RegisteredSour
 from wissensgraph.infrastructure.db import StoreRegistry
 from wissensgraph.infrastructure.db.locks import SqlSourceLocks
 from wissensgraph.infrastructure.db.uow import UnitOfWorkFactory
+from wissensgraph.infrastructure.models import (
+    LangChainClients,
+    MemoryResponseCache,
+    RedisResponseCache,
+)
 from wissensgraph.infrastructure.queue import MemoryJobQueue, RedisJobQueue
 from wissensgraph.observability.logging import get_logger
+from wissensgraph.ports.models import ModelClientFactory, ResponseCache
 from wissensgraph.ports.queue import Job, JobQueue
+from wissensgraph.services.clustering import ClusterService
 from wissensgraph.services.concepts import ConceptService
+from wissensgraph.services.embeddings import EmbeddingService
 from wissensgraph.services.graph import GraphService
 from wissensgraph.services.jobs import JobService
+from wissensgraph.services.orphans import OrphanRequest, OrphanService
+from wissensgraph.services.relations import RelationService
+from wissensgraph.services.router import ModelRouterService
 from wissensgraph.services.sync import RunNotFound, SyncRequest, SyncService
 
 _log = get_logger(__name__)
@@ -59,24 +72,40 @@ class Runtime:
         settings: Settings,
         *,
         sources_file: Path | None = None,
+        models_file: Path | None = None,
         queue: JobQueue | None = None,
+        clients: ModelClientFactory | None = None,
     ) -> None:
         """
         Args:
             settings: Die geprüfte Konfiguration.
             sources_file: Abweichender Pfad der ``sources.yaml``; sonst aus ``WG_SOURCES_FILE``.
+            models_file: Abweichender Pfad der ``models.yaml``; sonst aus ``WG_MODELS_FILE``.
             queue: Eine abweichende Job-Queue. Ohne Angabe wird sie aus der Konfiguration
                 gewählt: Redis, wenn eine ``broker_url`` gesetzt ist, sonst eine Warteschlange im
                 Speicher (siehe :meth:`_queue_waehlen`).
+            clients: Eine abweichende Fabrik für Modell-Clients. Ohne Angabe die
+                LangChain-Fabrik. Der Parameter ist der Weg, einen ganzen Lauf gegen den
+                Fake-Provider aus :mod:`wissensgraph.testing.models` zu fahren — ohne Netz, ohne
+                Schlüssel und ohne einen einzigen Token.
         """
         self._settings = settings
         self._sources = load_sources(settings, path=sources_file)
+        self._models = load_models(settings, path=models_file)
         self._stores = StoreRegistry(settings)
         self._uow = UnitOfWorkFactory(self._stores)
         self._registry = AdapterRegistry()
         self._registered: dict[str, RegisteredSource] | None = None
         self._queue = queue if queue is not None else self._queue_waehlen()
+        self._cache = self._cache_waehlen()
 
+        self.router = ModelRouterService(
+            settings,
+            self._models,
+            clients if clients is not None else LangChainClients(self._models),
+            unit_of_work=self._uow,
+            cache=self._cache,
+        )
         self.sync = SyncService(
             settings,
             self._uow,
@@ -85,7 +114,11 @@ class Runtime:
         )
         self.jobs = JobService(self._queue)
         self.concepts = ConceptService(settings, self._uow)
-        self.graph = GraphService(settings, self._uow)
+        self.graph = GraphService(settings, self._uow, router=self.router)
+        self.embeddings = EmbeddingService(settings, self._uow, self.router)
+        self.clusters = ClusterService(settings, self._uow, self.router)
+        self.relations = RelationService(settings, self._uow, self.router)
+        self.orphans = OrphanService(settings, self._uow, self.router, relations=self.relations)
 
     # -- Bestandteile ------------------------------------------------------------
 
@@ -103,6 +136,11 @@ class Runtime:
     def sources(self) -> SourcesConfig:
         """Die geladene Quellkonfiguration."""
         return self._sources
+
+    @property
+    def models(self) -> ModelsConfig:
+        """Die geladene Router-Konfiguration."""
+        return self._models
 
     @property
     def registered(self) -> tuple[RegisteredSource, ...]:
@@ -156,6 +194,96 @@ class Runtime:
             laeufe.append(self.sync.sync(quelle.require(), quelle.config, request))
         return tuple(laeufe)
 
+    # -- Läufe der semantischen Schicht (§13 bis §15) ----------------------------
+
+    def run_embed(self, scope: str, *, rebuild: bool = False) -> Run:
+        """Führt einen Embedding-Lauf aus und verbucht ihn (§13.1)."""
+        return self._verbuchter_lauf(
+            kind=RunKind.EMBED,
+            scope=scope,
+            params={"scope": scope, "rebuild": rebuild},
+            arbeit=lambda run_id: self.embeddings.run(
+                scope=scope, rebuild=rebuild, run_id=run_id
+            ).as_dict(),
+        )
+
+    def run_cluster(self, scope: str) -> Run:
+        """Führt einen Clustering-Lauf aus und verbucht ihn (§13.2)."""
+        return self._verbuchter_lauf(
+            kind=RunKind.CLUSTER,
+            scope=scope,
+            params={"scope": scope},
+            arbeit=lambda run_id: self.clusters.run(scope=scope, run_id=run_id).as_dict(),
+        )
+
+    def run_relations(self, scope: str, *, dry_run: bool = False) -> Run:
+        """Führt einen Lauf der Kantenerkennung aus und verbucht ihn (§14)."""
+        return self._verbuchter_lauf(
+            kind=RunKind.RELATIONS,
+            scope=scope,
+            params={"scope": scope, "dry_run": dry_run},
+            arbeit=lambda run_id: self.relations.run(
+                scope=scope, run_id=run_id, dry_run=dry_run
+            ).as_dict(),
+            fluechtig=dry_run,
+        )
+
+    def run_orphans(self, request: OrphanRequest) -> Run:
+        """Führt einen Vernetzungslauf über lose Knoten aus und verbucht ihn (§15)."""
+        return self._verbuchter_lauf(
+            kind=RunKind.LINK_ORPHANS,
+            scope=request.scope,
+            params={"scope": request.scope, "dry_run": request.dry_run},
+            arbeit=lambda run_id: self.orphans.run(request, run_id=run_id).as_dict(),
+            fluechtig=request.dry_run,
+        )
+
+    def _verbuchter_lauf(
+        self,
+        *,
+        kind: RunKind,
+        scope: str,
+        params: dict[str, object],
+        arbeit: Callable[[UUID], dict[str, object]],
+        fluechtig: bool = False,
+    ) -> Run:
+        """Legt einen Lauf an, führt ihn aus und schreibt Zustand und Statistik fort (§7.4).
+
+        ``fluechtig`` ist die Trockenlauf-Variante: Der Lauf bekommt eine ID und einen Bericht,
+        aber keine Zeile in ``runs``. Ein ``--dry-run`` verspricht, nichts zu verändern, und eine
+        Zeile wäre eine Veränderung — dieselbe Entscheidung wie beim Sync (§19).
+        """
+        from datetime import UTC, datetime
+
+        from wissensgraph.domain.runs import RunStatus, new_run_id
+
+        store = self._settings.store_of_scope(scope)
+        jetzt = datetime.now(UTC)
+        run = Run(id=new_run_id(), kind=kind, params=dict(params)).gestartet(jetzt)
+        if not fluechtig:
+            with self._uow(store) as uow:
+                uow.runs.create(run)
+
+        try:
+            stats = arbeit(run.id)
+        except Exception as exc:
+            beendet = run.beendet(
+                status=RunStatus.FAILED,
+                now=datetime.now(UTC),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            if not fluechtig:
+                with self._uow(store) as uow:
+                    uow.runs.update(beendet)
+            _log.warning("lauf.gescheitert", run_id=str(run.id), error=beendet.error)
+            return beendet
+
+        beendet = run.beendet(status=RunStatus.SUCCEEDED, now=datetime.now(UTC), stats=stats)
+        if not fluechtig:
+            with self._uow(store) as uow:
+                uow.runs.update(beendet)
+        return beendet
+
     def submit_sync(self, name: str, request: SyncRequest | None = None) -> Run:
         """Legt einen Lauf an und stellt ihn in die Queue — der Weg aus §16.3.
 
@@ -185,9 +313,27 @@ class Runtime:
                 denn der Lauf stünde dann für immer auf ``queued``.
             RunNotFound: Wenn der Job auf einen Lauf zeigt, den es nicht gibt.
         """
+        if job.kind is RunKind.EMBED:
+            return self.run_embed(
+                str(job.params["scope"]), rebuild=bool(job.params.get("rebuild", False))
+            )
+        if job.kind is RunKind.CLUSTER:
+            return self.run_cluster(str(job.params["scope"]))
+        if job.kind is RunKind.RELATIONS:
+            return self.run_relations(
+                str(job.params["scope"]), dry_run=bool(job.params.get("dry_run", False))
+            )
+        if job.kind is RunKind.LINK_ORPHANS:
+            return self.run_orphans(
+                OrphanRequest(
+                    scope=str(job.params["scope"]),
+                    dry_run=bool(job.params.get("dry_run", False)),
+                )
+            )
         if job.kind is not RunKind.SYNC:
             raise NotImplementedError(
-                f"Läufe der Art '{job.kind}' sind noch nicht umgesetzt; Stufe 4 deckt 'sync' ab."
+                f"Läufe der Art '{job.kind}' sind noch nicht umgesetzt. Umgesetzt sind: sync, "
+                f"embed, cluster, relations, link_orphans."
             )
 
         name = str(job.params.get("source", ""))
@@ -231,11 +377,24 @@ class Runtime:
         _log.debug("queue.im_speicher")
         return MemoryJobQueue()
 
+    def _cache_waehlen(self) -> ResponseCache:
+        """Redis, wenn ein Broker konfiguriert ist; sonst ein Zwischenspeicher im Prozess.
+
+        Der Unterschied ist die Lebensdauer, nicht die Wirkung: Auch der prozesslokale Cache
+        verhindert, dass ein einzelner Lauf denselben Text zweimal einbettet. Über Läufe hinweg
+        wirkt nur der in Redis — dort ist die Ersparnis nach §14.5 am größten ("Wiederholungsläufe
+        kosten fast nichts").
+        """
+        if self._settings.broker_url:
+            return RedisResponseCache(self._settings.broker_url)
+        return MemoryResponseCache()
+
     def close(self) -> None:
-        """Gibt Verbindungspools und Broker-Verbindung frei."""
-        schliessen = getattr(self._queue, "close", None)
-        if schliessen is not None:
-            schliessen()
+        """Gibt Verbindungspools, Broker- und Cache-Verbindung frei."""
+        for teil in (self._queue, self._cache):
+            schliessen = getattr(teil, "close", None)
+            if schliessen is not None:
+                schliessen()
         self._stores.dispose()
 
     def __enter__(self) -> Self:
@@ -250,4 +409,4 @@ class Runtime:
         self.close()
 
 
-__all__ = ["RunNotFound", "Runtime", "SyncRequest", "UnknownSourceError"]
+__all__ = ["OrphanRequest", "RunNotFound", "Runtime", "SyncRequest", "UnknownSourceError"]

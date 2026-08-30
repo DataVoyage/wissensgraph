@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigError
 from wissensgraph.config.masking import mask_dsn
+from wissensgraph.config.models import load_models
 from wissensgraph.config.network import is_local_dsn
 from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import load_sources
@@ -155,6 +156,60 @@ def check_model_policy(settings: Settings) -> CheckResult:
         status=CheckStatus.OK,
         detail="Persönliche Inhalte gehen nur an als lokal deklarierte Provider.",
     )
+
+
+def check_models(settings: Settings, path: Path | None = None) -> tuple[CheckResult, ...]:
+    """Prüft die Router-Konfiguration: ladbar, vollständig, mit Zugangsdaten (§11.4, §11.7).
+
+    Die Prüfung ruft kein Modell auf. Sie beantwortet, was sich ohne Netz beantworten lässt —
+    und das ist mehr, als es zunächst scheint: Ob ein Task-Profil auf einen unbekannten Provider
+    zeigt, ob die Vektordimension zum migrierten Schema passt, und ob überhaupt Zugangsdaten
+    dastehen. Der erste echte Aufruf soll an keiner dieser drei Fragen scheitern.
+
+    Ein Anbieter ohne Schlüssel ist eine **Warnung** und kein Fehler: Ein System ohne Modell ist
+    ein zulässiger Zustand (§11.5) — der Kernspace funktioniert dann über Kanten und lexikalische
+    Suche.
+    """
+    try:
+        models = load_models(settings, path=path)
+    except ConfigError as exc:
+        return (
+            CheckResult(
+                name="modelle",
+                status=CheckStatus.FAIL,
+                detail=str(exc).splitlines()[0][:300],
+            ),
+        )
+
+    if not models.tasks:
+        return (
+            CheckResult(
+                name="modelle",
+                status=CheckStatus.WARN,
+                detail=(
+                    "Keine Task-Profile konfiguriert (config/models.yaml). Embedding, Clustering "
+                    "und Kantenerkennung stehen damit nicht zur Verfügung."
+                ),
+            ),
+        )
+
+    ergebnisse: list[CheckResult] = []
+    for name in sorted(models.tasks):
+        route = models.tasks[name].primary
+        provider = models.providers[route.provider]
+        fehlt = not provider.is_configured
+        ergebnisse.append(
+            CheckResult(
+                name=f"modell:{name}",
+                status=CheckStatus.WARN if fehlt else CheckStatus.OK,
+                detail=(
+                    f"{route.model_key} ({'lokal' if provider.local else 'extern'})"
+                    + (" — Zugangsdaten fehlen." if fehlt else ".")
+                ),
+                context={"provider": route.provider, "model": route.model, "local": provider.local},
+            )
+        )
+    return tuple(ergebnisse)
 
 
 def check_api_exposure(settings: Settings) -> CheckResult:
@@ -480,6 +535,7 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     results.extend(check_stores(registry))
     results.extend(check_schema(settings, registry))
     results.extend(check_store_separation(registry))
+    results.extend(check_models(settings))
     results.extend(check_sources(settings))
     results.append(check_broker(settings))
     return DiagnosticsReport(results=tuple(results))

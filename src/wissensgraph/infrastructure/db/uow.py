@@ -18,8 +18,11 @@ from sqlalchemy import Connection
 from wissensgraph.infrastructure.db.registry import StoreRegistry
 from wissensgraph.infrastructure.db.repositories import (
     SqlChangeLogRepository,
+    SqlClusterRepository,
     SqlConceptRepository,
     SqlEdgeRepository,
+    SqlEmbeddingRepository,
+    SqlModelCallRepository,
     SqlRunRepository,
     SqlSourceCursorRepository,
 )
@@ -42,6 +45,9 @@ class SqlUnitOfWork:
         self._changes: SqlChangeLogRepository | None = None
         self._runs: SqlRunRepository | None = None
         self._cursors: SqlSourceCursorRepository | None = None
+        self._embeddings: SqlEmbeddingRepository | None = None
+        self._clusters: SqlClusterRepository | None = None
+        self._model_calls: SqlModelCallRepository | None = None
 
     @property
     def store(self) -> str:
@@ -98,6 +104,27 @@ class SqlUnitOfWork:
             self._cursors = SqlSourceCursorRepository(self.connection, self._store)
         return self._cursors
 
+    @property
+    def embeddings(self) -> SqlEmbeddingRepository:
+        """Das Vektor-Repository dieses Stores."""
+        if self._embeddings is None:
+            self._embeddings = SqlEmbeddingRepository(self.connection, self._store)
+        return self._embeddings
+
+    @property
+    def clusters(self) -> SqlClusterRepository:
+        """Zentroide und Zuordnungskandidaten dieses Stores."""
+        if self._clusters is None:
+            self._clusters = SqlClusterRepository(self.connection, self._store)
+        return self._clusters
+
+    @property
+    def model_calls(self) -> SqlModelCallRepository:
+        """Die Modellaufrufe dieses Stores."""
+        if self._model_calls is None:
+            self._model_calls = SqlModelCallRepository(self.connection, self._store)
+        return self._model_calls
+
     def commit(self) -> None:
         """Schreibt die laufende Transaktion fest."""
         self.connection.commit()
@@ -120,6 +147,7 @@ class SqlUnitOfWork:
         self._connection = None
         self._concepts = self._edges = self._changes = None
         self._runs = self._cursors = None
+        self._embeddings = self._clusters = self._model_calls = None
         if connection is None:  # pragma: no cover — nur bei doppeltem Verlassen erreichbar
             return
         try:

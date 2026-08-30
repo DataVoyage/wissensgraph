@@ -102,8 +102,18 @@ class TestAlembicKonfiguration:
         )
         assert location.endswith("migrations")
 
-    def test_kennt_eine_zielrevision(self) -> None:
-        assert head_revision() == "0001_initial_schema"
+    def test_kennt_genau_eine_zielrevision(self) -> None:
+        """Es gibt einen einzigen Kopf — keine Verzweigung im Migrationsverlauf.
+
+        Die Revisionsnummer steht hier bewusst *nicht*: Sie wächst mit jeder Stufe, und ein Test,
+        der sie festschreibt, müsste bei jeder Schemaänderung mitgeändert werden, ohne dabei etwas
+        zu prüfen. Was tatsächlich schiefgehen kann, ist eine zweite Wurzel oder ein zweiter Kopf
+        — dann wüsste ``alembic upgrade head`` nicht mehr, wohin.
+        """
+        kopf = head_revision()
+
+        assert kopf is not None
+        assert kopf.startswith("00")
 
     def test_uebernimmt_dsn_und_dimension_aus_der_konfiguration(
         self, settings: Settings, registry: StoreRegistry

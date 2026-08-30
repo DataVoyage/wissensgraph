@@ -20,15 +20,31 @@ from wissensgraph.infrastructure.db import StoreRegistry, upgrade_all
 from wissensgraph.infrastructure.db.tables import (
     NICHT_ABGEBILDETE_SPALTEN,
     change_log,
+    cluster_assignment_candidates,
+    cluster_centroids,
+    concept_embeddings,
     concepts,
     edges,
+    loose_concepts,
+    model_calls,
     runs,
     source_cursors,
 )
 
 pytestmark = [pytest.mark.guard, pytest.mark.integration]
 
-BESCHRIEBENE_TABELLEN = (concepts, edges, change_log, runs, source_cursors)
+BESCHRIEBENE_TABELLEN = (
+    concepts,
+    edges,
+    change_log,
+    runs,
+    source_cursors,
+    model_calls,
+    concept_embeddings,
+    cluster_centroids,
+    cluster_assignment_candidates,
+    loose_concepts,
+)
 
 
 @pytest.fixture

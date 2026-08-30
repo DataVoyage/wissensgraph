@@ -19,10 +19,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol, Self, runtime_checkable
+from uuid import UUID
 
 from wissensgraph.domain.changes import ChangeEntry
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import Edge, EdgeDraft
+from wissensgraph.ports.models import ModelCallRepository
 from wissensgraph.ports.runs import RunRepository, SourceCursorRepository
 
 
@@ -37,6 +39,51 @@ class LexicalHit:
 
     concept: Concept
     score: float
+
+
+@dataclass(frozen=True)
+class Neighbour:
+    """Ein Nachbar aus der Vektorsuche (§13.2, §15.2b).
+
+    ``similarity`` ist die Kosinusähnlichkeit und nicht die Distanz, mit der pgvector rechnet.
+    Die Umrechnung passiert im Repository, damit jede Schwelle im System dieselbe Richtung hat:
+    Alle Werte aus §13 und §15 sind Ähnlichkeiten, bei denen größer besser bedeutet.
+    """
+
+    concept_id: str
+    similarity: float
+
+
+@dataclass(frozen=True)
+class LooseConcept:
+    """Ein Knoten aus ``v_loose_concepts`` (§15.1) — wenig verbunden, aber vorhanden."""
+
+    id: str
+    scope: str
+    type: str
+    title: str | None
+    semantic_degree: int
+
+
+@dataclass(frozen=True)
+class Centroid:
+    """Der Mittelpunkt eines Clusters (§13.2 Schritt 5)."""
+
+    cluster_id: str
+    model_key: str
+    vector: tuple[float, ...]
+    member_count: int
+
+
+@dataclass(frozen=True)
+class AssignmentCandidate:
+    """Eine noch nicht geschriebene Cluster-Zuordnung (§13.3)."""
+
+    concept_id: str
+    cluster_id: str
+    score: float
+    seen_count: int
+    excluded: bool = False
 
 
 @runtime_checkable
@@ -93,6 +140,21 @@ class ConceptRepository(Protocol):
         deshalb auch im ``personal``-Store ohne lokalen Modellserver (§11.5). Ein stiller
         Qualitätsverlust wäre die schlechtere Variante — der Aufrufer erfährt, dass er lexikalisch
         gesucht hat.
+        """
+
+    def in_scope(self, scope: str, *, concept_type: str | None = None) -> tuple[Concept, ...]:
+        """Alle nicht als Grabstein markierten Konzepte eines Scopes, wahlweise eines Typs.
+
+        Die Eingabemenge jedes Laufs aus §13 bis §15. Ein Scope und kein Store: §13.2 bildet
+        Cluster "je Konzept innerhalb eines Scopes", weil ein Cluster über Themengrenzen hinweg
+        nichts aussagt.
+        """
+
+    def loose(self, *, threshold: int, scope: str | None = None) -> tuple[LooseConcept, ...]:
+        """Die losen Knoten aus ``v_loose_concepts`` (§15.1).
+
+        Gezählt werden nur nicht-strukturelle Kanten. Ein Konzept, das ausschließlich in einem
+        Cluster hängt, ist thematisch weiterhin unvernetzt und gehört deshalb hierher (§7.7).
         """
 
     def save(self, concept: Concept) -> None:
@@ -166,6 +228,29 @@ class EdgeRepository(Protocol):
             ``edge_added`` und ``edge_removed``.
         """
 
+    def add(self, draft: EdgeDraft) -> Edge | None:
+        """Legt eine einzelne Kante an, sofern es ihr Tripel noch nicht gibt.
+
+        Der additive Gegenpart zu :meth:`replace_generated`. Die semantische Kantenerkennung
+        (§14) braucht ihn: Ihre Kanten entstehen paarweise über viele Läufe hinweg und gehören
+        keiner Menge an, die ein Lauf als Ganzes ersetzen dürfte. Eine bestehende Kante bleibt
+        unberührt — auch dann, wenn ein Modell sie diesmal anders begründet hätte. Was einmal im
+        Graphen steht und womöglich schon bestätigt wurde, wird nicht von einem Folgelauf
+        überschrieben (§10.4).
+
+        Returns:
+            Die angelegte Kante, oder ``None``, wenn es das Tripel schon gab.
+        """
+
+    def kinds_between(self, *, from_id: str, to_id: str) -> frozenset[str]:
+        """Die Kantenarten, die zwischen zwei Konzepten dieses Stores bereits bestehen.
+
+        Beide Richtungen. Die Kantenerkennung fragt danach, bevor sie ein Paar an ein Modell gibt:
+        Ein Paar, dessen Beziehung schon im Graphen steht, ist keine offene Frage mehr — und ein
+        Modellaufruf darauf wäre genau die Verschwendung, die §14.5 mit "Verarbeitung nur
+        neuer/geänderter Paare" ausschließt.
+        """
+
     def refresh_resolution(self) -> int:
         """Gleicht ``resolved`` für alle Kanten *innerhalb* dieses Stores mit der Wirklichkeit ab.
 
@@ -230,6 +315,130 @@ class EdgeRepository(Protocol):
 
 
 @runtime_checkable
+class EmbeddingRepository(Protocol):
+    """Die Vektoren genau eines Stores (§7.4, §13.1).
+
+    Jede Methode trägt ``model_key``. §11.7 begründet warum: "Vektorsuchen filtern immer auf den
+    aktiven ``model_key``; Mischbestände sind dadurch unschädlich." Ein Wechsel des
+    Embedding-Modells macht die alten Vektoren damit nicht falsch — nur unsichtbar, bis jemand
+    zurückwechselt.
+    """
+
+    @property
+    def store(self) -> str:
+        """Der Store, für den dieses Repository zuständig ist."""
+
+    def outdated(self, *, model_key: str, scope: str | None = None) -> tuple[str, ...]:
+        """Konzepte, deren Embedding fehlt oder nicht mehr zum Inhalt passt (§13.1).
+
+        Verglichen wird ``concept_embeddings.source_hash`` mit dem ``content_hash`` des Konzepts.
+        Das ist der Grund, warum ein zweiter Embedding-Lauf über einen unveränderten Bestand keinen
+        einzigen Token kostet.
+        """
+
+    def save(
+        self, *, concept_id: str, model_key: str, vector: Sequence[float], source_hash: str
+    ) -> None:
+        """Legt einen Vektor ab oder ersetzt ihn."""
+
+    def get(self, *, concept_id: str, model_key: str) -> tuple[float, ...] | None:
+        """Der abgelegte Vektor eines Konzepts, oder ``None``."""
+
+    def count(self, *, model_key: str, scope: str | None = None) -> int:
+        """Wie viele Konzepte unter diesem Modellschlüssel eingebettet sind.
+
+        Die Frage, an der die Suche entscheidet, ob sie überhaupt semantisch suchen kann (§12.4).
+        Ohne einen einzigen Vektor degradiert sie sichtbar auf ``mode: lexical`` (§11.5).
+        """
+
+    def neighbours(
+        self,
+        *,
+        concept_id: str,
+        model_key: str,
+        k: int,
+        scope: str | None = None,
+        min_similarity: float = 0.0,
+    ) -> tuple[Neighbour, ...]:
+        """Die k nächsten Nachbarn eines Konzepts über den HNSW-Index (§13.2 Schritt 1)."""
+
+    def search(
+        self,
+        *,
+        vector: Sequence[float],
+        model_key: str,
+        limit: int,
+        scope: str | None = None,
+        exclude: Sequence[str] = (),
+    ) -> tuple[Neighbour, ...]:
+        """Die ähnlichsten Konzepte zu einem freien Vektor — die Vektorsuche aus §12.4."""
+
+
+@runtime_checkable
+class ClusterRepository(Protocol):
+    """Zentroide und Zuordnungskandidaten genau eines Stores (§7.4, §13.2, §13.3)."""
+
+    @property
+    def store(self) -> str:
+        """Der Store, für den dieses Repository zuständig ist."""
+
+    def save_centroid(
+        self, *, cluster_id: str, model_key: str, vector: Sequence[float], member_count: int
+    ) -> None:
+        """Legt den Mittelpunkt eines Clusters ab oder ersetzt ihn (§13.2 Schritt 5)."""
+
+    def centroids(self, *, model_key: str) -> tuple[Centroid, ...]:
+        """Alle Zentroide dieses Stores unter einem Modellschlüssel."""
+
+    def search_centroids(
+        self, *, vector: Sequence[float], model_key: str, limit: int
+    ) -> tuple[Neighbour, ...]:
+        """Die ähnlichsten Zentroide zu einem freien Vektor — Stufe 1 der Suche (§12.4).
+
+        Sie geht gegen die Cluster und nicht gegen die Dokumente, weil die Antwort auf "worum geht
+        es hier?" ein Thema ist und keine Liste. Trifft ein Cluster über der Schwelle, wird *es*
+        geliefert — nicht seine Mitglieder.
+        """
+
+    def similar_centroids(
+        self, *, cluster_id: str, model_key: str, limit: int
+    ) -> tuple[Neighbour, ...]:
+        """Die ähnlichsten anderen Zentroide — Grundlage der ``related``-Kanten (§13.2)."""
+
+    def bump(self, *, concept_id: str, cluster_id: str, score: float, run_id: UUID) -> int:
+        """Zählt eine beobachtete Zuordnung hoch und meldet den neuen Stand (§13.3).
+
+        Die Stabilitätsschwelle in einer Zeile: Erreicht der Rückgabewert
+        ``clustering.stability_runs``, wird die Mitgliedschaft geschrieben. Vorher passiert
+        nichts — "das verhindert das Flattern bei knappen Ähnlichkeiten".
+        """
+
+    def candidates(self, *, min_seen: int = 1) -> tuple[AssignmentCandidate, ...]:
+        """Die vorgemerkten Zuordnungen, absteigend nach Bestätigungen."""
+
+    def expire(self, *, run_id: UUID) -> int:
+        """Verwirft Kandidaten, die dieser Lauf nicht bestätigt hat (§13.3).
+
+        Ausschlüsse bleiben stehen: Sie sind keine Beobachtung, die verfallen könnte, sondern eine
+        Entscheidung eines Menschen (§13.4).
+
+        Returns:
+            Die Anzahl der verfallenen Kandidaten.
+        """
+
+    def exclude(self, *, concept_id: str, cluster_id: str) -> None:
+        """Vermerkt, dass diese Zuordnung von Hand entfernt wurde (§13.4).
+
+        Ab dann wird sie nicht erneut geschrieben, gleichgültig wie nah sich Konzept und Cluster
+        stehen. Das ist Leitprinzip 15 in seiner härtesten Form: Der Algorithmus darf hier nicht
+        recht behalten.
+        """
+
+    def exclusions(self) -> frozenset[tuple[str, str]]:
+        """Alle gesperrten Paare aus Konzept und Cluster."""
+
+
+@runtime_checkable
 class ChangeLogRepository(Protocol):
     """Schreibender und lesender Zugriff auf das Änderungsjournal eines Stores (§7.4)."""
 
@@ -283,6 +492,18 @@ class UnitOfWork(Protocol):
     @property
     def cursors(self) -> SourceCursorRepository:
         """Das Cursor-Repository dieses Stores (§7.4)."""
+
+    @property
+    def embeddings(self) -> EmbeddingRepository:
+        """Das Vektor-Repository dieses Stores (§7.4, §13.1)."""
+
+    @property
+    def clusters(self) -> ClusterRepository:
+        """Zentroide und Zuordnungskandidaten dieses Stores (§7.4, §13.2)."""
+
+    @property
+    def model_calls(self) -> ModelCallRepository:
+        """Die Modellaufrufe dieses Stores (§7.4, §11.6)."""
 
     def commit(self) -> None:
         """Schreibt alles Angesammelte fest."""

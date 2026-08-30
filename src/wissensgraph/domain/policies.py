@@ -24,6 +24,8 @@ Fehler, sondern der Preis von Leitprinzip 2".
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from wissensgraph.config import defaults
 
 
@@ -34,14 +36,20 @@ class ProviderNotAllowedError(PermissionError):
     Programmierfehler und kein ungültiger Wert, sondern eine verweigerte Berechtigung.
     """
 
-    def __init__(self, *, store: str, provider: str) -> None:
+    #: Der Grund, der greift, wenn niemand einen anderen nennt: die Ortsregel aus Leitprinzip 2.
+    LOCALITY_REASON = (
+        "Er läuft nicht auf diesem Rechner (§11.5, Leitprinzip 2). Zulässig sind hier nur lokale "
+        "Provider. Wer die Grenze bewusst öffnen will, setzt WG_PERSONAL_ALLOW_REMOTE_MODELS=true "
+        "— das wird protokolliert."
+    )
+
+    def __init__(self, *, store: str, provider: str, reason: str | None = None) -> None:
         self.store = store
         self.provider = provider
+        self.reason = reason or self.LOCALITY_REASON
         super().__init__(
             f"Inhalte aus dem Store '{store}' dürfen nicht an den Provider '{provider}' gehen: "
-            f"Er läuft nicht auf diesem Rechner (§11.5, Leitprinzip 2). Zulässig sind hier nur "
-            f"lokale Provider. Wer die Grenze bewusst öffnen will, setzt "
-            f"WG_PERSONAL_ALLOW_REMOTE_MODELS=true — das wird protokolliert."
+            f"{self.reason}"
         )
 
 
@@ -67,3 +75,38 @@ def check_store_policy(
     if provider_is_local or allow_remote_personal:
         return
     raise ProviderNotAllowedError(store=store, provider=provider)
+
+
+def check_allowed_providers(
+    *, store: str, provider: str, allowed: Sequence[str] | None = None
+) -> None:
+    """Prüft die ausdrückliche Freigabeliste eines Stores (§11.4, ``policies.<store>``).
+
+    Die zweite Hälfte von §11.5, und eine andere Frage als :func:`check_store_policy`: Dort geht
+    es darum, *wo* ein Provider läuft — eine Eigenschaft, die niemand versehentlich umkonfiguriert.
+    Hier geht es darum, welche Provider für diesen Store überhaupt vorgesehen sind. Ein Store
+    darf damit auch einen lokalen Provider ausschließen, etwa weil dessen Modell für seine Inhalte
+    zu schwach ist.
+
+    Args:
+        store: Herkunft der zu verarbeitenden Inhalte.
+        provider: Name des gewählten Providers.
+        allowed: Die freigegebenen Provider. ``None`` heißt "keine Liste hinterlegt" und lässt
+            jeden Provider durch — anders als eine *leere* Liste, die nichts erlaubt. Der
+            Unterschied ist wichtig: Eine fehlende Angabe soll nicht dasselbe bedeuten wie ein
+            ausdrückliches Verbot.
+
+    Raises:
+        ProviderNotAllowedError: Wenn der Provider nicht in der Liste steht.
+    """
+    if allowed is None or provider in allowed:
+        return
+    erlaubt = ", ".join(allowed) or "(keiner)"
+    raise ProviderNotAllowedError(
+        store=store,
+        provider=provider,
+        reason=(
+            f"Für diesen Store sind ausschließlich die Provider [{erlaubt}] freigegeben "
+            f"(policies.{store}.allowed_providers in models.yaml, §11.4)."
+        ),
+    )

@@ -52,7 +52,10 @@ def minimal_config_dict() -> dict[str, Any]:
         ],
         "edge_kinds": {
             "structural": ["member", "related"],
-            "semantic": ["depends_on", "references"],
+            # ``supersedes`` ist dabei, weil §14.4 an ihm eine eigene Regel festmacht: Eine
+            # erkannte Ablösung erzeugt eine Kuratierungsaufgabe statt einer Statusänderung.
+            # Ohne den Eintrag ließe sich genau das nicht prüfen.
+            "semantic": ["depends_on", "references", "supersedes"],
         },
         "api": {"auth_mode": "token", "token": "test-token"},
         "embedding_dim": 768,
@@ -63,6 +66,23 @@ def minimal_config_dict() -> dict[str, Any]:
 def settings(minimal_config_dict: dict[str, Any]) -> Settings:
     """Die geprüfte Konfiguration zur minimalen Testkonfiguration."""
     return Settings.model_validate(minimal_config_dict)
+
+
+@pytest.fixture
+def semantik_settings(minimal_config_dict: dict[str, Any]) -> Settings:
+    """Konfiguration für die Läufe aus §13 bis §15.
+
+    Die Parameter sind bewusst die ausgelieferten Defaults, wo es geht: Ein Test, der sich seine
+    Schwellen zurechtlegt, prüft am Ende die Schwellen und nicht das Verfahren. Abweichend ist nur
+    ``neighbors_k`` — der Testkorpus hat vier Dokumente je Thema, und acht Nachbarn reichten über
+    das Thema hinaus.
+    """
+    return Settings.model_validate(
+        {
+            **minimal_config_dict,
+            "clustering": {"neighbors_k": 4, "min_cluster_size": 3, "stability_runs": 2},
+        }
+    )
 
 
 @pytest.fixture

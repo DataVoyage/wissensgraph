@@ -105,10 +105,16 @@ class TestQuellen:
 
 class TestJobzuordnung:
     def test_eine_noch_nicht_umgesetzte_lauf_art_bricht_laut_ab(self, runtime: Any) -> None:
-        """Ein stilles Verwerfen ließe den Lauf für immer auf 'queued' stehen."""
-        auftrag = Job(run_id=uuid4(), kind=RunKind.CLUSTER, store="shared")
+        """Ein stilles Verwerfen ließe den Lauf für immer auf 'queued' stehen.
 
-        with pytest.raises(NotImplementedError, match="cluster"):
+        ``export`` ist die letzte Lauf-Art, die es als Aufzählungswert gibt, ohne umgesetzt zu
+        sein. Genau dafür ist der Test da: Er hält fest, dass eine noch nicht gebaute Art laut
+        abbricht — und er wird mit jeder Stufe, die eine weitere umsetzt, auf die nächste
+        umgestellt.
+        """
+        auftrag = Job(run_id=uuid4(), kind=RunKind.EXPORT, store="shared")
+
+        with pytest.raises(NotImplementedError, match="export"):
             runtime.handle(auftrag)
 
     def test_ein_job_auf_eine_unbekannte_quelle_bricht_ab(self, runtime: Any) -> None:

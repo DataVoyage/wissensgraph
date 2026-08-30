@@ -39,8 +39,10 @@ from wissensgraph.config.schema import RankingConfig, Settings
 from wissensgraph.domain.bridges import bridge_sources, bridge_targets
 from wissensgraph.domain.concepts import Concept, ConceptStatus
 from wissensgraph.domain.edges import Edge
+from wissensgraph.domain.policies import ProviderNotAllowedError
 from wissensgraph.observability.logging import get_logger
-from wissensgraph.ports.repositories import UnitOfWorkFactory
+from wissensgraph.ports.models import ModelError, ModelRouter
+from wissensgraph.ports.repositories import LexicalHit, UnitOfWorkFactory
 
 _log = get_logger(__name__)
 
@@ -168,6 +170,7 @@ class GraphService:
         settings: Settings,
         unit_of_work: UnitOfWorkFactory,
         *,
+        router: ModelRouter | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         """
@@ -175,10 +178,14 @@ class GraphService:
             settings: Die geprüfte Konfiguration; liefert Grenzen und Ranking-Gewichte.
             unit_of_work: Fabrik für Transaktionen je Store. Auch der Lesepfad geht über sie —
                 es gibt keinen zweiten Weg zu einer Verbindung (§20.1).
+            router: Der Model-Router für die semantische Hälfte der Suche. **Optional**, und das
+                ist die Aussage: Ohne ihn sucht dieser Dienst lexikalisch und sagt es im Ergebnis
+                (§12.4). Der Lesepfad hängt nicht an der Verfügbarkeit eines Modells.
             clock: Zeitquelle für die Aktualitätskomponente des Rankings.
         """
         self._settings = settings
         self._unit_of_work = unit_of_work
+        self._router = router
         self._clock = clock or (lambda: datetime.now(UTC))
 
     # -- öffentliche Operationen ------------------------------------------------
@@ -250,19 +257,153 @@ class GraphService:
             queries=abfragen,
         )
 
-    def search(self, query: str, *, store: str, limit: int = defaults.SEARCH_LIMIT) -> SearchResult:
-        """Lexikalische Suche über Volltext und Trigramm (§12.4).
+    def search(
+        self,
+        query: str,
+        *,
+        store: str,
+        limit: int | None = None,
+        granularity: str = defaults.SEARCH_GRANULARITY_AUTO,
+    ) -> SearchResult:
+        """Die zweistufige Suche aus §12.4 — Cluster zuerst, Dokumente danach.
 
-        Die Dokument-Ebene der zweistufigen Suche; die Cluster-Ebene kommt mit den Embeddings
-        (Stufe 8). Der Modus steht im Ergebnis, weil ein stiller Qualitätsverlust die schlechtere
-        Variante wäre.
+        Die Reihenfolge ist die Aussage: Wer sucht, will meist wissen, *worum es geht*, und die
+        Antwort darauf ist ein Thema und keine Liste von Dokumenten. Erst wenn kein Cluster nah
+        genug liegt, wird auf die Dokumentebene zurückgefallen — hybrid aus Vektorähnlichkeit und
+        Volltext, zusammengeführt über die Plätze.
+
+        Args:
+            query: Der Suchbegriff.
+            store: Der zu durchsuchende Store.
+            limit: Höchstzahl Treffer; ohne Angabe ``search.limit``.
+            granularity: ``auto`` (erst Cluster, dann Dokumente), ``cluster`` oder ``document``.
+
+        Returns:
+            Das Ergebnis samt ``mode``. Ohne verfügbares Embedding-Modell ist der Modus
+            ``lexical`` — §12.4: "Ein stiller Qualitätsverlust ohne Hinweis wäre die schlechtere
+            Variante."
         """
+        deckel = limit if limit is not None else self._settings.search.limit
         with self._unit_of_work(store) as uow:
-            treffer = uow.concepts.search_lexical(query, limit=limit)
+            lexikalisch = uow.concepts.search_lexical(query, limit=deckel)
+
+        vektor = self._anfragevektor(query, store=store)
+        if vektor is None:
+            return self._ergebnis(query, store, lexikalisch, defaults.SEARCH_MODE_LEXICAL)
+
+        if granularity != defaults.SEARCH_GRANULARITY_DOCUMENT:
+            anker = self._cluster_anker(vektor, store=store, limit=deckel)
+            if anker or granularity == defaults.SEARCH_GRANULARITY_CLUSTER:
+                return SearchResult(
+                    query=query, store=store, hits=anker, mode=defaults.SEARCH_MODE_CLUSTER
+                )
+
+        return self._hybrid(query, vektor, lexikalisch, store=store, limit=deckel)
+
+    # -- innere Abläufe: Suche ---------------------------------------------------
+
+    def _anfragevektor(self, query: str, *, store: str) -> tuple[float, ...] | None:
+        """Der Vektor der Anfrage — oder ``None``, wenn semantisch nicht gesucht werden kann.
+
+        Drei Gründe für ``None``, und alle drei sind zulässige Betriebszustände: kein Router, kein
+        Embedding im Store (dann gäbe es nichts zu vergleichen), oder die Store-Policy verbietet
+        den Aufruf (§11.5). In allen dreien ist die lexikalische Suche die richtige Antwort — und
+        kein Fehler.
+        """
+        if self._router is None or not query.strip():
+            return None
+
+        route = self._router.describe(defaults.TASK_EMBEDDING)
+        with self._unit_of_work(store) as uow:
+            vorhanden = uow.embeddings.count(model_key=route.model_key)
+        if vorhanden == 0:
+            return None
+
+        try:
+            ergebnis = self._router.embed(defaults.TASK_EMBEDDING, [query], store=store)
+        except (ProviderNotAllowedError, ModelError) as exc:
+            _log.info("suche.lexikalisch", store=store, grund=type(exc).__name__)
+            return None
+        return ergebnis.vectors[0] if ergebnis.vectors else None
+
+    def _cluster_anker(
+        self, vektor: Sequence[float], *, store: str, limit: int
+    ) -> tuple[GraphNode, ...]:
+        """Stufe 1 aus §12.4: Zentroide über der Schwelle, als Anker statt ihrer Mitglieder."""
+        schwelle = self._settings.search.cluster_hit_threshold
+        route = self._router.describe(defaults.TASK_EMBEDDING)  # type: ignore[union-attr]
+        with self._unit_of_work(store) as uow:
+            treffer = [
+                hit
+                for hit in uow.clusters.search_centroids(
+                    vector=vektor, model_key=route.model_key, limit=limit
+                )
+                if hit.similarity >= schwelle
+            ]
+            konzepte = {
+                concept.id: concept
+                for concept in uow.concepts.get_many([hit.concept_id for hit in treffer])
+            }
+        return tuple(
+            GraphNode(concept=konzepte[hit.concept_id], hops=0, score=hit.similarity)
+            for hit in treffer
+            if hit.concept_id in konzepte
+        )
+
+    def _hybrid(
+        self,
+        query: str,
+        vektor: Sequence[float],
+        lexikalisch: Sequence[LexicalHit],
+        *,
+        store: str,
+        limit: int,
+    ) -> SearchResult:
+        """Stufe 2 aus §12.4: Vektorähnlichkeit und Volltext über Reciprocal Rank Fusion.
+
+        Zusammengeführt werden die *Plätze* und nicht die Werte. Eine Kosinusähnlichkeit von 0,71
+        und ein ``ts_rank`` von 0,08 sagen nichts übereinander; ihre Ränge dagegen sind
+        vergleichbar. Derselbe Grund wie in §12.4 für die lexikalische Hälfte allein — nur dass
+        hier zwei Verfahren zusammenkommen, die wirklich verschieden sehen.
+        """
+        route = self._router.describe(defaults.TASK_EMBEDDING)  # type: ignore[union-attr]
+        with self._unit_of_work(store) as uow:
+            semantisch = uow.embeddings.search(
+                vector=vektor, model_key=route.model_key, limit=limit
+            )
+            k = self._settings.search.rrf_k
+            punkte: dict[str, float] = {}
+            for rang, hit in enumerate(lexikalisch, start=1):
+                punkte[hit.concept.id] = punkte.get(hit.concept.id, 0.0) + 1.0 / (k + rang)
+            for rang, nachbar in enumerate(semantisch, start=1):
+                punkte[nachbar.concept_id] = punkte.get(nachbar.concept_id, 0.0) + 1.0 / (k + rang)
+
+            geordnet = sorted(punkte.items(), key=lambda item: (-item[1], item[0]))[:limit]
+            konzepte = {
+                concept.id: concept
+                for concept in uow.concepts.get_many([concept_id for concept_id, _ in geordnet])
+            }
+
+        return SearchResult(
+            query=query,
+            store=store,
+            hits=tuple(
+                GraphNode(concept=konzepte[concept_id], hops=0, score=punktzahl)
+                for concept_id, punktzahl in geordnet
+                if concept_id in konzepte
+            ),
+            mode=defaults.SEARCH_MODE_HYBRID,
+        )
+
+    def _ergebnis(
+        self, query: str, store: str, treffer: Sequence[LexicalHit], mode: str
+    ) -> SearchResult:
+        """Ein rein lexikalisches Ergebnis."""
         return SearchResult(
             query=query,
             store=store,
             hits=tuple(GraphNode(concept=hit.concept, hops=0, score=hit.score) for hit in treffer),
+            mode=mode,
         )
 
     # -- innere Abläufe: Ausbreiten ---------------------------------------------

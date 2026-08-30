@@ -1,0 +1,111 @@
+# Model-Router (§11.4).
+#
+# Diese Datei ist die Antwort auf §11.1: "Ein Modellwechsel ist eine Änderung in models.yaml —
+# inklusive: anderer Anbieter, lokales Modell statt Cloud, unterschiedliche Modelle je Aufgabe,
+# unterschiedliche Modelle je Store." Kein Modellname und kein Anbieter steht sonst irgendwo im
+# System.
+#
+# In dieser Datei stehen KEINE Secrets. Zugangsschlüssel kommen als ${WG_...}-Platzhalter zur
+# Startzeit aus der Prozessumgebung (§6.1 Regel 2, §20.2).
+
+providers:
+  # Entwicklungs-Anbieter: die Gemini Developer API (Google AI Studio). Ein API-Schlüssel, kein
+  # GCP-Projekt, keine Dienstkonto-Datei — der kürzeste Weg zu einem laufenden System.
+  gemini:
+    type: google_genai
+    api_key: ${WG_PROVIDER_GEMINI__API_KEY:-}
+    local: false
+
+  # Derselbe Modellhersteller über Vertex AI. Der Umstieg ist genau dieser Block plus ein
+  # geänderter 'provider:'-Eintrag weiter unten — die Modellnamen bleiben, weil es dieselbe
+  # Familie ist (§11.7: "Provider für dieselbe Modellfamilie -> kein erforderlicher Schritt").
+  vertex:
+    type: vertex
+    project: ${WG_PROVIDER_VERTEX__PROJECT:-}
+    location: ${WG_PROVIDER_VERTEX__LOCATION:-europe-west4}
+    credentials_file: ${WG_PROVIDER_VERTEX__CREDENTIALS_FILE:-}
+    local: false
+
+  # Ein lokaler Modellserver. 'local: true' ist hier die wichtigste Zeile der ganzen Datei: Nur
+  # ein so gekennzeichneter Anbieter darf persönliche Inhalte sehen (§11.5, Leitprinzip 2).
+  # Die Angabe ist eine Zusicherung des Betreibers und wird vom System nicht nachgeprüft.
+  ollama:
+    type: openai_compatible
+    base_url: ${WG_PROVIDER_OLLAMA__BASE_URL:-http://host.docker.internal:11434/v1}
+    api_key: "not-needed"
+    local: true
+
+  # Ein beliebiger OpenAI-kompatibler Endpunkt (vLLM, ein Gateway, ein Cloud-Anbieter).
+  openai_compat:
+    type: openai_compatible
+    base_url: ${WG_PROVIDER_OPENAI__BASE_URL:-}
+    api_key: ${WG_PROVIDER_OPENAI__API_KEY:-}
+    local: false
+
+defaults:
+  timeout_seconds: 60
+  max_retries: 3
+  backoff: exponential
+  cache: true
+  cache_ttl_hours: 168
+
+tasks:
+  # 'dim' muss zu WG_EMBEDDING_DIM passen, sonst verweigert der Router den Start (§11.7). Der
+  # Wert wird dem Modell als 'output_dimensionality' mitgegeben — deshalb passt ein Modell mit
+  # anderer nativer Dimension trotzdem in das migrierte Schema.
+  embedding:
+    primary:
+      provider: gemini
+      model: gemini-embedding-2
+      dim: 768
+      batch_size: 64
+
+  cluster_labeling:
+    primary:
+      provider: gemini
+      model: gemini-3.5-flash-lite
+      temperature: 0.2
+      max_tokens: 400
+      json_mode: true
+
+  # temperature: 0 ist hier Pflichtwert und keine Einstellung — die Validierung lehnt andere
+  # Werte ab (§11.6). Beide Aufgaben erzeugen Kanten im Graphen; ein Zufallsanteil darin wäre
+  # nicht reproduzierbar und damit nicht überprüfbar.
+  relation_extraction:
+    primary:
+      provider: gemini
+      model: gemini-3.5-flash-lite
+      temperature: 0.0
+      json_mode: true
+
+  cluster_matching:
+    primary:
+      provider: gemini
+      model: gemini-3.5-flash-lite
+      temperature: 0.0
+      json_mode: true
+
+  summarization:
+    primary:
+      provider: gemini
+      model: gemini-3.5-flash-lite
+      temperature: 0.3
+      max_tokens: 200
+
+  query_expansion:
+    primary:
+      provider: gemini
+      model: gemini-3.5-flash-lite
+      temperature: 0.2
+      max_tokens: 120
+
+# §11.5, die Datenschutzgrenze. Der personal-Store lässt ausschließlich lokale Anbieter zu.
+# Ohne laufenden lokalen Modellserver bleiben persönliche Konzepte damit ohne Embedding — "kein
+# Fehler, sondern der Preis von Leitprinzip 2". Der Kernspace funktioniert dann über Kanten und
+# lexikalische Suche, und die UI zeigt diesen Zustand an.
+policies:
+  personal:
+    allowed_providers: [ollama]
+    on_violation: abort
+  shared:
+    allowed_providers: [gemini, vertex, openai_compat, ollama]
