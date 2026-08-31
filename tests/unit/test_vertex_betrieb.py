@@ -212,3 +212,132 @@ class TestDienstkonto:
         assert gebaut.location == "eu"
         assert gebaut.output_dimensionality == 768
         assert not gebaut.credentials.requires_scopes
+
+
+class TestBuendelgroesse:
+    """Vertex nimmt genau einen Text je Embedding-Aufruf entgegen.
+
+    Der Anbieter sagt das unmissverständlich — "The embedContent API for this model only supports
+    one content at a time" —, und dieselben Modelle nehmen über die Gemini-Developer-API ganze
+    Bündel. Der Unterschied liegt allein im Weg dorthin. Ohne diese Grenze scheitert jeder
+    Embedding-Lauf über Vertex an der ersten Anfrage, und zwar erst nach allen Wiederholungen.
+    """
+
+    def test_vertex_buendelt_nicht(self) -> None:
+        provider = _models(project="p", location="eu").provider("vertex")
+
+        assert provider.embedding_batch(64) == 1
+
+    def test_andere_anbieter_buendeln_unveraendert(self) -> None:
+        """Die Grenze ist eine Eigenschaft dieses Anbieters und keine allgemeine Vorsicht."""
+        models = ModelsConfig.model_validate(
+            {"providers": {"g": {"type": "google_genai", "api_key": "k"}}, "tasks": {}}
+        )
+
+        assert models.provider("g").embedding_batch(64) == 64
+
+    def test_eine_kleinere_aufgabe_bleibt_kleiner(self) -> None:
+        """Die Grenze deckelt, sie schreibt nicht vor."""
+        models = ModelsConfig.model_validate(
+            {"providers": {"g": {"type": "google_genai", "api_key": "k"}}, "tasks": {}}
+        )
+
+        assert models.provider("g").embedding_batch(8) == 8
+
+    def test_die_grenze_ist_ueberschreibbar(self) -> None:
+        """Falls ein späteres Vertex-Modell mehr annimmt, ohne dass Code geändert werden muss."""
+        provider = _models(project="p", location="eu", max_embedding_batch=16).provider("vertex")
+
+        assert provider.embedding_batch(64) == 16
+
+    def test_ein_lauf_schickt_wirklich_einen_text_je_aufruf(
+        self, minimal_config_dict: dict[str, Any]
+    ) -> None:
+        """Der Test, der den gemeldeten Fehler gefangen hätte.
+
+        Geprüft wird nicht die Zahl in der Konfiguration, sondern was beim Anbieter ankommt: Der
+        Lauf ging mit einem Bündel zu 64 hinaus und scheiterte an der ersten Anfrage — nach vier
+        Wiederholungen, weil der Router einen abgelehnten Aufruf nicht von einer Störung
+        unterscheiden kann.
+        """
+        from wissensgraph.config.schema import Settings
+        from wissensgraph.services.router import ModelRouterService
+        from wissensgraph.testing.models import FakeEmbeddings
+
+        class Mitzaehlend:
+            """Ein Embedding-Client, der die Größe jedes Bündels festhält."""
+
+            def __init__(self) -> None:
+                self.groessen: list[int] = []
+                self._echt = FakeEmbeddings(768)
+
+            def embed(self, texts: Any) -> Any:
+                self.groessen.append(len(texts))
+                return self._echt.embed(texts)
+
+        class Clients:
+            def __init__(self, embeddings: Any) -> None:
+                self._embeddings = embeddings
+
+            def chat(self, task: str, route: Any) -> Any:  # pragma: no cover — hier ungenutzt
+                raise AssertionError("Ein Embedding-Lauf ruft kein Chatmodell auf.")
+
+            def embeddings(self, task: str, route: Any) -> Any:
+                return self._embeddings
+
+        models = ModelsConfig.model_validate(
+            {
+                "providers": {"vertex": {"type": "vertex", "project": "p", "location": "eu"}},
+                "tasks": {
+                    "embedding": {
+                        "primary": {
+                            "provider": "vertex",
+                            "model": "gemini-embedding-2",
+                            "dim": 768,
+                            "batch_size": 64,
+                        }
+                    }
+                },
+                "policies": {"shared": {"allowed_providers": ["vertex"]}},
+            }
+        )
+        zaehler = Mitzaehlend()
+        router = ModelRouterService(
+            Settings.model_validate(minimal_config_dict),
+            models,
+            Clients(zaehler),
+            sleep=lambda _: None,
+        )
+
+        ergebnis = router.embed(
+            "embedding", [f"Text {nummer}" for nummer in range(5)], store="shared"
+        )
+
+        assert len(ergebnis.vectors) == 5
+        assert zaehler.groessen == [1, 1, 1, 1, 1]
+
+    def test_describe_zeigt_die_wirksame_groesse(self, minimal_config_dict: dict[str, Any]) -> None:
+        """``wg models describe`` soll sagen, was geschieht — nicht, was jemand notiert hat."""
+        from wissensgraph.config.schema import Settings
+        from wissensgraph.services.router import ModelRouterService
+
+        models = ModelsConfig.model_validate(
+            {
+                "providers": {"vertex": {"type": "vertex", "project": "p", "location": "eu"}},
+                "tasks": {
+                    "embedding": {
+                        "primary": {
+                            "provider": "vertex",
+                            "model": "gemini-embedding-2",
+                            "dim": 768,
+                            "batch_size": 64,
+                        }
+                    }
+                },
+            }
+        )
+        router = ModelRouterService(
+            Settings.model_validate(minimal_config_dict), models, None, sleep=lambda _: None
+        )
+
+        assert router.describe("embedding").batch_size == 1

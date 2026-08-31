@@ -33,6 +33,11 @@ providers:
   # (Workload Identity), die auf Google-Infrastruktur der sicherere Weg ist, weil dabei kein
   # Schlüssel auf einer Platte liegt. Mit Angabe zeigt der Pfad auf die unveränderte
   # JSON-Schlüsseldatei; './secrets/...' trifft auf dem Host wie im Container dieselbe Datei.
+  #
+  # Über Vertex nimmt 'embedContent' genau EINEN Text je Aufruf entgegen; dieselben Modelle
+  # nehmen über die Developer-API ganze Bündel. Der Router deckelt die Bündelgröße deshalb selbst
+  # — hier ist dafür nichts einzutragen. 'max_embedding_batch' steht nur bereit, falls ein
+  # späteres Modell mehr annimmt.
   vertex:
     type: vertex
     project: ${WG_PROVIDER_VERTEX__PROJECT:-}

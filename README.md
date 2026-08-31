@@ -349,6 +349,32 @@ Scope nur auf ihrem eigenen Weg über die Standard-Anmeldung, nicht bei übergeb
 
 Das Dienstkonto braucht die Rolle **`roles/aiplatform.user`** auf dem Projekt.
 
+**Embeddings gehen über Vertex einzeln hinaus.** Die Schnittstelle sagt es unmissverständlich —
+*"The embedContent API for this model only supports one content at a time"* —, während dieselben
+Modelle über die Gemini-Developer-API ganze Bündel entgegennehmen. Der Router deckelt die
+Bündelgröße deshalb selbst auf 1, sobald der Anbieter vom Typ `vertex` ist; in `models.yaml` ist
+dafür nichts zu ändern, und `wg models describe` zeigt die **wirksame** Größe:
+
+```
+[OK] embedding    vertex:gemini-embedding-2 (extern)
+         Dimension 768, Bündel zu 1
+```
+
+Zwei Folgen für den Betrieb: Ein Embedding-Lauf braucht einen Modellaufruf **je Konzept** statt je
+64, und er läuft entsprechend länger. Der Budgetwächter zählt Aufrufe — bei mehr als
+`WG_BUDGET_MAX_MODEL_CALLS_PER_RUN` Konzepten (Vorgabe 2000) endet der Lauf mit einem sauberen
+Teilergebnis, und der nächste macht dort weiter, weil `wg embed` nur einbettet, was sich geändert
+hat. Wer den Bestand in einem Zug einbetten will, setzt die Grenze für diesen Lauf hoch.
+
+Sollte ein späteres Vertex-Modell Bündel annehmen, ist das ein Wert in `models.yaml` und keine
+Codeänderung:
+
+```yaml
+providers:
+  vertex:
+    max_embedding_batch: 16
+```
+
 **Vor dem ersten Lauf:**
 
 ```bash

@@ -99,6 +99,14 @@ class ProviderConfig(FrozenModel):
             "Zugang zu persönlichen Inhalten."
         ),
     )
+    max_embedding_batch: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Obergrenze für Texte je Embedding-Aufruf, wenn der Anbieter enger ist als die "
+            "'batch_size' der Aufgabe. Ohne Angabe gilt die Grenze, die der Anbietertyp mitbringt."
+        ),
+    )
     options: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -129,6 +137,24 @@ class ProviderConfig(FrozenModel):
         if self.type == defaults.PROVIDER_TYPE_OPENAI_COMPATIBLE:
             return bool(self.base_url)
         return bool(self.api_key)
+
+    def embedding_batch(self, gewuenscht: int) -> int:
+        """Wie viele Texte ein Embedding-Aufruf an diesen Anbieter wirklich enthalten darf.
+
+        Die Bündelgröße ist eine Eigenschaft der *Aufgabe* (``batch_size`` in ``models.yaml``),
+        die Obergrenze eine des *Anbieters*. Vertex nimmt für die Embedding-Modelle genau einen
+        Text je Aufruf entgegen und lehnt jedes Bündel mit einer klaren Ansage ab — dieselben
+        Modelle nehmen über die Gemini-Developer-API ganze Bündel.
+
+        Diese Grenze gehört deshalb nicht in die Konfiguration des Betreibers: Wer den Anbieter
+        wechselt, hat nichts falsch gemacht und soll nicht erst aus einer Fehlermeldung lernen,
+        dass er nun eine Zahl nachziehen muss (§11.1: "Ein Modellwechsel ist eine Änderung in
+        models.yaml" — und zwar *eine*).
+        """
+        grenze = self.max_embedding_batch
+        if grenze is None and self.type == defaults.PROVIDER_TYPE_VERTEX:
+            grenze = defaults.VERTEX_EMBEDDING_BATCH
+        return gewuenscht if grenze is None else min(gewuenscht, grenze)
 
     @property
     def endpoint(self) -> str | None:

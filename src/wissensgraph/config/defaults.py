@@ -336,6 +336,16 @@ GOOGLE_CLOUD_SCOPE: Final = "https://www.googleapis.com/auth/cloud-platform"
 VERTEX_GLOBAL_LOCATION: Final = "global"
 VERTEX_MULTI_REGIONS: Final = ("eu", "us")
 
+#: Wie viele Texte ein Embedding-Aufruf über Vertex höchstens enthalten darf.
+#:
+#: Eins — und das ist keine Vorsichtsmaßnahme, sondern die Ansage der Schnittstelle: "The
+#: embedContent API for this model only supports one content at a time." Dieselben Modelle nehmen
+#: über die Gemini-Developer-API ganze Bündel entgegen; der Unterschied liegt allein im Weg
+#: dorthin. Ein Bündel, das der Anbieter ablehnt, ist kein Konfigurationsfehler des Betreibers,
+#: deshalb steht die Grenze hier und nicht in ``models.yaml`` — überschreibbar bleibt sie
+#: trotzdem, falls ein späteres Modell mehr kann.
+VERTEX_EMBEDDING_BATCH: Final = 1
+
 #: Modelle der Entwicklungsumgebung. Sie stehen hier als *Default*, nicht als Festlegung: Welches
 #: Modell eine Aufgabe benutzt, entscheidet ``config/models.yaml`` (§11.1) — diese Werte greifen
 #: nur, wo dort nichts anderes steht.

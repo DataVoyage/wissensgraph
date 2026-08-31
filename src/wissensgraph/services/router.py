@@ -285,7 +285,9 @@ class ModelRouterService:
             local=provider.local,
             dim=route.dim,
             temperature=route.temperature,
-            batch_size=route.batch_size,
+            # Die *wirksame* Bündelgröße und nicht die konfigurierte: 'describe' soll sagen, was
+            # geschieht, nicht was jemand aufgeschrieben hat.
+            batch_size=provider.embedding_batch(route.batch_size),
             fallbacks=tuple(item.model_key for item in profil.fallback),
             configured=provider.is_configured,
             endpoint=provider.endpoint,
@@ -315,7 +317,11 @@ class ModelRouterService:
         verbrauch = Usage()
         client: EmbeddingClient | None = None
 
-        for stapel in _stapel(offen, route.batch_size):
+        # Die Bündelgröße der Aufgabe, eingegrenzt auf das, was der Anbieter annimmt. Vertex
+        # nimmt genau einen Text je Aufruf — ohne diese Grenze scheitert jeder Embedding-Lauf
+        # dort an der ersten Anfrage, und zwar nach allen Wiederholungen.
+        groesse = self._models.provider(route.provider).embedding_batch(route.batch_size)
+        for stapel in _stapel(offen, groesse):
             if client is None:
                 client = self._clients.embeddings(task, route)
             eingabe = [texts[index] for index in stapel]
