@@ -64,7 +64,7 @@ Sie erklären viele Entscheidungen, die sonst willkürlich wirken:
 | `broker` | `redis:7-alpine` | Job-Queue für Hintergrundläufe **und** der Antwort-Cache des Model-Routers. |
 | `api` | `wissensgraph-app:local` | HTTP-API auf Port `8080`. Der einzige Dienst, der migriert (§5.5). |
 | `worker` | dasselbe Image | Arbeitet Läufe aus der Queue ab (`wg worker`). |
-| `mcp` | dasselbe Image | MCP-Server über stdio (`wg mcp`). Kein Port, kein Healthcheck. |
+| `mcp` | dasselbe Image | MCP-Server über Streamable HTTP (`wg mcp`), Port 8800, Pfad `/mcp`. Ohne Authentifizierung. |
 | `mock-sources` | dasselbe Image | Spielt Confluence und Jira nach, Port `8090`. Gemockt wird das *Quellsystem*, nicht der Adapter — die echten Adapter laufen unverändert dagegen, inklusive Paginierung und Rate-Limits. |
 | `ui` | `wissensgraph-ui:local` | nginx mit der gebauten SPA, Port `5173`. |
 
@@ -73,7 +73,7 @@ Sie erklären viele Entscheidungen, die sonst willkürlich wirken:
 ```
 wg-personal (internal, kein Ausgang) ── db-personal, api, worker, mcp
 wg-shared                            ── db-shared, broker, mock-sources, api, worker, mcp
-wg-edge                              ── ui, api
+wg-edge                              ── ui, api, mcp
 ```
 
 Die UI erreicht ausschließlich `api`. An `db-personal` kommt nur heran, wer im Netz `wg-personal`
@@ -558,10 +558,35 @@ Erzeugt werden nur die **Eingabeformen**. Die Antwortformen stehen von Hand in
 
 ## 9. Der MCP-Server für Agenten
 
-Sieben Werkzeuge über stdio. Ein Agent bindet sie über den laufenden Container ein:
+Sieben Werkzeuge, zwei Transporte. Gebaut ist der Server auf **FastMCP** — im SDK `mcp` 2.x heißt
+die Klasse `MCPServer`; es ist dieselbe, die früher `FastMCP` hieß.
+
+**Über HTTP (Vorgabe).** Der Container öffnet Port 8800; ein Agent trägt nur die URL ein:
+
+```
+http://localhost:8800/mcp
+```
+
+```jsonc
+// Beispiel für eine Agenten-Konfiguration
+{
+  "mcpServers": {
+    "wissensgraph": { "url": "http://localhost:8800/mcp" }
+  }
+}
+```
+
+> **Der Endpunkt kennt keine Authentifizierung.** Das ist so gewollt und deshalb hier fett: Wer
+> ihn erreicht, darf im persönlichen Store schreiben. Die Absicherung liegt vollständig im Netz.
+> Auf einem Rechner, der im Netz erreichbar ist, gehört in die `.env`
+> `WG_MCP_HOST_BIND=127.0.0.1` — dann ist der Port nur lokal offen. Der geteilte Store bleibt in
+> jedem Fall unbeschreibbar, dafür sorgt die Verbindung (siehe unten).
+
+**Über stdio.** Für einen Agenten, der den Server selbst als Unterprozess startet — ohne Port und
+ohne laufenden Container:
 
 ```bash
-docker compose exec -T mcp wg mcp --session <kennung>
+docker compose exec -T mcp wg mcp --transport stdio --session <kennung>
 ```
 
 Die Sitzungskennung erscheint im Journal als `agent:<kennung>` — jede Änderung eines Agenten ist
@@ -577,7 +602,7 @@ damit von einer Änderung eines Menschen unterscheidbar.
 | `link_add` | Kante setzen — **ohne `from_store`-Argument**. |
 | `cluster_project` | Ein Cluster als Projektion. |
 
-Zwei Eigenschaften sind Absicht und keine Lücke:
+Drei Eigenschaften sind Absicht und keine Lücke:
 
 * **Die Grenze liegt in der Verbindung, nicht im Code.** Der MCP-Server bekommt für `shared` nur
   die nur-lesende Engine. Ein Schreibversuch scheitert in PostgreSQL selbst, nicht an einer
@@ -587,6 +612,11 @@ Zwei Eigenschaften sind Absicht und keine Lücke:
 * **Antworten sind gedeckelt.** Listen und Texte werden von **hinten** gekürzt (vordere Einträge
   ranken besser) und die Antwort mit `truncated: true` markiert. Geschätzt wird über Zeichen, weil
   der Server das Modell des Aufrufers nicht kennt.
+* **Die Eingabeschemata stehen im Code als Daten und nicht in Funktionssignaturen.** FastMCP kann
+  ein Schema aus der Signatur ableiten; hier tut es das nicht. Die Beschreibungen sind sorgfältig
+  formulierte Anweisungen an einen Agenten („**Dies ist der erste Aufruf einer Sitzung.**"), und
+  aus Annotationen zurückgewonnen stünden sie ein zweites Mal da. Veröffentlicht wird das Schema
+  aus §18.1 wörtlich; für die Prüfung der Argumente wird ein Modell daraus abgeleitet.
 
 ---
 
@@ -604,7 +634,7 @@ Das Kommando heißt `wg`. Auf dem Host `uv run wg …`, im Container `docker com
 | `wg migrate [--store S] [--revision R] [--check] [--sql] [--downgrade R]` | `--check` berichtet nur, `--sql` gibt das SQL aus (Trockenlauf), `--downgrade` löscht Tabellen samt Inhalt. |
 | `wg serve [--skip-migrations]` | Die HTTP-API. |
 | `wg worker [--once]` | Arbeitet Jobs ab. |
-| `wg mcp [--session ID]` | Der MCP-Server. |
+| `wg mcp [--session ID] [--transport http\|stdio] [--host H] [--port P]` | Der MCP-Server. Ohne Angabe HTTP auf 8800. |
 | `wg mock-sources [--host H] [--port P] [--fixtures DIR]` | Der Mock-Quellserver. |
 | `wg sources list [--json]` | Quellen mit Health und letztem Lauf. |
 | `wg sync [--source N \| --all] [--full] [--dry-run] [--json]` | Siehe 6.1. |

@@ -25,7 +25,7 @@ festgelegte Abnahme erfüllt.
 | 10 | Verwaiste-Knoten-Vernetzung | **fertig** |
 | 11 | HTTP-API und Web-UI | **fertig** |
 | 12 | MCP-Retrieval-Layer | **fertig** |
-| 13 | Anbindung der echten Quellen | offen |
+| 13 | Anbindung der echten Quellen | **fertig** |
 
 Stufe 14 (Föderation) ist im Dokument als Ausblick geführt und nicht Teil dieser Umsetzung.
 
@@ -519,7 +519,8 @@ Lauf — es soll keinen geben, auf dem er nach anderen Regeln liefe (Leitprinzip
   im Regelbetrieb Fehlalarme gibt, wird nicht mehr gelesen.
 - **`worker` und `mcp` haben im Compose keinen Healthcheck mehr.** Der des Images fragt `/healthz`
   auf Port 8080 ab, den es nur im `api`-Dienst gibt; ein einwandfrei arbeitender Worker stand
-  dauerhaft als `unhealthy` da.
+  dauerhaft als `unhealthy` da. (Für `mcp` gilt das seit dem Umstieg auf Streamable HTTP nicht
+  mehr — er hat einen eigenen, siehe den Nachtrag zu Stufe 12.)
 
 ### Eine neue Schutzregel
 
@@ -1255,13 +1256,9 @@ Schema, Aufruf —, und `mcp/server.py` bindet sie an den Transport. Zwei Folgen
 
 - Die Werkzeuge sind ohne Server prüfbar; die 27 Tests in `test_mcp_werkzeuge.py` brauchen weder
   Datenbank noch Protokoll.
-- Ein Wechsel der SDK-Version ist eine Änderung an einer Datei. Das war unmittelbar nützlich: Die
-  installierte Fassung des SDK hat eine andere Server-API als die verbreitete Dekorator-Form, und
-  angepasst werden musste nur die Bindung.
-
-Die Protokollrückrufe stehen dabei getrennt vom Server (`build_handlers` neben `build_server`).
-Dort liegt die Logik — dass ein `ToolError` zu `is_error` wird und ein Programmfehler nicht —, und
-sie soll prüfbar sein, ohne eine Sitzung aufzubauen.
+- Ein Wechsel der SDK-Version ist eine Änderung an einer Datei. Das hat sich zweimal ausgezahlt:
+  erst beim Wechsel auf die Server-API der installierten Fassung, dann beim Umstieg auf FastMCP
+  und Streamable HTTP (siehe unten) — angepasst werden musste jedes Mal nur die Bindung.
 
 ### Fehler sind Auskünfte, keine Störungen
 
@@ -1306,6 +1303,38 @@ eine Hop-Distanz.
 
 Schreibzugriff auf `shared` und eine Rechteverwaltung im Server, so vorgesehen in §24. Der
 `actor` unterscheidet Sitzungen, er berechtigt sie nicht.
+
+### Nachtrag: FastMCP und Streamable HTTP
+
+Der Server läuft jetzt auf `MCPServer` aus dem SDK `mcp` 2.x — das ist FastMCP, die Klasse trägt
+seit dem Hauptversionswechsel diesen Namen. Vorgabe-Transport ist **Streamable HTTP** auf Port
+8800 unter `/mcp`; der Container gibt ihn nach außen frei. `stdio` bleibt daneben bestehen
+(`wg mcp --transport stdio`) für einen Agenten, der den Server als Unterprozess startet.
+
+Drei Entscheidungen dabei:
+
+- **Der Endpunkt kennt keine Authentifizierung** — ausdrücklich so gewollt. Damit liegt die
+  Absicherung vollständig im Netz. `WG_MCP_HOST_BIND` bestimmt, an welche Hostadresse der Port
+  gebunden wird; auf einem im Netz erreichbaren Rechner gehört dort `127.0.0.1` hin. Der geteilte
+  Store bleibt unabhängig davon unbeschreibbar — das ist eine Eigenschaft der Verbindung, nicht
+  des Endpunkts. Beim Start an einer anderen Adresse als Loopback wird gewarnt.
+- **Die Eingabeschemata bleiben Daten.** FastMCP leitet ein Schema sonst aus der Funktions-
+  signatur ab. Hier wird `ToolSpec.input_schema` aus §18.1 unverändert veröffentlicht und für die
+  Prüfung der Argumente ein Pydantic-Modell daraus abgeleitet — eine Richtung, nicht zwei Quellen.
+  Der Preis: `Tool` wird von Hand gebaut statt über `Tool.from_function`, und dabei wird eine
+  API des SDK benutzt, die die Doku nicht als Weg beschreibt. Abgesichert ist das durch einen
+  Test, der das veröffentlichte Schema Wort für Wort mit dem aus §18.1 vergleicht; ein SDK-Wechsel,
+  der die Stelle verschiebt, fällt damit sofort auf.
+- **Der HTTP-Transport ist geprüft, stdio nicht.** `streamable_http_app()` liefert eine gewöhnliche
+  Starlette-Anwendung; die Tests fahren mit dem **echten** MCP-Client über eine ASGI-Anbindung
+  dagegen — Handshake, Sitzung, `tools/list`, `tools/call`, ohne Port. Der Lebenszyklus muss dabei
+  von Hand laufen, sonst steht die Sitzungsverwaltung nicht; im Container erledigt das uvicorn.
+  Bei stdio bleibt es beim alten Grund: Dort werden zwei Ströme verbunden, geprüft wird, was
+  darin fließt.
+
+Der `mcp`-Container hat damit wieder einen Healthcheck. Er prüft, dass der Port steht, und nicht
+mehr: Ein MCP-Aufruf verlangt eine ausgehandelte Sitzung, und die bei jedem Durchlauf zu eröffnen
+hieße, im Minutentakt Agentensitzungen zu beginnen.
 
 ---
 

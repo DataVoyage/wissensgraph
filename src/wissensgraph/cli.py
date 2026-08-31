@@ -1047,20 +1047,60 @@ def mcp(
             help="Kennung der Agenten-Sitzung; steht als 'agent:<session>' im Journal (§18.3).",
         ),
     ] = defaults.MCP_DEFAULT_SESSION,
+    transport: Annotated[
+        str | None,
+        typer.Option(
+            "--transport",
+            help="'http' (Vorgabe aus der Konfiguration) oder 'stdio'.",
+        ),
+    ] = None,
+    host: Annotated[str | None, typer.Option("--host", help="Bind-Adresse bei HTTP.")] = None,
+    port: Annotated[int | None, typer.Option("--port", help="Port bei HTTP.")] = None,
 ) -> None:
     """Startet den MCP-Server — der Startbefehl des mcp-Containers (§5.1, §18).
 
-    Der Transport ist stdio: Der Agent startet den Prozess und spricht über seine Ströme mit ihm.
+    Zwei Transporte, dieselben Werkzeuge: ``http`` öffnet einen Port, unter dem ein Agent den
+    Server auch dann erreicht, wenn er ihn nicht selbst gestartet hat; ``stdio`` bleibt für den
+    Fall, dass er als Unterprozess eingebunden wird. Der Server kennt **keine**
+    Authentifizierung — wer ihn weiter als an Loopback bindet, stellt ihn in ein Netz, das
+    selbst abgesichert sein muss (§20.3).
+
     Auf dem geteilten Store hält der Server ausschließlich eine nur lesende Verbindung; ein
     Schreibversuch dorthin scheitert in der Datenbank und nicht erst an einer Prüfung (§18.3).
     """
     import asyncio
 
-    from wissensgraph.mcp.server import serve_stdio
+    from wissensgraph.mcp.server import serve_http, serve_stdio
 
     settings = _load(config_file, service="mcp", dotenv_file=dotenv_file)
+    gewaehlt = transport or settings.mcp.transport
+    if gewaehlt not in ("http", "stdio"):
+        typer.echo(
+            f"Unbekannter Transport '{gewaehlt}'; erlaubt sind 'http' und 'stdio'.", err=True
+        )
+        raise typer.Exit(code=2)
+    if host is not None or port is not None:
+        settings = settings.model_copy(
+            update={
+                "mcp": settings.mcp.model_copy(
+                    update={
+                        "host": host if host is not None else settings.mcp.host,
+                        "port": port if port is not None else settings.mcp.port,
+                    }
+                )
+            }
+        )
+
     try:
-        asyncio.run(serve_stdio(settings, session=session))
+        if gewaehlt == "stdio":
+            asyncio.run(serve_stdio(settings, session=session))
+        else:
+            typer.echo(
+                f"MCP-Server auf http://{settings.mcp.host}:{settings.mcp.port}"
+                f"{settings.mcp.path} (ohne Authentifizierung).",
+                err=True,
+            )
+            asyncio.run(serve_http(settings, session=session))
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc

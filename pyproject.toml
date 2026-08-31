@@ -24,7 +24,10 @@ dependencies = [
     "langchain-core>=0.3",
     "langchain-google-genai>=2.0",
     "langchain-openai>=0.2",
-    "mcp>=1.2",
+    # Mindestens 2.1: Der Server baut auf 'mcp.server.mcpserver.MCPServer' — das ist FastMCP,
+    # das im SDK 2.x so heißt. Unter 2.0 gibt es die Klasse nicht, und der Import scheiterte
+    # erst beim Start des Containers.
+    "mcp>=2.1",
 ]
 
 [project.scripts]

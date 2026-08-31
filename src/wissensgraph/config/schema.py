@@ -331,10 +331,21 @@ class ApiConfig(FrozenModel):
 
 
 class McpConfig(FrozenModel):
-    """Transport und Antwortdeckel des MCP-Servers (§18)."""
+    """Transport, Adresse und Antwortdeckel des MCP-Servers (§18).
+
+    Anders als bei :class:`ApiConfig` gibt es hier keine Prüfung auf Loopback: Der MCP-Server
+    kennt keine Authentifizierung, und der Betrieb im Container verlangt eine Bindung an
+    0.0.0.0. Die Absicherung liegt deshalb im Netz und nicht in dieser Klasse — beim Start wird
+    gewarnt, wenn er weiter als Loopback gebunden wird.
+    """
 
     transport: Literal["stdio", "http"] = defaults.MCP_TRANSPORT
+    host: str = defaults.MCP_HOST
     port: int = Field(default=defaults.MCP_PORT, ge=1, le=65535)
+    path: str = Field(
+        default=defaults.MCP_HTTP_PATH,
+        description="Pfad des HTTP-Transports; muss mit '/' beginnen.",
+    )
     max_response_tokens: int = Field(
         default=defaults.MCP_MAX_RESPONSE_TOKENS,
         ge=100,
@@ -344,6 +355,13 @@ class McpConfig(FrozenModel):
             "weil der Agent dann nicht wüsste, dass er nur einen Teil gesehen hat."
         ),
     )
+
+    @field_validator("path")
+    @classmethod
+    def _check_path(cls, value: str) -> str:
+        if not value.startswith("/"):
+            raise ValueError(f"Der MCP-Pfad muss mit '/' beginnen, nicht '{value}'.")
+        return value
 
 
 class LoggingConfig(FrozenModel):

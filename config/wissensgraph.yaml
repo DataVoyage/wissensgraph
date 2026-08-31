@@ -120,8 +120,13 @@ api:
     - ${WG_API_CORS_ORIGINS:-http://localhost:5173}
 
 mcp:
-  transport: ${WG_MCP_TRANSPORT:-stdio}
-  port: ${WG_MCP_PORT:-8081}
+  # 'http' öffnet einen Streamable-HTTP-Endpunkt, 'stdio' bindet den Server als Unterprozess ein.
+  transport: ${WG_MCP_TRANSPORT:-http}
+  # Loopback als Vorgabe: Der Endpunkt kennt keine Authentifizierung. Im Container steht 0.0.0.0,
+  # weil eine Bindung an Loopback dort nicht nach außen reicht (§20.3).
+  host: ${WG_MCP_HOST:-127.0.0.1}
+  port: ${WG_MCP_PORT:-8800}
+  path: ${WG_MCP_PATH:-/mcp}
 
 logging:
   level: ${WG_LOG_LEVEL:-INFO}

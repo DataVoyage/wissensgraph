@@ -219,16 +219,45 @@ services:
   mcp:
     <<: *app-image
     profiles: [dev, live]
-    # Der MCP-Server spricht über stdio (§18): Er hat keinen Port und keinen Healthcheck. Der
-    # Container hält den Prozess bereit; ein Agent bindet ihn über 'docker compose exec' ein.
+    # Der MCP-Server spricht Streamable HTTP (§18) und ist unter http://<host>:8800/mcp
+    # erreichbar. Ein Agent bindet ihn als URL ein; er muss den Prozess nicht selbst starten.
+    #
+    # Der Endpunkt kennt KEINE Authentifizierung, und er schreibt in den persönlichen Store.
+    # Die Absicherung liegt damit vollständig im Netz: Die Portfreigabe unten gilt für den
+    # Rechner, auf dem der Stack läuft. Wer den Stack auf einem erreichbaren Host betreibt,
+    # bindet sie an die Loopback-Adresse (WG_MCP_HOST_BIND=127.0.0.1) oder stellt einen
+    # absichernden Reverse-Proxy davor (§20.3).
     command: ["wg", "mcp"]
-    stdin_open: true
-    tty: false
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      # 0.0.0.0 im Container: Eine Bindung an 127.0.0.1 wäre nur im Container erreichbar und die
+      # Portfreigabe damit wirkungslos. Nach außen entscheidet die Adresse in 'ports'.
+      WG_MCP_TRANSPORT: http
+      WG_MCP_HOST: 0.0.0.0
+      WG_MCP_PORT: "8800"
+      WG_MCP_PATH: ${WG_MCP_PATH:-/mcp}
     volumes: *app-volumes
-    networks: [wg-personal, wg-shared]
+    ports:
+      - "${WG_MCP_HOST_BIND:-0.0.0.0}:${WG_MCP_HOST_PORT:-8800}:8800"
+    # Zusätzlich zu beiden Datenbanknetzen liegt er im Randnetz — dort kommt der Verkehr vom
+    # Host an, genau wie bei der API.
+    networks: [wg-personal, wg-shared, wg-edge]
+    # Der Healthcheck des Images fragt /healthz auf 8080 ab; die gibt es hier nicht. Geprüft
+    # wird stattdessen, dass der Port steht — mehr sagt ein Lebenszeichen ohnehin nicht aus:
+    # Ein MCP-Aufruf verlangt eine ausgehandelte Sitzung, und die im Healthcheck aufzubauen
+    # hieße, bei jedem Durchlauf eine Agentensitzung zu eröffnen.
     healthcheck:
-      disable: true
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; socket.create_connection(('127.0.0.1', 8800), 3).close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       api:
         condition: service_healthy

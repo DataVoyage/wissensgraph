@@ -90,7 +90,9 @@ ENV_BINDINGS: tuple[EnvBinding, ...] = (
         "kommaseparierte Liste erlaubter Ursprünge",
     ),
     EnvBinding("WG_MCP_TRANSPORT", ("mcp", "transport"), to_str, "stdio | http"),
+    EnvBinding("WG_MCP_HOST", ("mcp", "host"), to_str, "Bind-Adresse bei HTTP-Transport"),
     EnvBinding("WG_MCP_PORT", ("mcp", "port"), to_int, "Port bei HTTP-Transport"),
+    EnvBinding("WG_MCP_PATH", ("mcp", "path"), to_str, "Pfad des HTTP-Transports"),
     EnvBinding("WG_BROKER_URL", ("broker_url",), to_str, "Redis-URL für die Job-Queue"),
     EnvBinding(
         "WG_PERSONAL_ALLOW_REMOTE_MODELS",

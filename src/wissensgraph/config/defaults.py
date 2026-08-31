@@ -278,8 +278,19 @@ API_LOOPBACK_HOSTS: Final = ("127.0.0.1", "::1", "localhost")
 # MCP-Server (§18)
 # ---------------------------------------------------------------------------
 
-MCP_TRANSPORT: Final = "stdio"
-MCP_PORT: Final = 8081
+#: Der Transport, mit dem ``wg mcp`` ohne Angabe startet. HTTP ist die Vorgabe, weil der Server
+#: als Container läuft: Ein Agent erreicht ihn dann über einen Port, ohne den Prozess selbst
+#: starten zu müssen. ``stdio`` bleibt für den Fall, dass er als Unterprozess eingebunden wird.
+MCP_TRANSPORT: Final = "http"
+
+#: Bind-Adresse. Loopback als Vorgabe, weil der Server keine Authentifizierung kennt: Wer ihn
+#: weiter öffnet, tut das ausdrücklich — im Compose steht dafür 0.0.0.0 (§20.3).
+MCP_HOST: Final = "127.0.0.1"
+MCP_PORT: Final = 8800
+
+#: Der Pfad, unter dem der Streamable-HTTP-Transport antwortet. ``/mcp`` ist die Vorgabe des SDK
+#: und die Adresse, die ein Agent ohne weitere Angabe erwartet.
+MCP_HTTP_PATH: Final = "/mcp"
 
 #: Obergrenze einer MCP-Antwort in Token (§18.3). Der Wert ist eine Schätzung über die Zeichenzahl
 #: und keine Zählung mit dem Tokenizer des Modells: Der Server weiß nicht, welches Modell ihn
