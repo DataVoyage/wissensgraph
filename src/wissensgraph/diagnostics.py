@@ -11,7 +11,8 @@ sie. So ist dieselbe Prüfung später auch über die API abrufbar, ohne dass Tex
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -23,7 +24,13 @@ from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigError
 from wissensgraph.config.masking import mask_dsn
 from wissensgraph.config.models import ModelsConfig, load_models
-from wissensgraph.config.network import is_local_dsn
+from wissensgraph.config.network import (
+    bypasses_proxy,
+    extract_host,
+    is_local_dsn,
+    no_proxy_entries,
+    proxy_configured,
+)
 from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import load_sources
 from wissensgraph.infrastructure.adapters import AdapterRegistry
@@ -650,6 +657,100 @@ def check_agent_readonly(registry: StoreRegistry) -> CheckResult:
     )
 
 
+def check_proxy(
+    settings: Settings, env: Mapping[str, str] | None = None, models_path: Path | None = None
+) -> tuple[CheckResult, ...]:
+    """Prüft, ob ein gesetzter Proxy den internen Verkehr abschneidet (§5.2).
+
+    Im Unternehmensnetz erreichen Container das Internet nur über einen Proxy, und der steht als
+    ``HTTP_PROXY`` in der Umgebung. Jede Bibliothek, die ihre Umgebung liest — httpx tut das —,
+    schickt dann **auch** den Aufruf an den Nachbarcontainer dorthin. Der Proxy kennt
+    ``mock-sources`` nicht und antwortet mit einem Fehler, der wie ein Ausfall des Nachbarn
+    aussieht. Genau deshalb ist diese Prüfung nötig: Am Symptom ist die Ursache nicht zu erkennen.
+
+    Geprüft werden die Hosts, mit denen dieser Prozess **wirklich** spricht — aus den DSNs, dem
+    Broker und den Quellen abgeleitet und nicht aus einer gepflegten Liste. Eine Liste veraltet,
+    sobald jemand einen Dienst ergänzt.
+
+    Der lokale Modellanbieter ist ein **Fehler** und keine Warnung: Ginge sein Verkehr über den
+    Proxy, verließen persönliche Inhalte den Rechner. Das ist Leitprinzip 2, und ein Anbieter, der
+    sich ``local: true`` nennt, wäre es dann nicht mehr.
+    """
+    umgebung = dict(env if env is not None else os.environ)
+    proxy = proxy_configured(umgebung)
+    if proxy is None:
+        return (
+            CheckResult(
+                name="proxy",
+                status=CheckStatus.OK,
+                detail="Kein Proxy gesetzt; der interne Verkehr läuft direkt.",
+            ),
+        )
+
+    ausnahmen = no_proxy_entries(umgebung)
+    intern = _interne_hosts(settings, models_path)
+    context: dict[str, object] = {
+        "proxy": mask_dsn(proxy),
+        "no_proxy": list(ausnahmen),
+        "interne_hosts": sorted(intern),
+    }
+
+    fehlend = sorted(host for host in intern if not bypasses_proxy(host, ausnahmen))
+    if not fehlend:
+        return (
+            CheckResult(
+                name="proxy",
+                status=CheckStatus.OK,
+                detail=(f"Proxy gesetzt; alle {len(intern)} internen Host(s) stehen in NO_PROXY."),
+                context=context,
+            ),
+        )
+
+    return (
+        CheckResult(
+            name="proxy",
+            status=CheckStatus.FAIL,
+            detail=(
+                f"Ein Proxy ist gesetzt, aber {', '.join(fehlend)} fehlt/fehlen in NO_PROXY. "
+                "Aufrufe an diese Hosts gehen an den Proxy, der die internen Namen nicht auflösen "
+                "kann — der Fehler sieht dann wie ein Ausfall des Nachbarn aus. In NO_PROXY "
+                f"aufnehmen: {','.join(fehlend)}"
+            ),
+            context=context,
+        ),
+    )
+
+
+def _interne_hosts(settings: Settings, models_path: Path | None) -> set[str]:
+    """Die Hosts, die dieser Prozess ohne Proxy erreichen können muss.
+
+    Abgeleitet und nicht aufgezählt: Stores, Broker, Quellen und jeder als lokal deklarierte
+    Modellanbieter. Wer einen Dienst ergänzt, ergänzt damit auch diese Prüfung.
+    """
+    hosts: set[str] = set()
+    for store in settings.stores.values():
+        for dsn in (store.dsn, store.readonly_dsn):
+            if dsn and (host := extract_host(dsn)):
+                hosts.add(host)
+    if settings.broker_url and (host := extract_host(settings.broker_url)):
+        hosts.add(host)
+
+    try:
+        for quelle in load_sources(settings).sources:
+            if quelle.connection.base_url and (host := extract_host(quelle.connection.base_url)):
+                hosts.add(host)
+    except ConfigError:  # pragma: no cover — von check_sources bereits gemeldet
+        pass
+
+    try:
+        for provider in load_models(settings, path=models_path).providers.values():
+            if provider.local and provider.base_url and (host := extract_host(provider.base_url)):
+                hosts.add(host)
+    except ConfigError:  # pragma: no cover — von check_models bereits gemeldet
+        pass
+    return hosts
+
+
 def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsReport:
     """Führt alle Prüfungen aus und fasst sie zu einem Bericht zusammen."""
     settings_checks: tuple[Callable[[Settings], CheckResult], ...] = (
@@ -665,5 +766,6 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     results.extend(check_models(settings))
     results.extend(check_sources(settings))
     results.append(check_agent_readonly(registry))
+    results.extend(check_proxy(settings))
     results.append(check_broker(settings))
     return DiagnosticsReport(results=tuple(results))

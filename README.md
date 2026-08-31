@@ -32,7 +32,7 @@ spricht wie Confluence und Jira.
 11. [Tokenverbrauch im Griff behalten](#11-tokenverbrauch-im-griff-behalten)
 12. [Entwicklung und Tests](#12-entwicklung-und-tests)
 13. [Fehlersuche](#13-fehlersuche)
-14. [Eigene Registry und eigener Paketindex](#14-eigene-registry-und-eigener-paketindex)
+14. [Eigene Registry, eigener Paketindex, Proxy](#14-eigene-registry-eigener-paketindex-proxy)
 15. [Umstieg auf die echten Quellen](#15-umstieg-auf-die-echten-quellen)
 16. [Sicherheitshinweise](#16-sicherheitshinweise)
 
@@ -170,6 +170,7 @@ erreichbar sind. Geprüft werden unter anderem:
 | `quelle:*` | Jede aktivierte Quelle antwortet. |
 | `store_trennung` | Kein Store enthält Konzepte eines fremden Scopes. |
 | `agent_readonly` | Der MCP-Zugang auf `shared` schreibt nachweislich nicht (Guard 5, §20.1). |
+| `proxy` | Ein gesetzter Proxy schneidet den internen Verkehr nicht ab (§5.2, siehe 14). |
 | `broker` | Redis erreichbar. |
 
 `wg doctor` schreibt nichts und ist damit jederzeit gefahrlos.
@@ -733,7 +734,7 @@ docker compose exec db-shared psql -U wg -d wg_shared -c '\dt'
 
 ---
 
-## 14. Eigene Registry und eigener Paketindex
+## 14. Eigene Registry, eigener Paketindex, Proxy
 
 In einer abgeschlossenen Umgebung gibt es keinen Weg zu Docker Hub, ghcr.io, PyPI oder npm. Alle
 vier Herkünfte sind deshalb umschaltbar — und **alle Vorgaben bleiben die öffentlichen**, damit
@@ -792,6 +793,39 @@ aussieht.
 > kein Mangel von uv, sondern der Preis der Reproduzierbarkeit: Eine Sperrdatei, die ihre Herkunft
 > offenließe, sperrte nichts. Für npm gilt dasselbe — `package-lock.json` hält ebenfalls absolute
 > Adressen fest und muss gegen den eigenen Spiegel erzeugt werden.
+
+### Proxy — und warum `NO_PROXY` hier nicht Ihre Aufgabe ist
+
+```dotenv
+HTTP_PROXY=http://proxy.firma.de:3128
+HTTPS_PROXY=http://proxy.firma.de:3128
+WG_NO_PROXY=.firma.de
+```
+
+Der Proxy gilt für alle Dienste. **`NO_PROXY` setzen Sie nicht selbst** — die internen Namen
+stehen fest in `docker-compose.yml`, und `WG_NO_PROXY` kommt *hinzu*, statt sie zu ersetzen.
+
+Der Grund ist der Fehler, den man sonst bekommt und den man nicht wiedererkennt: Jede Bibliothek,
+die ihre Umgebung liest — httpx tut das —, schickt bei gesetztem `HTTP_PROXY` **auch** den Aufruf
+an den Nachbarcontainer dorthin. Der Proxy kennt `mock-sources` nicht, kann den Namen nicht
+auflösen und antwortet mit einem Fehler, der wie ein Ausfall von `mock-sources` aussieht. Wer ihn
+zum ersten Mal sieht, sucht beim Nachbarn.
+
+`host.docker.internal` steht ebenfalls fest darin, und das ist keine Bequemlichkeit: Dort läuft
+der lokale Modellserver. Ginge sein Verkehr über den Proxy, verließen **persönliche Inhalte den
+Rechner** — ein Anbieter mit `local: true` wäre dann keiner mehr (Leitprinzip 2).
+
+Weil ein Proxy auch von außerhalb von Compose gesetzt werden kann — über einen Orchestrator etwa
+—, prüft `wg doctor` zusätzlich die *tatsächliche* Umgebung. Er leitet die betroffenen Hosts aus
+den DSNs, dem Broker, den Quellen und den lokalen Modellanbietern ab und nennt die fehlenden
+zum Einsetzen:
+
+```
+[fail] proxy: Ein Proxy ist gesetzt, aber broker, mock-sources fehlt/fehlen in NO_PROXY.
+              Aufrufe an diese Hosts gehen an den Proxy, der die internen Namen nicht auflösen
+              kann — der Fehler sieht dann wie ein Ausfall des Nachbarn aus.
+              In NO_PROXY aufnehmen: broker,mock-sources
+```
 
 ### Zugangsdaten
 

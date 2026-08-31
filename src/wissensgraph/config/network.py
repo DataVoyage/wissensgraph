@@ -56,3 +56,67 @@ def is_local_host(host: str | None) -> bool:
 def is_local_dsn(dsn: str) -> bool:
     """Sagt, ob ein DSN auf einen lokalen Host zeigt."""
     return is_local_host(extract_host(dsn))
+
+
+# ---------------------------------------------------------------------------
+# Proxy (§5.2, §20.3)
+# ---------------------------------------------------------------------------
+#
+# In vielen Unternehmensnetzen erreichen Container das Internet nur über einen Proxy, und der
+# wird als ``HTTP_PROXY``/``HTTPS_PROXY`` in die Umgebung gesetzt. Jede Bibliothek, die ihre
+# Umgebung liest — httpx tut das —, schickt dann **auch** die Aufrufe an den Nachbarcontainer
+# dorthin. Der Proxy kennt ``mock-sources`` nicht, kann den Namen nicht auflösen und antwortet mit
+# einem Fehler, der wie ein Ausfall des Nachbarn aussieht.
+#
+# Die Abhilfe ist ``NO_PROXY``. Sie ist nur deshalb heikel, weil sie *vollständig* sein muss: Ein
+# vergessener Name fällt erst auf, wenn genau dieser Dienst angesprochen wird.
+
+#: Groß- und Kleinschreibung: Beide Varianten sind im Umlauf, und welche eine Bibliothek liest,
+#: ist nicht einheitlich. Wer nur eine setzt, hat es in der Hälfte der Fälle richtig gemacht.
+PROXY_ENV_VARS: tuple[str, ...] = (
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+)
+NO_PROXY_ENV_VARS: tuple[str, ...] = ("NO_PROXY", "no_proxy")
+
+
+def proxy_configured(env: dict[str, str]) -> str | None:
+    """Der erste gesetzte Proxy aus der Umgebung, sonst ``None``."""
+    for name in PROXY_ENV_VARS:
+        wert = env.get(name, "").strip()
+        if wert:
+            return wert
+    return None
+
+
+def no_proxy_entries(env: dict[str, str]) -> tuple[str, ...]:
+    """Die Einträge aus ``NO_PROXY``/``no_proxy``, zusammengeführt und normalisiert."""
+    roh: list[str] = []
+    for name in NO_PROXY_ENV_VARS:
+        roh.extend(env.get(name, "").split(","))
+    return tuple(sorted({eintrag.strip().lower() for eintrag in roh if eintrag.strip()}))
+
+
+def bypasses_proxy(host: str | None, entries: tuple[str, ...]) -> bool:
+    """Sagt, ob ein Host am Proxy vorbeigeht.
+
+    Die Regel bildet nach, was die verbreiteten Bibliotheken tun: ``*`` hebt den Proxy ganz auf,
+    ein Eintrag trifft den Host genau oder als Suffix hinter einem Punkt. Ein führender Punkt am
+    Eintrag ist dabei gleichbedeutend — ``.firma.de`` und ``firma.de`` treffen beide
+    ``api.firma.de``.
+
+    Bewusst ohne Portangaben und CIDR-Bereiche: Beides ist nicht einheitlich unterstützt, und
+    eine Prüfung, die mehr verspricht als die Bibliotheken einlösen, wäre irreführend.
+    """
+    if not host:
+        return True
+    if "*" in entries:
+        return True
+    gesucht = host.lower()
+    for eintrag in entries:
+        kandidat = eintrag.lstrip(".")
+        if gesucht == kandidat or gesucht.endswith(f".{kandidat}"):
+            return True
+    return False

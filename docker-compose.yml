@@ -54,7 +54,32 @@ x-app-image: &app-image
     args: *build-args
   image: ${WG_IMAGE_PREFIX:-}wissensgraph-app:${WG_IMAGE_TAG:-local}
 
+# Proxy im Unternehmensnetz (§5.2).
+#
+# Erreicht ein Container das Internet nur über einen Proxy, steht der als HTTP_PROXY in der
+# Umgebung — und jede Bibliothek, die ihre Umgebung liest, schickt dann **auch** den Aufruf an den
+# Nachbarcontainer dorthin. Der Proxy kennt 'mock-sources' nicht, kann den Namen nicht auflösen
+# und antwortet mit einem Fehler, der wie ein Ausfall des Nachbarn aussieht.
+#
+# Deshalb stehen die internen Namen fest in NO_PROXY und werden nicht dem Betreiber überlassen:
+# Ein vergessener Name fällt erst auf, wenn genau dieser Dienst angesprochen wird. Wer eigene
+# Ausnahmen braucht, setzt WG_NO_PROXY — sie kommen HINZU und ersetzen nichts.
+#
+# 'host.docker.internal' steht bewusst dabei: Dort läuft der lokale Modellserver. Ginge sein
+# Verkehr über den Proxy, verließen persönliche Inhalte den Rechner, und ein Anbieter mit
+# 'local: true' wäre keiner mehr (Leitprinzip 2, §11.5).
+#
+# Klein- und Großschreibung beide, weil nicht einheitlich ist, welche eine Bibliothek liest.
+x-proxy: &proxy
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  http_proxy: ${HTTP_PROXY:-}
+  https_proxy: ${HTTPS_PROXY:-}
+  NO_PROXY: &no-proxy db-shared,db-personal,broker,mock-sources,api,worker,mcp,ui,host.docker.internal,localhost,127.0.0.1,::1${WG_NO_PROXY:+,${WG_NO_PROXY}}
+  no_proxy: *no-proxy
+
 x-app-environment: &app-environment
+  <<: *proxy
   WG_ENV: ${WG_ENV:-dev}
   WG_CONFIG_DIR: /app/config
   WG_LOG_LEVEL: ${WG_LOG_LEVEL:-INFO}
