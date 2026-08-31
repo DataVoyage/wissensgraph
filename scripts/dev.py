@@ -96,6 +96,26 @@ def cmd_client(_args: argparse.Namespace) -> int:
     return run(["uv", "run", "python", "scripts/generate_client.py"])
 
 
+def cmd_lock(args: argparse.Namespace) -> int:
+    """Erzeugt ``uv.lock`` neu — der Umstieg auf einen eigenen Paketindex (§5.3).
+
+    Warum es dafür einen eigenen Befehl gibt: ``UV_DEFAULT_INDEX`` steuert die *Auflösung*, nicht
+    die *Installation*. In ``uv.lock`` stehen absolute Adressen der Artefakte; ``uv sync
+    --frozen`` lädt von genau dort und ignoriert jeden anders gesetzten Index. Wer hinter einer
+    Firewall baut, muss die Sperrdatei deshalb einmal gegen den eigenen Index erzeugen — danach
+    steht er darin, und der Bau kommt ohne Zugang zum öffentlichen Netz aus.
+
+    Das ist kein Mangel von uv, sondern der Preis der Reproduzierbarkeit: Eine Sperrdatei, die
+    ihre Herkunft offenließe, sperrte nichts.
+    """
+    ziel = args.index or "den Index aus UV_DEFAULT_INDEX, sonst PyPI"
+    print(f"Erzeuge uv.lock gegen {ziel}.")
+    befehl = ["uv", "lock"]
+    if args.index:
+        befehl += ["--default-index", args.index]
+    return run(befehl)
+
+
 def cmd_lint(_args: argparse.Namespace) -> int:
     """Prüft Formatierung, Lint-Regeln, Typen und die Schichtentrennung aus §4.2."""
     return run_all(
@@ -186,6 +206,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("client", help="TypeScript-Client neu erzeugen.").set_defaults(
         func=cmd_client
     )
+    lock_parser = subparsers.add_parser(
+        "lock", help="uv.lock neu erzeugen, optional gegen einen eigenen Index."
+    )
+    lock_parser.add_argument(
+        "--index",
+        default=None,
+        help="Basis-URL des Paketindex, z. B. https://artifactory.firma.de/api/pypi/pypi/simple",
+    )
+    lock_parser.set_defaults(func=cmd_lock)
+
     subparsers.add_parser("lint", help=cmd_lint.__doc__).set_defaults(func=cmd_lint)
     subparsers.add_parser("format", help=cmd_format.__doc__).set_defaults(func=cmd_format)
     subparsers.add_parser("check", help=cmd_check.__doc__).set_defaults(func=cmd_check)

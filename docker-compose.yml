@@ -29,11 +29,30 @@ volumes:
 # ---------------------------------------------------------------------------
 # Wiederverwendbare Bausteine
 # ---------------------------------------------------------------------------
+# Herkunft der Images (§5.3).
+#
+# 'WG_DOCKER_REGISTRY' wird jedem Image von Docker Hub vorangestellt und endet auf '/', etwa
+# 'artifactory.firma.de/docker-remote/'. Ohne Wert bleibt der Name unverändert und Docker zieht
+# von Docker Hub — die Vorgabe ist die, die ohne Einrichtung funktioniert.
+#
+# 'WG_IMAGE_PREFIX' und 'WG_IMAGE_TAG' betreffen die *eigenen* Images. Sie stehen getrennt, weil
+# es zwei verschiedene Richtungen sind: Das eine ist, woher fremde Images kommen, das andere,
+# wohin die selbst gebauten gehören. In einer abgeschlossenen Umgebung sind beide gesetzt, in der
+# Entwicklung keines von beiden.
+x-build-args: &build-args
+  WG_DOCKER_REGISTRY: ${WG_DOCKER_REGISTRY:-}
+  WG_UV_IMAGE: ${WG_UV_IMAGE:-ghcr.io/astral-sh/uv:0.9.21}
+  UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}
+  UV_INDEX: ${UV_INDEX:-}
+  UV_NATIVE_TLS: ${UV_NATIVE_TLS:-false}
+  NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-}
+
 x-app-image: &app-image
   build:
     context: .
     dockerfile: docker/api.Dockerfile
-  image: wissensgraph-app:local
+    args: *build-args
+  image: ${WG_IMAGE_PREFIX:-}wissensgraph-app:${WG_IMAGE_TAG:-local}
 
 x-app-environment: &app-environment
   WG_ENV: ${WG_ENV:-dev}
@@ -84,7 +103,7 @@ services:
   # shared-Stores auf einen zentralen Server zu einer reinen Konfigurationsänderung.
   # -------------------------------------------------------------------------
   db-shared:
-    image: pgvector/pgvector:pg16
+    image: ${WG_DOCKER_REGISTRY:-}pgvector/pgvector:pg16
     profiles: [dev, live, minimal, test]
     environment:
       POSTGRES_USER: ${WG_POSTGRES_USER:-wg}
@@ -105,7 +124,7 @@ services:
       retries: 10
 
   db-personal:
-    image: pgvector/pgvector:pg16
+    image: ${WG_DOCKER_REGISTRY:-}pgvector/pgvector:pg16
     profiles: [dev, live, minimal, test]
     environment:
       POSTGRES_USER: ${WG_POSTGRES_USER:-wg}
@@ -125,7 +144,7 @@ services:
       retries: 10
 
   broker:
-    image: redis:7-alpine
+    image: ${WG_DOCKER_REGISTRY:-}redis:7-alpine
     profiles: [dev, live]
     networks: [wg-shared]
     healthcheck:
@@ -230,7 +249,8 @@ services:
     build:
       context: .
       dockerfile: docker/ui.Dockerfile
-    image: wissensgraph-ui:local
+      args: *build-args
+    image: ${WG_IMAGE_PREFIX:-}wissensgraph-ui:${WG_IMAGE_TAG:-local}
     profiles: [dev, live, minimal]
     environment:
       WG_UI_API_BASE_URL: ${WG_UI_API_BASE_URL:-http://localhost:8080}

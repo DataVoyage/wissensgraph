@@ -3,12 +3,29 @@
 # Alle vier Dienste laufen aus demselben Image und unterscheiden sich nur im Startbefehl. Das
 # hält die Abhängigkeiten identisch — ein Unterschied zwischen dem, was die API sieht, und dem,
 # was der Worker sieht, kann so gar nicht erst entstehen.
+#
+# **Herkunft der Basis-Images und der Pakete ist eine Bauzeit-Entscheidung.** In einer Umgebung
+# ohne freien Internetzugang zeigen 'WG_DOCKER_REGISTRY' und 'UV_DEFAULT_INDEX' auf die eigene
+# Registry und den eigenen Paketindex (Artifactory, Nexus). Ohne Angabe gilt jeweils die
+# öffentliche Quelle — die Vorgabe bleibt damit die, die ohne Einrichtung funktioniert.
 
-FROM python:3.12-slim-bookworm AS base
+# Globale Argumente: Sie gelten vor dem ersten FROM und müssen in jeder Stufe, die sie benutzt,
+# erneut deklariert werden. Das ist eine Eigenheit von Docker und kein Versehen.
+ARG WG_DOCKER_REGISTRY=
+ARG WG_UV_IMAGE=ghcr.io/astral-sh/uv:0.9.21
 
 # uv aus dem offiziellen Image kopieren statt per Skript installieren: reproduzierbar und ohne
-# Netzwerkzugriff beim Bauen der Anwendungsschicht.
-COPY --from=ghcr.io/astral-sh/uv:0.9.21 /uv /uvx /usr/local/bin/
+# Netzwerkzugriff beim Bauen der Anwendungsschicht. Als eigene Stufe und nicht als 'COPY --from'
+# mit Variable, weil eine benannte Stufe in jeder Docker-Version gleich aufgelöst wird.
+#
+# Eigener Schalter, weil dieses Image nicht auf Docker Hub liegt: In einem Artifactory sind
+# 'docker.io' und 'ghcr.io' zwei getrennte Remote-Repositories, ein gemeinsames Präfix träfe
+# also nur eines von beiden.
+FROM ${WG_UV_IMAGE} AS uv
+
+FROM ${WG_DOCKER_REGISTRY}python:3.12-slim-bookworm AS base
+
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -20,16 +37,52 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # ---------------------------------------------------------------------------
+# Paketquelle (§5.3)
+# ---------------------------------------------------------------------------
+# 'UV_DEFAULT_INDEX' ersetzt PyPI, 'UV_INDEX' stellt weitere Indizes daneben. Beide sind
+# uv-eigene Variablen — es gibt hier keinen Übersetzungsschritt, der bei einem uv-Update
+# nachgezogen werden müsste.
+#
+# ACHTUNG, und das ist nachgemessen und nicht vermutet: Diese Variablen steuern die *Auflösung*,
+# nicht die *Installation*. 'uv sync --frozen' lädt von den absoluten Adressen, die in uv.lock
+# stehen — bei der mitgelieferten Sperrdatei also von files.pythonhosted.org, ganz gleich, was
+# hier gesetzt ist. Wer wirklich nur den eigenen Index erreichen darf, muss uv.lock einmal gegen
+# ihn erzeugen:
+#
+#     uv run python scripts/dev.py lock --index https://artifactory.firma.de/api/pypi/pypi/simple
+#
+# Danach stehen die Adressen des eigenen Index in der Sperrdatei, und der Build kommt ohne
+# Zugang zum öffentlichen Netz aus. Die Variablen hier bleiben trotzdem richtig: Sie gelten für
+# jede Auflösung, die im Bild stattfindet, und machen die Herkunft am Bauort sichtbar.
+#
+# 'UV_NATIVE_TLS' lässt uv den Zertifikatsspeicher des Betriebssystems benutzen. Das ist der
+# Schalter für Umgebungen mit aufbrechendem TLS-Proxy: Ohne ihn kennt uv die interne
+# Zertifizierungsstelle nicht und bricht mit einem Zertifikatsfehler ab, der wie ein Netzproblem
+# aussieht.
+ARG UV_DEFAULT_INDEX=
+ARG UV_INDEX=
+ARG UV_NATIVE_TLS=false
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
+    UV_INDEX=${UV_INDEX} \
+    UV_NATIVE_TLS=${UV_NATIVE_TLS}
+
+# ---------------------------------------------------------------------------
 # Abhängigkeiten zuerst, Quellcode danach: Eine Codeänderung macht den teuren
 # Abhängigkeits-Layer nicht ungültig.
 # ---------------------------------------------------------------------------
 # README.md ist in pyproject.toml als 'readme' eingetragen und wird beim Bauen des Pakets
 # gelesen — ohne die Datei scheitert 'uv sync'.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-install-project --no-dev
+
+# Zugangsdaten für den Paketindex kommen als BuildKit-Secret und nicht als ARG: Ein ARG steht in
+# der Image-Historie und wäre damit für jeden lesbar, der das Image hat (§20.2). Die Datei ist
+# optional — ohne sie baut der öffentliche Weg unverändert.
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    uv sync --frozen --no-install-project --no-dev
 
 COPY src/ ./src/
-RUN uv sync --frozen --no-dev
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    uv sync --frozen --no-dev
 
 # Nicht als root laufen. Die Bind-Mounts für config/ und secrets/ sind read-only (§5.3), auf
 # ./data schreibt ausschließlich PostgreSQL in seinem eigenen Container.

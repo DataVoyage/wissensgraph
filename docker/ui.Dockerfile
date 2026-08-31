@@ -6,19 +6,33 @@
 #
 # Build-Kontext ist das Repository-Wurzelverzeichnis, damit sowohl ui/ als auch docker/
 # erreichbar sind.
+#
+# Basis-Images und Paketquelle sind wie beim Anwendungsimage umschaltbar: 'WG_DOCKER_REGISTRY'
+# und 'NPM_CONFIG_REGISTRY' zeigen in einer abgeschlossenen Umgebung auf die eigenen Spiegel.
 
-FROM node:22-alpine AS build
+ARG WG_DOCKER_REGISTRY=
+
+FROM ${WG_DOCKER_REGISTRY}node:22-alpine AS build
 
 WORKDIR /build
 
+# Der npm-Spiegel. 'NPM_CONFIG_REGISTRY' ist die Variable von npm selbst — auch hier gibt es
+# keinen eigenen Übersetzungsschritt.
+ARG NPM_CONFIG_REGISTRY=
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+
 # Abhängigkeiten zuerst: Eine Codeänderung macht den npm-Layer nicht ungültig.
 COPY ui/package.json ui/package-lock.json ./
-RUN npm ci
+
+# Zugangsdaten als BuildKit-Secret statt als ARG, damit sie nicht in der Image-Historie landen
+# (§20.2). Die Datei ist optional; ohne sie baut der öffentliche Weg unverändert.
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    npm ci
 
 COPY ui/ ./
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+FROM ${WG_DOCKER_REGISTRY}nginx:1.27-alpine AS runtime
 
 COPY --from=build /build/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf

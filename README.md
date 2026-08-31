@@ -32,8 +32,9 @@ spricht wie Confluence und Jira.
 11. [Tokenverbrauch im Griff behalten](#11-tokenverbrauch-im-griff-behalten)
 12. [Entwicklung und Tests](#12-entwicklung-und-tests)
 13. [Fehlersuche](#13-fehlersuche)
-14. [Umstieg auf die echten Quellen](#14-umstieg-auf-die-echten-quellen)
-15. [Sicherheitshinweise](#15-sicherheitshinweise)
+14. [Eigene Registry und eigener Paketindex](#14-eigene-registry-und-eigener-paketindex)
+15. [Umstieg auf die echten Quellen](#15-umstieg-auf-die-echten-quellen)
+16. [Sicherheitshinweise](#16-sicherheitshinweise)
 
 ---
 
@@ -602,6 +603,7 @@ uv run python scripts/dev.py lint                  # ruff, mypy, lint-imports, t
 uv run python scripts/dev.py format
 uv run python scripts/dev.py check                 # lint + test — der Durchlauf vor einem Commit
 uv run python scripts/dev.py client                # TypeScript-Client neu erzeugen
+uv run python scripts/dev.py lock [--index URL]    # uv.lock neu erzeugen (siehe 14)
 ```
 
 ---
@@ -705,7 +707,89 @@ docker compose exec db-shared psql -U wg -d wg_shared -c '\dt'
 
 ---
 
-## 14. Umstieg auf die echten Quellen
+## 14. Eigene Registry und eigener Paketindex
+
+In einer abgeschlossenen Umgebung gibt es keinen Weg zu Docker Hub, ghcr.io, PyPI oder npm. Alle
+vier Herkünfte sind deshalb umschaltbar — und **alle Vorgaben bleiben die öffentlichen**, damit
+das Setup ohne jede Einrichtung funktioniert.
+
+### Basis-Images aus der eigenen Registry
+
+```dotenv
+WG_DOCKER_REGISTRY=artifactory.firma.de/docker-remote/
+WG_UV_IMAGE=artifactory.firma.de/ghcr-remote/astral-sh/uv:0.9.21
+```
+
+`WG_DOCKER_REGISTRY` wird jedem Image von Docker Hub vorangestellt — `python`, `node`, `nginx`,
+`redis`, `pgvector`. **Mit Schrägstrich am Ende.**
+
+Das uv-Image hat einen eigenen Schalter, weil es nicht auf Docker Hub liegt: In einem Artifactory
+sind `docker.io` und `ghcr.io` zwei getrennte Remote-Repositories, ein gemeinsames Präfix träfe
+also nur eines von beiden.
+
+Die selbst gebauten Images sind die andere Richtung — wohin sie gehören, nicht woher fremde
+kommen:
+
+```dotenv
+WG_IMAGE_PREFIX=artifactory.firma.de/wissensgraph/
+WG_IMAGE_TAG=1.4.0
+```
+
+### Pakete aus dem eigenen Index
+
+```dotenv
+UV_DEFAULT_INDEX=https://artifactory.firma.de/api/pypi/pypi/simple
+NPM_CONFIG_REGISTRY=https://artifactory.firma.de/api/npm/npm/
+UV_NATIVE_TLS=true
+```
+
+`UV_NATIVE_TLS=true` lässt uv den Zertifikatsspeicher des Betriebssystems benutzen. Das ist der
+Schalter für Umgebungen mit aufbrechendem TLS-Proxy — ohne ihn kennt uv die interne
+Zertifizierungsstelle nicht und bricht mit einem Zertifikatsfehler ab, der wie ein Netzproblem
+aussieht.
+
+> **Der Index allein genügt nicht — und das ist die eine Sache, die man nicht raten kann.**
+>
+> `UV_DEFAULT_INDEX` steuert die **Auflösung**, nicht die **Installation**. In `uv.lock` stehen
+> absolute Adressen der Artefakte (`files.pythonhosted.org/...`), und `uv sync --frozen` lädt von
+> genau dort — unabhängig davon, welcher Index gesetzt ist. Ein Build mit gesetztem Index läuft
+> deshalb erfolgreich durch und hängt trotzdem weiter am öffentlichen Netz. Nachgemessen, nicht
+> vermutet.
+>
+> Wer wirklich nur den eigenen Index erreichen darf, erzeugt die Sperrdatei einmal gegen ihn:
+>
+> ```bash
+> uv run python scripts/dev.py lock --index https://artifactory.firma.de/api/pypi/pypi/simple
+> ```
+>
+> Danach stehen die eigenen Adressen darin und der Bau kommt ohne öffentliches Netz aus. Das ist
+> kein Mangel von uv, sondern der Preis der Reproduzierbarkeit: Eine Sperrdatei, die ihre Herkunft
+> offenließe, sperrte nichts. Für npm gilt dasselbe — `package-lock.json` hält ebenfalls absolute
+> Adressen fest und muss gegen den eigenen Spiegel erzeugt werden.
+
+### Zugangsdaten
+
+Sie gehören **nicht** in `.env` und nicht in ein Build-Argument: Ein Argument steht in der
+Image-Historie und ist für jeden lesbar, der das Image hat (§20.2). Der Weg sind BuildKit-Secrets:
+
+```bash
+docker buildx build --secret id=netrc,src=$HOME/.netrc -f docker/api.Dockerfile .
+docker buildx build --secret id=npmrc,src=$HOME/.npmrc -f docker/ui.Dockerfile .
+```
+
+Beide sind optional — fehlen sie, baut der öffentliche Weg unverändert.
+
+### Was das absichert
+
+`tests/unit/test_container_herkunft.py` prüft, dass keine Compose-Zeile und keine `FROM`-Zeile ein
+festes Image trägt, dass jeder bauende Dienst die Argumente durchreicht und dass kein Zugangsdatum
+als Build-Argument auftaucht. Das ist eine Eigenschaft, die sonst still verloren geht: Wer später
+einen Dienst mit `image: redis:7` ergänzt, merkt in der Entwicklung nichts davon — dort ist der
+öffentliche Weg ja offen.
+
+---
+
+## 15. Umstieg auf die echten Quellen
 
 Stufe 13 ist noch nicht umgesetzt; der Weg ist aber vorbereitet und besteht aus genau zwei
 Änderungen je Quelle:
@@ -733,7 +817,7 @@ geschrieben und sollten gegen die echten Antworten geprüft werden.
 
 ---
 
-## 15. Sicherheitshinweise
+## 16. Sicherheitshinweise
 
 * **`.env` ist git-ignoriert und muss es bleiben.** Dort stehen der Gemini-Schlüssel, der
   API-Token und die Quell-Tokens. Vor jedem Push den gestagten Diff auf Secrets ansehen — das
