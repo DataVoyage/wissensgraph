@@ -105,7 +105,12 @@ class SourceMapper:
             source_name=self._cfg.name,
             external_id=document.external_id,
             source_updated_at=document.updated_at,
-            references=tuple(self.resolve_reference(item) for item in document.references),
+            # Übersetzt wird das Ziel, die Art bleibt: Sie ist eine Aussage der Quelle über die
+            # Beziehung und hat mit dem Nummernkreis nichts zu tun.
+            references=tuple(
+                verweis.model_copy(update={"target": self.resolve_reference(verweis.target)})
+                for verweis in document.references
+            ),
         )
 
 

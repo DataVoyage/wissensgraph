@@ -9,7 +9,7 @@
   "excerpt": "Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht.",
   "body": {
     "storage": {
-      "value": "Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht. Jeder Ladeschritt ist idempotent: ein zweiter Lauf über denselben Zeitraum ändert nichts. Die Partitionierung erfolgt nach Buchungstag, nicht nach Ladezeitpunkt. Schemaänderungen in der Quelle werden additiv nachgezogen; Spalten werden nie entfernt. Diese Seite gehört zum Themenfeld datenpipeline."
+      "value": "<p>Fehlerhafte Datensätze landen in einer Quarantänetabelle und blockieren den Lauf nicht. Die Partitionierung erfolgt nach Buchungstag, nicht nach Ladezeitpunkt.</p><ac:structured-macro ac:name=\"panel\"><ac:parameter ac:name=\"title\">Schemaänderungen</ac:parameter><ac:rich-text-body><p>Additiv nachziehen; Spalten werden nie entfernt.</p></ac:rich-text-body></ac:structured-macro><p>Die Folgen für das Warehouse stehen unter <a href=\"/display/ENG/Schema-Evolution+im+Data+Warehouse\">Schema-Evolution</a>.</p><p><ac:link><ri:attachment ri:filename=\"schema.pdf\"/><ac:plain-text-link-body><![CDATA[Schemadokument]]></ac:plain-text-link-body></ac:link></p><p>Diese Seite gehört zum Themenfeld datenpipeline.</p>"
     }
   },
   "version": {
@@ -17,14 +17,16 @@
     "when": "2026-03-03T09:00:00+00:00"
   },
   "metadata": {
-    "labels": [
-      {
-        "name": "etl"
-      },
-      {
-        "name": "datenpipeline"
-      }
-    ]
+    "labels": {
+      "results": [
+        {
+          "name": "etl"
+        },
+        {
+          "name": "datenpipeline"
+        }
+      ]
+    }
   },
   "links": {
     "webui": "/spaces/ENG/pages/100002"

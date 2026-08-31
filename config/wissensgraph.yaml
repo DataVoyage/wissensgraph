@@ -27,6 +27,23 @@ scopes:
     store: shared
   - name: personal
     store: personal
+  # Ein Scope je Fachbereich, nicht je technischer Quelle: Ein Confluence-Space und das
+  # Jira-Projekt daneben gehören inhaltlich zusammen, und der Scope ist die Einheit, über die
+  # 'embed', 'cluster' und 'relations' laufen. Diese vier gehören zu den auskommentierten
+  # Live-Quellen in sources.yaml; ohne sie bricht deren Aktivierung mit einem
+  # Konfigurationsfehler ab. Sie kosten nichts, solange keine Quelle auf sie zeigt.
+  - name: flwoperativesysteme
+    store: shared
+    description: Fleischwerke Operative Systeme und Prozesse
+  - name: klfleischwerke
+    store: shared
+    description: Kaufland Fleischwerke Hauptdokumentation
+  - name: data-analytics
+    store: shared
+    description: Datenmanagement und Analytik
+  - name: iot-platform
+    store: shared
+    description: IoT-Edge-Plattform
 
 # Die Taxonomie ist Konfiguration, nicht Code (§7.2). Eine neue Quelle bringt einen neuen
 # type-Wert mit; das Datenbankschema ändert sich dafür nicht.

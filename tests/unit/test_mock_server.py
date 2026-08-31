@@ -245,3 +245,79 @@ class TestZustand:
 
         assert bericht["confluence"]["updated"] == 1
         assert state.pages == {}
+
+
+class TestZweiterZugang:
+    """Der Gateway-Zugang und die zweite API-Version (§9.1, §15).
+
+    Sie sind kein Beiwerk. Ohne sie liefe in der Entwicklung genau eine der Betriebsarten
+    durch — und die andere fiele erst gegen das echte System auf, wo man sie nicht mehr
+    provozieren kann.
+    """
+
+    def test_dasselbe_ergebnis_ueber_beide_zugaenge(self, client: Any) -> None:
+        ueber_rest = client.get("/confluence/rest/api/content/100001")
+        ueber_gateway = client.get("/gateway/confluence/content/100001", headers={"x-apikey": "g"})
+
+        assert ueber_gateway.status_code == 200
+        assert ueber_gateway.json() == ueber_rest.json()
+
+    def test_ohne_schluessel_antwortet_das_gateway_mit_401(self, client: Any) -> None:
+        antwort = client.get("/gateway/confluence/space")
+
+        assert antwort.status_code == 401
+
+    def test_der_gewoehnliche_zugang_verlangt_keinen_schluessel(self, client: Any) -> None:
+        assert client.get("/confluence/rest/api/space").status_code == 200
+
+    @pytest.mark.parametrize("version", ["2", "3"])
+    def test_beide_jira_versionen_antworten(self, client: Any, version: str) -> None:
+        antwort = client.get(f"/jira/rest/api/{version}/issue/TEAM-1")
+
+        assert antwort.status_code == 200
+        assert antwort.json()["key"] == "TEAM-1"
+
+
+class TestTitelsuche:
+    """``/content/search`` — der einzige Schritt der Linkauflösung, der die Instanz fragt."""
+
+    def test_space_und_titel_werden_ausgewertet(self, client: Any) -> None:
+        antwort = client.get(
+            "/confluence/rest/api/content/search",
+            params={"cql": 'space="ENG" and title="Nächtlicher ETL-Lauf"'},
+        )
+
+        assert [seite["id"] for seite in antwort.json()["results"]] == ["100001"]
+
+    def test_ein_unbekannter_titel_liefert_nichts(self, client: Any) -> None:
+        antwort = client.get(
+            "/confluence/rest/api/content/search",
+            params={"cql": 'space="ENG" and title="Gibt es nicht"'},
+        )
+
+        assert antwort.json()["results"] == []
+
+    def test_der_falsche_space_liefert_nichts(self, client: Any) -> None:
+        """Sonst zeigte ein Verweis über Space-Grenzen auf die erstbeste gleichnamige Seite."""
+        antwort = client.get(
+            "/confluence/rest/api/content/search",
+            params={"cql": 'space="ARCH" and title="Nächtlicher ETL-Lauf"'},
+        )
+
+        assert antwort.json()["results"] == []
+
+
+class TestRemoteLinks:
+    """Verweise von Jira nach außen — über einen eigenen Endpunkt, wie in der echten API."""
+
+    def test_ein_vorgang_mit_remote_link(self, client: Any) -> None:
+        antwort = client.get("/jira/rest/api/2/issue/TEAM-1/remotelink")
+
+        assert antwort.status_code == 200
+        assert "pageId=100001" in antwort.json()[0]["globalId"]
+
+    def test_ein_vorgang_ohne_remote_links(self, client: Any) -> None:
+        assert client.get("/jira/rest/api/2/issue/TEAM-3/remotelink").json() == []
+
+    def test_ein_unbekannter_vorgang(self, client: Any) -> None:
+        assert client.get("/jira/rest/api/2/issue/TEAM-9999/remotelink").status_code == 404

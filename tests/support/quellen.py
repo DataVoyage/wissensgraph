@@ -33,6 +33,10 @@ CONFLUENCE_BASE = "http://mock-sources/confluence"
 JIRA_BASE = "http://mock-sources/jira"
 CONTROL_BASE = "http://mock-sources"
 
+#: Der Gateway-Zugang zu denselben Confluence-Endpunkten: ohne ``/rest/api`` und mit
+#: Pflicht-Kopfzeile. Eine Quelle darauf braucht ``api_prefix: ""`` und ``extra_headers``.
+CONFLUENCE_GATEWAY_BASE = "http://mock-sources/gateway/confluence"
+
 
 def mock_app() -> Any:
     """Eine frische Mock-Anwendung auf den Seed-Daten des Repositories."""
@@ -40,10 +44,19 @@ def mock_app() -> Any:
 
 
 def client_factory(app: Any) -> Callable[[SourceConfig], httpx.Client]:
-    """Eine Client-Fabrik, die den Adapter mit der ASGI-Anwendung verbindet."""
+    """Eine Client-Fabrik, die den Adapter mit der ASGI-Anwendung verbindet.
+
+    Sie setzt dieselben Kopfzeilen wie die echte Fabrik in
+    :mod:`wissensgraph.infrastructure.adapters.base`. Täte sie es nicht, prüfte kein Test je,
+    ob ``extra_headers`` wirklich ankommen — und genau daran scheitert eine Anbindung hinter
+    einem Gateway, das ohne seinen Schlüssel mit 401 antwortet.
+    """
 
     def bauen(cfg: SourceConfig) -> httpx.Client:
-        return TestClient(app, base_url=cfg.connection.base_url or CONTROL_BASE)
+        kopfzeilen = {**cfg.connection.extra_headers, "Accept": "application/json"}
+        if cfg.connection.token:
+            kopfzeilen["Authorization"] = f"Bearer {cfg.connection.token}"
+        return TestClient(app, base_url=cfg.connection.base_url or CONTROL_BASE, headers=kopfzeilen)
 
     return bauen
 

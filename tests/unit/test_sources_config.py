@@ -76,7 +76,12 @@ class TestLaden:
         )
 
         assert [item.name for item in config.sources] == ["confluence-eng", "jira-team"]
-        assert config.get("confluence-eng").mapping["body"] == "$.body.storage.value"
+        # Kein 'mapping' für die Inhaltsfelder — und das ist die eigentliche Zusage dieser
+        # Zeile. Die 'mapping'-Sektion schlägt die Vorgaben des Adapters (§8.4); ein Eintrag
+        # 'body: $.body.storage.value' ersetzte das fertige Markdown durch das rohe
+        # Storage-Format und machte die gesamte Umwandlung wirkungslos, ohne dass etwas
+        # fehlschlüge. Genau so stand es hier einmal.
+        assert "body" not in config.get("confluence-eng").mapping
 
     def test_platzhalter_werden_aufgeloest(self, settings: Settings, schreibe_sources: Any) -> None:
         pfad = schreibe_sources(

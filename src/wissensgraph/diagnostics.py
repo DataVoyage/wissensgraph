@@ -689,19 +689,46 @@ def check_proxy(
 
     ausnahmen = no_proxy_entries(umgebung)
     intern = _interne_hosts(settings, models_path)
+    extern = _externe_quellhosts(settings)
     context: dict[str, object] = {
         "proxy": mask_dsn(proxy),
         "no_proxy": list(ausnahmen),
         "interne_hosts": sorted(intern),
+        "externe_hosts": sorted(extern),
     }
 
     fehlend = sorted(host for host in intern if not bypasses_proxy(host, ausnahmen))
-    if not fehlend:
+    if fehlend:
         return (
             CheckResult(
                 name="proxy",
-                status=CheckStatus.OK,
-                detail=(f"Proxy gesetzt; alle {len(intern)} internen Host(s) stehen in NO_PROXY."),
+                status=CheckStatus.FAIL,
+                detail=(
+                    f"Ein Proxy ist gesetzt, aber {', '.join(fehlend)} fehlt/fehlen in NO_PROXY. "
+                    "Aufrufe an diese Hosts gehen an den Proxy, der die internen Namen nicht "
+                    "auflösen kann — der Fehler sieht dann wie ein Ausfall des Nachbarn aus. In "
+                    f"NO_PROXY aufnehmen: {','.join(fehlend)}"
+                ),
+                context=context,
+            ),
+        )
+
+    # Die Gegenrichtung. Sie ist eine Warnung und kein Fehler, weil es Netze gibt, in denen ein
+    # externer Host auch direkt erreichbar ist — feststellen lässt sich das von hier aus nicht.
+    # Aber der häufigere Fall ist ein zu weit gefasster NO_PROXY-Eintrag, und der äußert sich
+    # als Zeitüberschreitung beim ersten Sync gegen das echte System.
+    umgangen = sorted(host for host in extern if bypasses_proxy(host, ausnahmen))
+    if umgangen:
+        return (
+            CheckResult(
+                name="proxy",
+                status=CheckStatus.WARN,
+                detail=(
+                    f"Ein Proxy ist gesetzt, aber die externe(n) Quelle(n) {', '.join(umgangen)} "
+                    "stehen in NO_PROXY und werden direkt angesprochen. Falls sie nur über den "
+                    "Proxy erreichbar sind, endet der erste Sync in einer Zeitüberschreitung. "
+                    "Ist der direkte Weg gewollt, kann die Warnung so bleiben."
+                ),
                 context=context,
             ),
         )
@@ -709,16 +736,33 @@ def check_proxy(
     return (
         CheckResult(
             name="proxy",
-            status=CheckStatus.FAIL,
+            status=CheckStatus.OK,
             detail=(
-                f"Ein Proxy ist gesetzt, aber {', '.join(fehlend)} fehlt/fehlen in NO_PROXY. "
-                "Aufrufe an diese Hosts gehen an den Proxy, der die internen Namen nicht auflösen "
-                "kann — der Fehler sieht dann wie ein Ausfall des Nachbarn aus. In NO_PROXY "
-                f"aufnehmen: {','.join(fehlend)}"
+                f"Proxy gesetzt; alle {len(intern)} internen Host(s) stehen in NO_PROXY, "
+                f"{len(extern)} externe Quelle(n) laufen darüber."
             ),
             context=context,
         ),
     )
+
+
+def _externe_quellhosts(settings: Settings) -> set[str]:
+    """Die Hosts der Quellen, die *über* den Proxy laufen müssen.
+
+    Das Gegenstück zu :func:`_interne_hosts`. Beide Richtungen gleichzeitig richtig zu haben ist
+    die eigentliche Vorbedingung im Unternehmensnetz: Der Nachbarcontainer muss am Proxy vorbei,
+    das Quellsystem im Netz muss durch ihn hindurch.
+    """
+    hosts: set[str] = set()
+    try:
+        for quelle in load_sources(settings).sources:
+            if quelle.connection.is_internal or not quelle.connection.base_url:
+                continue
+            if host := extract_host(quelle.connection.base_url):
+                hosts.add(host)
+    except ConfigError:  # pragma: no cover — von check_sources bereits gemeldet
+        pass
+    return hosts
 
 
 def _interne_hosts(settings: Settings, models_path: Path | None) -> set[str]:
@@ -737,6 +781,12 @@ def _interne_hosts(settings: Settings, models_path: Path | None) -> set[str]:
 
     try:
         for quelle in load_sources(settings).sources:
+            # Nur die *internen* Quellen. Eine echte Quelle wie ``jira.schwarz`` liegt außerhalb
+            # und muss über den Proxy laufen; sie hier aufzunehmen hieße, ihre Aufnahme in
+            # NO_PROXY zu verlangen — und damit genau den Weg zu sperren, auf dem sie erreichbar
+            # ist. Der Mock-Server nebenan braucht umgekehrt die Ausnahme.
+            if not quelle.connection.is_internal:
+                continue
             if quelle.connection.base_url and (host := extract_host(quelle.connection.base_url)):
                 hosts.add(host)
     except ConfigError:  # pragma: no cover — von check_sources bereits gemeldet

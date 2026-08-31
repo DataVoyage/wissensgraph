@@ -556,6 +556,7 @@ def concepts_add(
     überschrieben (§10.4).
     """
     from wissensgraph.domain.concepts import ConceptDraft
+    from wissensgraph.domain.references import SourceReference
     from wissensgraph.runtime import Runtime
     from wissensgraph.services.concepts import ConceptValidationError
 
@@ -567,7 +568,9 @@ def concepts_add(
         title=title,
         description=description,
         body=body,
-        references=tuple(link or ()),
+        # ``--link`` nennt nur ein Ziel; von Hand gesetzte Verweise sind gewöhnliche Referenzen.
+        # Eine typisierte Beziehung entsteht aus einem Quellsystem, nicht von der Kommandozeile.
+        references=tuple(SourceReference(target=ziel) for ziel in (link or ())),
         curated=True,
     )
 

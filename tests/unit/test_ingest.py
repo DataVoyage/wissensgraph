@@ -109,7 +109,10 @@ class TestAbnahmeKorpusVollstaendig:
 
         assert concept.title == "Nächtlicher ETL-Lauf"
         assert concept.description.startswith("Der Lauf verarbeitet")
-        assert concept.resource == "/spaces/ENG/pages/100001"
+        # Absolut und nicht relativ: Die Quelle liefert '/spaces/ENG/pages/100001', und ein
+        # solcher Pfad zeigt aus der UI heraus auf die UI selbst statt auf Confluence. Der
+        # Adapter setzt deshalb die Weboberflächen-Adresse davor.
+        assert concept.resource == "http://mock-sources/confluence/spaces/ENG/pages/100001"
         assert concept.tags == ("daten", "datenpipeline")
         assert concept.source_name == "confluence-eng"
         assert concept.external_id == "100001"
@@ -249,11 +252,41 @@ class TestAbnahmeZweiterLauf:
         umgebung.steuerung.post("/_control/scenario/incremental_update")
 
         bericht = umgebung.ingest.ingest(umgebung.jira, umgebung.jira_cfg, cursor=cursor)
-        ziele = {edge.to_id for edge in umgebung.shared.edges if edge.from_id == "jira:TEAM-1"}
+        kanten = [edge for edge in umgebung.shared.edges if edge.from_id == "jira:TEAM-1"]
+        aus_dem_text = {
+            edge.to_id
+            for edge in kanten
+            if edge.generated_by == defaults.GENERATED_BY_BODY_REFERENCE
+        }
 
         assert bericht.edges_added == 1
         assert bericht.edges_removed == 1
-        assert ziele == {"confluence:100010"}
+        assert aus_dem_text == {"confluence:100010"}
+
+    def test_die_strukturierten_beziehungen_ueberdauern_die_textaenderung(
+        self, umgebung: Umgebung
+    ) -> None:
+        """Der Gegenpol zum Test darüber.
+
+        Ein geänderter Beschreibungstext sagt nichts darüber, ob ein Vorgang noch zu seinem Epic
+        gehört oder noch blockiert ist — das steht in den Feldern und nicht im Text. Würde die
+        Kantenerneuerung beides in einen Topf werfen, verschwänden bei jeder Textänderung die
+        Beziehungen, die die Quelle als Tatsache meldet (§7.7, Leitprinzip 6).
+        """
+        umgebung.ingest.ingest(umgebung.jira, umgebung.jira_cfg)
+        cursor = umgebung.jira.next_cursor()
+        umgebung.steuerung.post("/_control/scenario/incremental_update")
+
+        umgebung.ingest.ingest(umgebung.jira, umgebung.jira_cfg, cursor=cursor)
+        arten = {
+            (edge.to_id, edge.kind)
+            for edge in umgebung.shared.edges
+            if edge.from_id == "jira:TEAM-1"
+        }
+
+        assert ("jira:TEAM-2", defaults.EDGE_KIND_MEMBER) in arten
+        assert ("jira:TEAM-3", defaults.EDGE_KIND_DEPENDS_ON) in arten
+        assert ("jira:TEAM-5", defaults.EDGE_KIND_RELATED) in arten
 
 
 class TestBericht:

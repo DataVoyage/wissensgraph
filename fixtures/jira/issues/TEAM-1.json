@@ -4,7 +4,7 @@
   "self": "/browse/TEAM-1",
   "fields": {
     "summary": "Ladelauf bricht bei Sonderzeichen ab (TEAM-1)",
-    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100002]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "description": "h2. Beobachtung\nBeobachtet in der Umgebung {{staging}}. Der Import bricht bei *Sonderzeichen* ab.\n\n{code:python}\ndef normalisieren(zeile):\n    return zeile.encode(\"utf-8\")\n{code}\n\nh3. Nächste Schritte\n# Ursache eingrenzen\n# Ablauf im Wiki nachziehen\n#* Kontext steht in [[confluence:100002]]\n\n{warning}\nNicht in der Produktion nachstellen.\n{warning}\n\nBetroffen ist das Themenfeld datenpipeline.\nZugewiesen an [~mneff].\n",
     "labels": [
       "datenpipeline",
       "poc"
@@ -15,7 +15,49 @@
     },
     "project": {
       "key": "TEAM"
-    }
+    },
+    "issuetype": {
+      "name": "Bug"
+    },
+    "priority": {
+      "name": "High"
+    },
+    "subtasks": [
+      {
+        "key": "TEAM-2"
+      }
+    ],
+    "issuelinks": [
+      {
+        "type": {
+          "name": "Blocks",
+          "inward": "is blocked by",
+          "outward": "blocks"
+        },
+        "inwardIssue": {
+          "key": "TEAM-3"
+        }
+      },
+      {
+        "type": {
+          "name": "Relates",
+          "inward": "relates to",
+          "outward": "relates to"
+        },
+        "outwardIssue": {
+          "key": "TEAM-5"
+        }
+      }
+    ],
+    "remotelinks": [
+      {
+        "globalId": "appId=abc&pageId=100001",
+        "object": {
+          "url": "https://confluence.example/pages/viewpage.action?pageId=100001",
+          "title": "Nächtlicher ETL-Lauf"
+        }
+      }
+    ]
   },
   "references": []
 }

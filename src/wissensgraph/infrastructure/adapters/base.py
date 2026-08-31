@@ -213,6 +213,30 @@ class HttpSourceAdapter(BaseAdapter):
         """Der Pfad, dessen Erreichbarkeit als Gesundheitsprüfung gilt."""
         raise NotImplementedError
 
+    # -- Pfade ------------------------------------------------------------------
+
+    #: Pfadpräfix vor den Endpunkten dieses Adapters, wenn die Konfiguration nichts sagt.
+    #: Unterklassen setzen es auf das, was eine Standardinstallation erwartet.
+    default_api_prefix: str = ""
+
+    @property
+    def api_prefix(self) -> str:
+        """Das wirksame Präfix: aus der Konfiguration, sonst die Vorgabe des Adapters.
+
+        Es gibt Installationen, deren ``base_url`` bereits auf die API zeigt — ein API-Gateway
+        etwa, das unter ``/itdoc/v1`` genau die Confluence-Endpunkte anbietet, aber ohne deren
+        ``/rest/api``-Präfix. Ein Adapter mit fest eingebautem Pfad wäre dagegen nicht
+        konfigurierbar, sondern nur noch kopierbar (§6.1 Regel 1).
+        """
+        angegeben = self.config.connection.api_prefix
+        roh = self.default_api_prefix if angegeben is None else angegeben
+        return roh.rstrip("/")
+
+    def api_path(self, *teile: str) -> str:
+        """Setzt einen Endpunktpfad aus Präfix und Teilen zusammen."""
+        rest = "/".join(teil.strip("/") for teil in teile if teil)
+        return f"{self.api_prefix}/{rest}" if rest else self.api_prefix
+
     # -- Anfragen ---------------------------------------------------------------
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -289,7 +313,11 @@ def _default_client(cfg: SourceConfig) -> httpx.Client:
             f"Quelle '{cfg.name}' hat keine base_url. Sie ist der einzige Unterschied zwischen "
             f"Mock und Live (§9.4) und muss in sources.yaml oder als ENV gesetzt sein."
         )
-    kopfzeilen = {"Accept": "application/json"}
+    # Reihenfolge mit Absicht: erst die Zusätze, dann die eigenen. Ein Gateway kann eine weitere
+    # Kopfzeile verlangen (``x-apikey``) — überschreiben darf sie 'Accept' und 'Authorization'
+    # trotzdem nicht, weil das Token einen eigenen, maskierten Weg hat (§20.2). Das Schema weist
+    # solche Einträge schon beim Laden ab; hier steht die Reihenfolge, die es auch dann hielte.
+    kopfzeilen = {**verbindung.extra_headers, "Accept": "application/json"}
     if verbindung.token:
         kopfzeilen["Authorization"] = f"Bearer {verbindung.token}"
     return httpx.Client(

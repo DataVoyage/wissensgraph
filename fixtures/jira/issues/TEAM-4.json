@@ -4,7 +4,7 @@
   "self": "/browse/TEAM-4",
   "fields": {
     "summary": "Backfill dauert zu lange (TEAM-4)",
-    "description": "Beobachtet in der Umgebung 'staging'. Kontext steht in [[confluence:100005]]. Betroffen ist das Themenfeld datenpipeline. Nächster Schritt: Ursache eingrenzen und den Ablauf im Wiki nachziehen.",
+    "description": "Der Backfill dauert zu lange.\nbq. Gemessen: 6 h für 30 Tage.\nKontext steht in [[confluence:100005]]. Betroffen ist das Themenfeld datenpipeline.\n",
     "labels": [
       "datenpipeline",
       "poc"
@@ -15,6 +15,9 @@
     },
     "project": {
       "key": "TEAM"
+    },
+    "issuetype": {
+      "name": "Task"
     }
   },
   "references": [

@@ -860,29 +860,212 @@ einen Dienst mit `image: redis:7` ergänzt, merkt in der Entwicklung nichts davo
 
 ## 15. Umstieg auf die echten Quellen
 
-Stufe 13 ist noch nicht umgesetzt; der Weg ist aber vorbereitet und besteht aus genau zwei
-Änderungen je Quelle:
+Der Umstieg ist Konfiguration, kein Codepfad. Was sich ändert, sind Adressen, Zugangsdaten und
+die Auswahl — die Adapter, der Kern und die Pipeline sehen keinen Unterschied. Das ist der Zweck
+der Mock-Architektur, und der Mock-Server bildet inzwischen auch die beiden Betriebsarten nach,
+an denen eine Anbindung sonst erst im Ernstfall scheitert: die Standardinstallation und das
+API-Gateway davor.
+
+### 15.1 Zugangsdaten in die `.env`
 
 ```dotenv
-WG_SOURCE_CONFLUENCE__BASE_URL=https://ihre-instanz.atlassian.net/wiki
-WG_SOURCE_CONFLUENCE__TOKEN=<token>
-WG_SOURCE_JIRA__BASE_URL=https://ihre-instanz.atlassian.net
-WG_SOURCE_JIRA__TOKEN=<token>
+# Confluence hinter einem API-Gateway
+WG_SOURCE_CONFLUENCE__BASE_URL=https://live.api.example/sit/atlassian/itdoc/v1
+WG_SOURCE_CONFLUENCE__WEB_URL=https://itdoc.example
+WG_SOURCE_CONFLUENCE__TOKEN=<Confluence Personal Access Token>
+WG_SOURCE_CONFLUENCE__API_KEY=<Gateway-Schlüssel>
+
+# Jira Data Center
+WG_SOURCE_JIRA__BASE_URL=https://jira.example
+WG_SOURCE_JIRA__WEB_URL=https://jira.example
+WG_SOURCE_JIRA__TOKEN=<Jira Personal Access Token>
 ```
 
-Dann mit dem Profil `live` starten — es lässt `mock-sources` weg. Kein Codepfad kennt den
-Unterschied; das ist der Zweck der Mock-Architektur.
+Drei Dinge daran sind leicht zu übersehen und kosten sonst eine Stunde Fehlersuche:
 
-Vor dem ersten echten Lauf sinnvoll:
+**`WEB_URL` ist nicht `BASE_URL`.** Die erste ist die Adresse, unter der ein Mensch die Instanz
+aufruft, die zweite die der API. Hinter einem Gateway sind das verschiedene Hosts. Alle Links im
+erzeugten Text — und das Feld `resource` jedes Konzepts — benutzen die `WEB_URL`; ohne sie zeigen
+sie auf die API und ein Leser kommt nicht weit. Ohne Angabe wird die `BASE_URL` benutzt, was bei
+einer Standardinstallation richtig ist.
+
+**Der Gateway-Schlüssel tritt *neben* das Token, nicht an seine Stelle.** Fehlt er, blockt das
+Gateway mit 401 oder 403, bevor Confluence überhaupt gefragt wird. Der Fehler sieht dann wie ein
+Auth-Problem des Quellsystems aus und wird an der falschen Stelle gesucht. Er gehört als
+`extra_headers` in den Quellblock:
+
+```yaml
+    connection:
+      api_prefix: ""                       # das Gateway bietet die API ohne /rest/api an
+      extra_headers:
+        x-apikey: ${WG_SOURCE_CONFLUENCE__API_KEY}
+```
+
+**`api_prefix` entscheidet über den Pfad.** Eine Standardinstallation antwortet unter
+`/rest/api`, ein Gateway ohne dieses Präfix, weil seine `base_url` bereits auf die API zeigt.
+Jira Data Center kennt **kein** `/rest/api/3` — der Vorgabewert ist deshalb `/rest/api/2`.
+
+### 15.2 Scopes und Quellblöcke
+
+Ein Scope je Fachbereich, nicht je technischer Quelle: Ein Confluence-Space und das Jira-Projekt
+daneben gehören inhaltlich zusammen, und der Scope ist die Einheit, über die `embed`, `cluster`
+und `relations` laufen. Die vier Scopes stehen in `config/wissensgraph.yaml`, die zugehörigen
+Quellblöcke auskommentiert in `config/sources.yaml`.
+
+`target.scope` gilt **je Block**. Vier Confluence-Spaces in vier Scopes brauchen also vier
+Blöcke — und trotzdem *einen* Nummernkreis:
+
+```yaml
+  - name: confluence-flwoperativesysteme
+    id_prefix: confluence
+    shared_id_prefix: true
+```
+
+Warum das so sein muss: Verlinkt eine Seite aus dem einen Space eine aus dem anderen, kennt der
+Adapter nur deren Seiten-ID. Aus welchem Space sie stammt und welcher Block sie einmal holen
+wird, weiß er nicht. Mit einem Präfix je Block ließe sich dieser Verweis gar nicht aufschreiben.
+Deshalb teilen sich alle Confluence-Blöcke das Präfix `confluence`, und weil ein geteiltes Präfix
+sonst der klassische Weg ist, sich gegenseitig zu überschreiben, muss **jeder beteiligte Block**
+es mit `shared_id_prefix: true` erklären. Fehlt die Erklärung bei einem, bricht der Start ab und
+nennt ihn beim Namen.
+
+### 15.3 Was aus dem Rohformat wird
+
+Confluence liefert XHTML mit eigenen Namensräumen, Jira liefert Wiki-Markup. Beides wird beim
+Sync in Markdown umgewandelt, bevor es als `body` in die Datenbank geht:
+
+| Quelle | wird zu |
+|---|---|
+| `<ac:structured-macro ac:name="code">` mit `language` | Codeblock mit Sprachangabe |
+| `info` / `tip` / `note` / `warning`, `panel` | Zitatblock mit Beschriftung |
+| `<ac:image><ri:attachment>` | Bild bei Bildendung, sonst `📎`-Link |
+| `<ac:link><ri:page>` | Markdown-Link **plus** Kandidat für eine Kante |
+| `{code:python}…{code}`, `{quote}`, `bq.` | Codeblock, Zitatblock |
+| `h1.`–`h6.`, `#`/`*`-Listen, `\|\|`-Tabellen | Überschriften, Listen, Tabellen |
+| `*fett*`, `_kursiv_`, `-weg-`, `{{code}}` | `**fett**`, `*kursiv*`, `~~weg~~`, `` `code` `` |
+
+Warum das nicht kosmetisch ist: Ein Embedding über rohes Storage-Format misst Auszeichnung statt
+Inhalt, und `# Ursache eingrenzen` ist in Jira der erste Punkt einer nummerierten Liste, in
+Markdown aber eine Überschrift. Der ungewandelte Text ergibt keinen kaputten, sondern einen
+*falschen* Graphen — und nichts daran schlägt fehl.
+
+> **Finger weg von `mapping.body`.** Die `mapping:`-Sektion schlägt die Vorgaben des Adapters
+> (§8.4). Ein Eintrag `body: $.body.storage.value` ersetzt das fertige Markdown wieder durch das
+> Rohformat und macht die ganze Umwandlung wirkungslos — lautlos. Dasselbe gilt für `tags` (der
+> Adapter liest beide Antwortformen von Confluence) und `resource` (er baut eine absolute
+> Adresse). Ein `mapping` für diese Felder gehört nur dorthin, wo eine Instanz wirklich abweicht.
+
+### 15.4 Verweise werden zu Kanten — ohne den Text zu verändern
+
+Im Markdown bleibt an jeder erkannten Verlinkung ein **gewöhnlicher, klickbarer Link** auf die
+Quellseite stehen. Er funktioniert auch dann, wenn das Ziel nie synchronisiert wird. Die
+Konzept-ID geht getrennt davon an den Kern.
+
+Vier Confluence-Linkformen werden erkannt: die ausgeschriebene Seiten-ID
+(`?pageId=123`, `/pages/123/Titel`), der Kurzlink (`/x/AwCd`, lokal dekodiert), und der Weg über
+Space und Titel (`/display/ENG/Titel`, `<ri:page>`) — nur der letzte kostet eine Suche, und die
+wird je Space-und-Titel-Paar einmal pro Lauf gemacht und gemerkt. Bei Jira ist der
+Vorgangsschlüssel bereits die ID; dort ist keine Suche nötig.
+
+**Einen eigenen Auflösungsschritt braucht es dafür nicht.** Der Graph kennt das Problem schon:
+Zeigt eine Referenz auf ein Konzept, das es noch nicht gibt, entsteht die Kante trotzdem — mit
+`resolved = false`. Jeder folgende Sync-Lauf prüft solche Kanten erneut und löst sie auf, sobald
+das Ziel da ist. Ein zusätzliches Kommando oder eine Tabelle für offene Kandidaten wäre eine
+zweite Buchführung über dieselbe Sache.
+
+Strukturierte Beziehungen aus Jira laufen nicht über den Text, sondern kommen direkt aus den
+Feldern:
+
+| Jira | Kantenart | Anmerkung |
+|---|---|---|
+| `fields.subtasks` | `member` | Vorgang → Unteraufgabe |
+| `fields.parent` | `related` | siehe unten |
+| `is blocked by` | `depends_on` | notiert von der blockierten Seite |
+| `blocks` | — | die Kehrrichtung, keine zweite Kante |
+| `relates to`, Duplikate, Klone | `related` | |
+| Remote-Link auf eine Confluence-Seite | `references` | nur mit `remote_links: true` |
+
+Alle tragen `generated_by: code:source-reference` und sind damit als Tatsache aus der Quelle
+gekennzeichnet — nicht als Modellvermutung (Leitprinzip 6).
+
+Zum Elternvorgang: Die richtige Richtung wäre `member` vom Epic zum Vorgang. Eine Kante entsteht
+aber immer *bei dem Objekt, das gerade synchronisiert wird*, und ein Kind kann keine Kante
+schreiben, die bei seinem Epic beginnt. Ein `member` mit vertauschten Enden wäre keine Notlösung,
+sondern falsch: Die Katalogschicht liest `from_id` als Behälter, das Kind erschiene als Cluster
+seines eigenen Epics. Deshalb `related` — die Verbindung bleibt, ohne eine Enthaltensein-Aussage.
+
+`remote_links: true` kostet **eine zusätzliche Anfrage je Vorgang**. Bei zehntausend Vorgängen
+ist das der Unterschied zwischen Minuten und Stunden; deshalb ist es eine Entscheidung und keine
+Voreinstellung.
+
+### 15.5 Der Ablauf beim ersten Mal
 
 ```bash
-docker compose exec api wg sources list          # antworten beide Quellen?
-docker compose exec api wg sync --source confluence-eng --dry-run
+# 1. Konfiguration und Erreichbarkeit prüfen
+docker compose exec api wg doctor
+docker compose exec api wg sources list
+
+# 2. Trockenlauf je neuer Quelle — er durchläuft den echten Schreibpfad und rollt zurück
+docker compose exec api wg sync --source confluence-flwoperativesysteme --dry-run
+
+# 3. Confluence zuerst, dann Jira. Jira-Remote-Links zeigen auf Confluence-Seiten;
+#    in dieser Reihenfolge sind mehr davon beim ersten Lauf schon auflösbar.
+docker compose exec api wg sync --source confluence-flwoperativesysteme
+docker compose exec api wg sync --source jira-flwoperativesysteme
+
+# 4. Je Scope die Pipeline (§6). 'cluster' zweimal: erst Cluster, dann Mitglieder.
+for scope in flwoperativesysteme klfleischwerke data-analytics iot-platform; do
+  docker compose exec api wg embed --scope $scope
+  docker compose exec api wg cluster --scope $scope
+  docker compose exec api wg cluster --scope $scope
+  docker compose exec api wg relations --scope $scope
+  docker compose exec api wg link-orphans --scope $scope
+done
 ```
 
-Anzupassen sind außerdem `selection` (Spaces, Labels, JQL) und gegebenenfalls `mapping` in
-`config/sources.yaml` — die JSONPath-Ausdrücke sind auf die Struktur der Mock-Antworten
-geschrieben und sollten gegen die echten Antworten geprüft werden.
+Die Reihenfolge ist keine Empfehlung, sondern eine Abhängigkeit: `cluster` braucht Embeddings,
+`link-orphans` braucht Cluster. Ein Scope ohne Jira-Quelle durchläuft die Schleife unverändert —
+`embed` und `cluster` beziehen sich auf den Scope, nicht auf eine Quelle.
+
+Für den Betrieb ohne Mock-Server: `--profile live` statt `--profile dev`. Zum Testen dürfen
+Mock- und echte Quellen nebeneinander in `sources.yaml` stehen; `wg sync --source <name>` wählt
+gezielt aus.
+
+### 15.6 Proxy: beide Richtungen müssen stimmen
+
+Im Unternehmensnetz ist das die häufigste Ursache für einen Fehlschlag, der nach etwas anderem
+aussieht. `live.api.example` und `jira.example` sind **externe** Hosts und müssen **über** den
+Proxy laufen. `mock-sources`, `broker` und die Datenbanken sind Nachbarcontainer und müssen
+**am Proxy vorbei** — sonst versucht der Proxy, einen Compose-Dienstnamen aufzulösen, und der
+Fehler sieht wie ein Ausfall des Nachbarn aus.
+
+`wg doctor` prüft beide Richtungen und nennt die fehlenden Hosts konkret. Welcher Host als intern
+gilt, wird aus der Form des Namens abgeleitet — ein Compose-Dienst heißt `broker` und hat keinen
+Punkt, ein Host im Netz heißt `jira.example` und hat einen. Wo die Faustregel danebenliegt, etwa
+bei einem internen Dienst unter seinem FQDN, entscheidet die Konfiguration:
+
+```yaml
+    connection:
+      internal: true        # dieser Host muss ohne Proxy erreichbar sein
+```
+
+Alles Weitere zum Proxy steht in §14.
+
+### 15.7 Abweichungen von der Zulieferspezifikation
+
+Wer das Dokument `implementierung-jira-confluence-anbindung.md` kennt: An vier Stellen ist es
+anders umgesetzt, jeweils weil der bestehende Code die Sache schon löst oder anders schneidet.
+
+| Dokument | Umsetzung | Grund |
+|---|---|---|
+| Neues Kommando `wg link-references` und Tabelle `pending_source_references` | keines von beidem | Kanten mit `resolved = false` leisten dasselbe und werden bei jedem Lauf erneut geprüft (§8.5). Eine zweite Buchführung über dieselbe Sache. |
+| `generated_by: adapter:jira` | `code:source-reference` | §8.5 legt die Kennung fest; woher ein Konzept stammt, steht bereits in `source_name`. Die Unterscheidung „aus der Quelle" gegen „vom Modell" trägt sie unverändert. |
+| Epic → Issue als `member` | `related` | Eine Kante entsteht beim synchronisierten Objekt; das Kind kann keine schreiben, die beim Epic beginnt. Siehe §15.4. |
+| `rate_limit: 10`, `sources:` als Mapping | `rate_limit_per_second`, Liste mit `name:` | Die bestehenden Feldnamen und die bestehende Struktur (§8.4). |
+
+Ebenfalls aus dem Dokument übernommen und **nicht** umgesetzt: der Space `SIMPLSIT`
+(Security-Inhalte brauchen eine eigene Sensitivitätsbetrachtung), Brücken-Konzepte zwischen
+`personal` und `shared`, und die Zeitsteuerung — sie ist im Schema vorbereitet und abgeschaltet.
 
 ---
 

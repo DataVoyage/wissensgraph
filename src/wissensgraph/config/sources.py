@@ -23,6 +23,7 @@ from pydantic import Field, ValidationError, field_validator, model_validator
 from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigFileError, ConfigValidationError
 from wissensgraph.config.loader import load_yaml_mapping
+from wissensgraph.config.network import extract_host
 from wissensgraph.config.placeholders import resolve_placeholders
 from wissensgraph.config.schema import FrozenModel, Settings, empty_to_none
 
@@ -64,6 +65,14 @@ class SourceConnectionConfig(FrozenModel):
         default=None,
         description="Basis-URL des Quellsystems. Der einzige Unterschied zwischen Mock und Live.",
     )
+    web_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Adresse der Weboberfläche derselben Instanz, für Links im erzeugten Text. Ohne "
+            "Angabe wird 'base_url' benutzt — hinter einem API-Gateway sind das zwei "
+            "verschiedene Hosts, und ein Leser käme mit der API-Adresse nicht weit."
+        ),
+    )
     token: str | None = Field(default=None, description="Zugangstoken; kommt aus ENV (§20.2).")
     timeout_seconds: float = Field(default=defaults.SOURCE_TIMEOUT_SECONDS, gt=0.0)
     rate_limit_per_second: float = Field(
@@ -79,11 +88,77 @@ class SourceConnectionConfig(FrozenModel):
     page_size: int = Field(default=defaults.SOURCE_PAGE_SIZE, ge=1)
     verify_tls: bool = True
 
+    extra_headers: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Zusätzliche Kopfzeilen jeder Anfrage. Für Gateways, die neben dem Token noch einen "
+            "eigenen Schlüssel verlangen — etwa 'x-apikey'. Werte gehören in ENV (§20.2)."
+        ),
+    )
+    api_prefix: str | None = Field(
+        default=None,
+        description=(
+            "Pfadpräfix vor den Endpunkten des Adapters. Ohne Angabe gilt die Vorgabe des "
+            "Adapters. Ein Gateway, dessen base_url schon auf die API zeigt, setzt hier ''."
+        ),
+    )
+    internal: bool | None = Field(
+        default=None,
+        description=(
+            "Ob dieser Host ohne Proxy erreichbar sein muss. Ohne Angabe wird es aus dem Namen "
+            "abgeleitet (siehe 'is_internal'); die Angabe übersteuert die Ableitung."
+        ),
+    )
+
     # Ein Platzhalter mit leerem Rückfallwert (``${WG_SOURCE_JIRA__TOKEN:-}``) liefert einen
     # leeren String. Ohne diese Umwandlung ginge er als gesetztes Token durch, und jede Anfrage
     # trüge ein leeres 'Authorization: Bearer' — eine Kopfzeile, die manche Server anders
     # beantworten als gar keine.
-    _normalize = field_validator("base_url", "token", mode="before")(empty_to_none)
+    _normalize = field_validator("base_url", "web_base_url", "token", mode="before")(empty_to_none)
+
+    @property
+    def web_url(self) -> str:
+        """Die Adresse fuer Links im Text: die eigene, sonst die der API."""
+        return (self.web_base_url or self.base_url or "").rstrip("/")
+
+    @field_validator("extra_headers")
+    @classmethod
+    def _check_reserved(cls, value: dict[str, str]) -> dict[str, str]:
+        """Verbietet Kopfzeilen, die der Adapter selbst setzt.
+
+        Ohne diese Prüfung könnte ein ``Authorization``-Eintrag in ``extra_headers`` das aus
+        ``token`` gebaute Token still verdrängen. Beide sähen in der Konfiguration richtig aus,
+        und welcher gewinnt, hinge an der Reihenfolge im Code — genau die Art Fehler, die erst
+        beim ersten Aufruf gegen das echte System auffällt.
+        """
+        belegt = sorted(name for name in value if name.lower() in defaults.SOURCE_RESERVED_HEADERS)
+        if belegt:
+            raise ValueError(
+                f"Die Kopfzeilen {belegt} setzt der Adapter selbst und dürfen nicht in "
+                f"'extra_headers' stehen. Ein Bearer-Token gehört in 'connection.token'."
+            )
+        return value
+
+    @property
+    def is_internal(self) -> bool:
+        """Ob diese Quelle *ohne* Proxy erreicht werden muss (§5.2).
+
+        Die Unterscheidung ist im Unternehmensnetz entscheidend und läuft in beide Richtungen:
+        ``mock-sources`` **muss** am Proxy vorbei, sonst versucht der Proxy einen Containernamen
+        aufzulösen und der Fehler sieht aus wie ein Ausfall des Nachbarn. ``jira.schwarz`` muss
+        umgekehrt **über** den Proxy, weil es von innen sonst gar nicht erreichbar ist.
+
+        Abgeleitet wird es aus der Form des Namens: Ein Compose-Dienst heißt ``broker`` oder
+        ``mock-sources`` und hat keinen Punkt, ein Host im Netz heißt ``jira.schwarz`` und hat
+        einen. Die Faustregel trifft die üblichen Fälle; wo sie danebenliegt — ein interner Dienst
+        unter seinem FQDN —, entscheidet ``internal:`` in der Konfiguration.
+        """
+        if self.internal is not None:
+            return self.internal
+        host = extract_host(self.base_url or "")
+        if not host:
+            return False
+        return "." not in host or host in defaults.SOURCE_INTERNAL_HOSTS
 
 
 class SourceScheduleConfig(FrozenModel):
@@ -120,6 +195,13 @@ class SourceConfig(FrozenModel):
     id_prefix: str = Field(
         min_length=1,
         description="Präfix der erzeugten Konzept-IDs (§7.5). Nicht im Code, sondern hier.",
+    )
+    shared_id_prefix: bool = Field(
+        default=False,
+        description=(
+            "Erlaubt es, dieses Präfix mit anderen Quellen zu teilen. Für mehrere Ausschnitte "
+            "*einer* Instanz, deren Objekt-IDs instanzweit eindeutig sind."
+        ),
     )
     target: SourceTargetConfig
     connection: SourceConnectionConfig = SourceConnectionConfig()
@@ -175,16 +257,13 @@ class SourcesConfig(FrozenModel):
                 f"Quellnamen müssen eindeutig sein, doppelt: {doppelt}. Der Name identifiziert "
                 f"den Lauf, den Cursor und den Advisory-Lock (§10.5)."
             )
-        praefixe: dict[str, str] = {}
+        praefixe: dict[str, SourceConfig] = {}
         for source in self.sources:
             vorher = praefixe.get(source.id_prefix)
-            if vorher is not None:
-                raise ValueError(
-                    f"Die Quellen '{vorher}' und '{source.name}' benutzen beide das ID-Präfix "
-                    f"'{source.id_prefix}'. Ihre Objekte bekämen dieselben Konzept-IDs und würden "
-                    f"sich gegenseitig überschreiben (§7.5)."
-                )
-            praefixe[source.id_prefix] = source.name
+            if vorher is None:
+                praefixe[source.id_prefix] = source
+                continue
+            _check_shared_prefix(vorher, source)
         return self
 
     @property
@@ -202,6 +281,45 @@ class SourcesConfig(FrozenModel):
             if source.name == name:
                 return source
         raise KeyError(f"Unbekannte Quelle '{name}'.")
+
+
+def _check_shared_prefix(erste: SourceConfig, zweite: SourceConfig) -> None:
+    """Prüft, ob zwei Quellen sich ein ID-Präfix teilen dürfen (§7.5).
+
+    Der Regelfall ist, dass sie es nicht dürfen: Zwei Quellen mit demselben Präfix vergeben
+    dieselben Konzept-IDs und überschreiben einander. Es gibt aber einen Fall, in dem das Teilen
+    nicht der Unfall ist, sondern die Absicht — mehrere Ausschnitte *einer* Instanz.
+
+    Vier Confluence-Spaces, die in vier Scopes gehören, brauchen vier Quellblöcke, weil
+    ``target.scope`` je Block gilt. Ihre Seiten liegen trotzdem in einer Confluence-Instanz, und
+    Seiten-IDs sind dort instanzweit eindeutig. Sie müssen sich das Präfix sogar teilen: Verlinkt
+    eine Seite aus dem einen Space eine aus dem anderen, kennt der Adapter nur deren Seiten-ID —
+    aus welchem Space sie stammt und welcher Quellblock sie einmal holen wird, weiß er nicht. Mit
+    Präfixen je Block ließe sich diese Referenz nicht aufschreiben.
+
+    Deshalb ist das Teilen eine Erklärung, die beide Seiten abgeben müssen, und keine Ableitung.
+    Wer sie abgibt, sagt: Die Objekt-IDs dieser Quellen stammen aus einem Nummernkreis.
+
+    Raises:
+        ValueError: Wenn eine der beiden Quellen nicht zugestimmt hat oder die beiden
+            verschiedene Adapter benutzen.
+    """
+    stumm = [q.name for q in (erste, zweite) if not q.shared_id_prefix]
+    if stumm:
+        raise ValueError(
+            f"Die Quellen '{erste.name}' und '{zweite.name}' benutzen beide das ID-Präfix "
+            f"'{erste.id_prefix}'. Ihre Objekte bekämen dieselben Konzept-IDs und würden sich "
+            f"gegenseitig überschreiben (§7.5). Ist das gewollt — mehrere Ausschnitte einer "
+            f"Instanz mit einem Nummernkreis —, dann brauchen alle beteiligten Quellen "
+            f"'shared_id_prefix: true'; es fehlt bei: {', '.join(stumm)}."
+        )
+    if erste.adapter != zweite.adapter:
+        raise ValueError(
+            f"Die Quellen '{erste.name}' ({erste.adapter}) und '{zweite.name}' "
+            f"({zweite.adapter}) teilen sich das ID-Präfix '{erste.id_prefix}', benutzen aber "
+            f"verschiedene Adapter. Ein geteiltes Präfix behauptet einen gemeinsamen "
+            f"Nummernkreis; zwei Systeme haben keinen."
+        )
 
 
 def sources_file(settings: Settings, env: Mapping[str, str] | None = None) -> Path:
@@ -266,7 +384,36 @@ def load_sources(
 
     for source in config.sources:
         _check_against_settings(source, settings, ziel)
+    _check_shared_prefix_stores(config, settings, ziel)
     return config
+
+
+def _check_shared_prefix_stores(config: SourcesConfig, settings: Settings, path: Path) -> None:
+    """Quellen mit geteiltem Präfix müssen in denselben Store schreiben (§7.3, §20.1).
+
+    Ein geteiltes Präfix sagt: Diese IDs kommen aus einem Nummernkreis. Lägen zwei davon in
+    verschiedenen Stores, gäbe es ``confluence:123`` zweimal — einmal in ``shared``, einmal in
+    ``personal``. Eine Referenz darauf nennt aber nur die ID; welche der beiden gemeint ist,
+    stünde nirgends, und die Auflösung entschiede es nach Fundreihenfolge.
+
+    Das ist keine Formalie: Über diese Grenze läuft Leitprinzip 2. Ein Verweis, der in
+    ``personal`` landet statt in ``shared``, zieht persönliche Inhalte in einen Zusammenhang, in
+    den sie nicht gehören.
+    """
+    stores: dict[str, tuple[str, str]] = {}
+    for source in config.sources:
+        if not source.shared_id_prefix:
+            continue
+        store = settings.store_of_scope(source.target.scope)
+        vorher = stores.get(source.id_prefix)
+        if vorher is not None and vorher[1] != store:
+            raise ConfigValidationError(
+                f"Die Quellen '{vorher[0]}' und '{source.name}' in '{path}' teilen sich das "
+                f"ID-Präfix '{source.id_prefix}', schreiben aber in verschiedene Stores "
+                f"('{vorher[1]}' und '{store}'). Dieselbe Konzept-ID gäbe es dann zweimal, und "
+                f"eine Referenz darauf könnte nicht mehr sagen, welche gemeint ist (§7.3)."
+            )
+        stores.setdefault(source.id_prefix, (source.name, store))
 
 
 def _check_against_settings(source: SourceConfig, settings: Settings, path: Path) -> None:

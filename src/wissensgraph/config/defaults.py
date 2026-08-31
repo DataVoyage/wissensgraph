@@ -146,6 +146,11 @@ GENERATED_BY_SOURCE_REFERENCE: Final = "code:source-reference"
 #: Kantenart, die aus einer Referenz entsteht (§8.5).
 EDGE_KIND_REFERENCES: Final = "references"
 
+#: Kantenart einer Abhängigkeit. Sie steht hier und nicht erst bei der Kantenerkennung, weil ein
+#: Quellsystem sie als Tatsache melden kann — ein blockierter Jira-Vorgang hängt nachweislich vom
+#: blockierenden ab, und das muss kein Modell erst vermuten (§7.7, Leitprinzip 6).
+EDGE_KIND_DEPENDS_ON: Final = "depends_on"
+
 #: Voreingestellter Status eines Konzepts (§7.4).
 CONCEPT_STATUS_DEFAULT: Final = "stable"
 
@@ -198,6 +203,16 @@ SOURCE_RETRY_AFTER_HEADER: Final = "Retry-After"
 #: Feldnamen, die eine ``mapping:``-Sektion in ``sources.yaml`` belegen darf (§8.4). Sie
 #: entsprechen den Inhaltsfeldern des ``SourceDocument``.
 SOURCE_MAPPING_FIELDS: Final = ("title", "description", "body", "resource", "tags", "updated_at")
+
+#: Kopfzeilen, die der Adapter selbst setzt und die ``extra_headers`` deshalb nicht überschreiben
+#: darf. ``Authorization`` steht hier, weil das Token dafür einen eigenen, maskierten Weg hat
+#: (§20.2); wer es über ``extra_headers`` setzte, umginge diesen Weg.
+SOURCE_RESERVED_HEADERS: Final = ("accept", "authorization")
+
+#: Hostnamen, die trotz Punkten *innerhalb* der Maschine liegen. Die Faustregel der Proxy-Prüfung
+#: ist "ein Name ohne Punkt ist ein Nachbarcontainer"; diese beiden sind die Ausnahmen, die sie
+#: sonst falsch einordnete. Als Liste und nicht als Regex, damit es eine Entscheidung bleibt.
+SOURCE_INTERNAL_HOSTS: Final = ("localhost", "host.docker.internal", "127.0.0.1", "::1")
 
 # ---------------------------------------------------------------------------
 # Mock-Quellserver (§9)

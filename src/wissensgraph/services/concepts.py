@@ -537,11 +537,17 @@ class ConceptService:
         eine Behauptung: Wo ein noch nicht synchronisiertes Objekt einmal liegen wird, weiß hier
         niemand, und ein geratener Zielstore stünde als Tatsache in der Datenbank.
         """
-        herkunft = {
-            **dict.fromkeys(draft.body_references, defaults.GENERATED_BY_BODY_REFERENCE),
-            **dict.fromkeys(draft.source_references, defaults.GENERATED_BY_SOURCE_REFERENCE),
+        # Der Schlüssel ist Ziel *und* Art, nicht nur das Ziel: Eine Quelle darf über dasselbe
+        # Paar zwei Dinge sagen — "gehört dazu" und "verweist darauf" —, und ``ux_edges_triple``
+        # (§7.4) führt die Art im Tripel, lässt also beide Kanten zu.
+        herkunft: dict[tuple[str, str], str] = {
+            (ziel, defaults.EDGE_KIND_REFERENCES): defaults.GENERATED_BY_BODY_REFERENCE
+            for ziel in draft.body_references
         }
-        gefunden = self._ziele_aufloesen(uow, tuple(herkunft))
+        for verweis in draft.source_references:
+            herkunft[(verweis.target, verweis.kind)] = defaults.GENERATED_BY_SOURCE_REFERENCE
+
+        gefunden = self._ziele_aufloesen(uow, tuple(dict.fromkeys(ziel for ziel, _ in herkunft)))
         jetzt = self._clock()
 
         drafts = [
@@ -550,12 +556,12 @@ class ConceptService:
                 from_id=concept.id,
                 to_store=gefunden.get(ziel, concept.store),
                 to_id=ziel,
-                kind=defaults.EDGE_KIND_REFERENCES,
+                kind=art,
                 resolved=ziel in gefunden,
                 generated_by=erzeuger,
                 generated_at=jetzt,
             )
-            for ziel, erzeuger in herkunft.items()
+            for (ziel, art), erzeuger in herkunft.items()
         ]
 
         hinzugefuegt, entfernt = uow.edges.replace_generated(

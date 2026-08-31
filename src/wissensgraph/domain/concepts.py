@@ -25,7 +25,11 @@ from wissensgraph.config import defaults
 from wissensgraph.domain.base import DomainModel, unique_strings
 from wissensgraph.domain.hashing import content_hash
 from wissensgraph.domain.ids import validate_concept_id
-from wissensgraph.domain.references import extract_references
+from wissensgraph.domain.references import (
+    SourceReference,
+    extract_references,
+    normalize_references,
+)
 
 
 class ConceptStatus(StrEnum):
@@ -109,13 +113,16 @@ class ConceptFields(DomainModel):
 class ConceptDraft(ConceptFields):
     """Ein vorgeschlagenes Konzept, noch ohne Store und Zeitstempel (§10.2)."""
 
-    references: tuple[str, ...] = Field(
+    references: tuple[SourceReference, ...] = Field(
         default=(),
         description=(
             "Referenzen, die der Adapter zusätzlich zum body-Text mitliefert (§8.5). Sie werden "
-            "mit den '[[id]]'-Referenzen aus dem body vereinigt."
+            "mit den '[[id]]'-Referenzen aus dem body vereinigt. Eine blanke ID gilt als "
+            "gewöhnliche 'references'-Kante."
         ),
     )
+
+    _lift_references = field_validator("references", mode="before")(normalize_references)
 
     @property
     def content_hash(self) -> str:
@@ -133,23 +140,44 @@ class ConceptDraft(ConceptFields):
         return self._ohne_selbstbezug(extract_references(self.body))
 
     @property
-    def source_references(self) -> tuple[str, ...]:
+    def source_references(self) -> tuple[SourceReference, ...]:
         """Die vom Adapter gemeldeten Referenzen, die *nicht* schon im Fließtext stehen (§8.5).
 
         Die Trennung ist keine Buchhaltung, sondern eine Frage der Herkunft: §8.5 verlangt für
         Referenzen aus der Quelle ``generated_by: 'code:source-reference'``, für die aus dem Text
         gilt ``code:body-reference``. Steht derselbe Verweis in beidem, gewinnt der Text — er ist
         der belegbare Nachweis, und zwei Kanten mit demselben Tripel kann es ohnehin nicht geben.
+
+        "Derselbe Verweis" heißt: dasselbe Ziel **und** dieselbe Kantenart. Ein Vorgang, der im
+        Text auf sein Epic zeigt und in den Feldern als dessen Mitglied geführt wird, sagt zwei
+        verschiedene Dinge über dasselbe Paar; ``ux_edges_triple`` (§7.4) lässt beide Kanten zu,
+        weil die Art Teil des Tripels ist.
         """
         aus_dem_text = set(self.body_references)
-        return tuple(
-            ziel for ziel in self._ohne_selbstbezug(self.references) if ziel not in aus_dem_text
-        )
+        gesehen: set[tuple[str, str]] = set()
+        result: list[SourceReference] = []
+        for verweis in self.references:
+            schluessel = (verweis.target, verweis.kind)
+            if verweis.target == self.id or schluessel in gesehen:
+                continue
+            if verweis.kind == defaults.EDGE_KIND_REFERENCES and verweis.target in aus_dem_text:
+                continue
+            gesehen.add(schluessel)
+            result.append(verweis)
+        return tuple(result)
 
     @property
     def all_references(self) -> tuple[str, ...]:
-        """Beide Herkünfte zusammen, Text zuerst — für Prüfungen, denen die Herkunft egal ist."""
-        return (*self.body_references, *self.source_references)
+        """Beide Herkünfte zusammen, Text zuerst — für Prüfungen, denen die Herkunft egal ist.
+
+        Nur die Ziele: Wer diese Eigenschaft benutzt, fragt "auf was zeigt dieses Konzept", nicht
+        "auf welche Weise".
+        """
+        aus_der_quelle: list[str] = []
+        for verweis in self.source_references:
+            if verweis.target not in aus_der_quelle:
+                aus_der_quelle.append(verweis.target)
+        return (*self.body_references, *aus_der_quelle)
 
     def _ohne_selbstbezug(self, kandidaten: tuple[str, ...]) -> tuple[str, ...]:
         """Entdoppelt unter Beibehaltung der Reihenfolge und wirft den Selbstbezug weg."""

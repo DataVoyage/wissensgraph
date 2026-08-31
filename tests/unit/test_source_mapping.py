@@ -138,7 +138,7 @@ class TestSourceMapper:
         """§8.5: "übersetzt sie über das Präfix der Quelle in interne IDs"."""
         draft = self._mapper().to_draft(SourceDocument(external_id="1", references=("2", "3")))
 
-        assert draft.references == ("confluence:2", "confluence:3")
+        assert [v.target for v in draft.references] == ["confluence:2", "confluence:3"]
 
     def test_eine_referenz_mit_bekanntem_praefix_bleibt_stehen(self) -> None:
         """Der quellübergreifende Verweis: ein Jira-Vorgang zeigt auf eine Confluence-Seite."""
@@ -146,13 +146,13 @@ class TestSourceMapper:
             SourceDocument(external_id="1", references=("jira:TEAM-4",))
         )
 
-        assert draft.references == ("jira:TEAM-4",)
+        assert [v.target for v in draft.references] == ["jira:TEAM-4"]
 
     def test_ein_unbekanntes_praefix_gilt_als_externe_id(self) -> None:
         """Sonst zeigte eine externe ID mit Doppelpunkt auf ein Konzept, das es nie geben wird."""
         draft = self._mapper().to_draft(SourceDocument(external_id="1", references=("ABC:42",)))
 
-        assert draft.references == ("confluence:ABC:42",)
+        assert [v.target for v in draft.references] == ["confluence:ABC:42"]
 
     def test_referenzen_aus_dem_text_bleiben_unangetastet(self) -> None:
         """Eine '[[id]]'-Referenz ist bereits eine interne ID — sie wird nicht übersetzt."""

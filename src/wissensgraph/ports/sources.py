@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from pydantic import Field, field_validator
 
 from wissensgraph.domain.base import DomainModel, unique_strings
+from wissensgraph.domain.references import SourceReference, normalize_references
 
 if TYPE_CHECKING:  # pragma: no cover — nur für die Typprüfung, zur Laufzeit nicht nötig
     from wissensgraph.config.sources import SourceConfig
@@ -85,9 +86,13 @@ class SourceDocument(DomainModel):
         default=None,
         description="Überschreibt den 'default_type' der Quelle für dieses eine Objekt (§8.4).",
     )
-    references: tuple[str, ...] = Field(
+    references: tuple[SourceReference, ...] = Field(
         default=(),
-        description="Externe IDs, auf die dieses Objekt verweist — noch nicht übersetzt (§8.5).",
+        description=(
+            "Verweise dieses Objekts — noch nicht in interne IDs übersetzt (§8.5). Eine blanke "
+            "ID gilt als gewöhnliche 'references'-Kante; ein Adapter, der die Art kennt, gibt "
+            "sie mit an."
+        ),
     )
     extra: dict[str, Any] = Field(
         default_factory=dict,
@@ -97,7 +102,8 @@ class SourceDocument(DomainModel):
         ),
     )
 
-    _normalize_tags = field_validator("tags", "references", mode="before")(unique_strings)
+    _normalize_tags = field_validator("tags", mode="before")(unique_strings)
+    _lift_references = field_validator("references", mode="before")(normalize_references)
 
 
 class Cursor(DomainModel):

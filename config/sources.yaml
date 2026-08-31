@@ -10,6 +10,13 @@
 # Der Store steht bewusst nur zur Kontrolle dabei. Maßgeblich ist der Scope; wohin ein Scope
 # schreibt, entscheidet allein config/wissensgraph.yaml (§20.1). Weichen beide voneinander ab,
 # bricht der Start ab.
+#
+# ZUR 'mapping'-SEKTION: Sie schlägt die Vorgaben des Adapters (§8.4) — und das ist bei den
+# Inhaltsfeldern selten gewollt. Der Adapter liefert unter 'body' bereits fertiges Markdown; ein
+# Eintrag 'body: $.body.storage.value' ersetzte es durch das rohe Storage-Format und machte die
+# gesamte Umwandlung wirkungslos, ohne dass irgendetwas fehlschlüge. Dasselbe gilt für 'tags'
+# (der Adapter liest beide Antwortformen) und 'resource' (er baut eine absolute Adresse). Ein
+# 'mapping' für diese Felder gehört deshalb nur dorthin, wo eine Instanz wirklich abweicht.
 
 sources:
   - name: confluence-eng
@@ -22,6 +29,9 @@ sources:
       default_type: Confluence Page
     connection:
       base_url: ${WG_SOURCE_CONFLUENCE__BASE_URL:-http://mock-sources:8090/confluence}
+      # Die Adresse für Links im erzeugten Text. Hinter einem Gateway ist sie eine andere als
+      # die der API; ohne Angabe wird die API-Adresse benutzt.
+      web_base_url: ${WG_SOURCE_CONFLUENCE__WEB_URL:-}
       token: ${WG_SOURCE_CONFLUENCE__TOKEN:-}
       timeout_seconds: 30
       rate_limit_per_second: 5
@@ -30,18 +40,10 @@ sources:
     selection:
       spaces: [ENG, ARCH]
       exclude_labels: [archiv, entwurf]
-    # Die Ausdrücke schlagen die Vorgaben des Adapters. Ein leeres Ergebnis lässt die Vorgabe
-    # stehen — 'description' darf fehlen und wird später per Task 'summarization' erzeugt (§8.4).
-    mapping:
-      title: $.title
-      description: $.excerpt
-      body: $.body.storage.value
-      resource: $.links.webui
-      tags: $.metadata.labels[*].name
     schedule:
       cron: 0 */6 * * *
-      # Zeitsteuerung ist in Stufe 3 ausdrücklich außen vor (§24); Läufe werden von Hand
-      # ausgelöst. Der Eintrag steht hier, damit die Umstellung später keine Strukturänderung ist.
+      # Zeitsteuerung ist ausdrücklich außen vor (§24); Läufe werden von Hand ausgelöst. Der
+      # Eintrag steht hier, damit die Umstellung später keine Strukturänderung ist.
       enabled: false
 
   - name: jira-team
@@ -54,6 +56,7 @@ sources:
       default_type: Jira Issue
     connection:
       base_url: ${WG_SOURCE_JIRA__BASE_URL:-http://mock-sources:8090/jira}
+      web_base_url: ${WG_SOURCE_JIRA__WEB_URL:-}
       token: ${WG_SOURCE_JIRA__TOKEN:-}
       timeout_seconds: 30
       rate_limit_per_second: 5
@@ -62,11 +65,130 @@ sources:
     selection:
       boards: [TEAM]
       jql_filter: project = TEAM
-    mapping:
-      title: $.fields.summary
-      body: $.fields.description
-      resource: $.self
-      tags: $.fields.labels[*]
+      # Eine ausdrückliche Feldliste statt '*all': Sie verkleinert die Antwort und damit alles,
+      # was danach über sie läuft — bis hin zu den Token des Embeddings.
+      fields:
+        - summary
+        - description
+        - issuetype
+        - status
+        - priority
+        - labels
+        - updated
+        - parent
+        - subtasks
+        - issuelinks
     schedule:
       cron: 0 */6 * * *
       enabled: false
+
+# ---------------------------------------------------------------------------
+# Echte Quellen (§24, Stufe 13)
+# ---------------------------------------------------------------------------
+#
+# Die folgenden Blöcke sind der Betriebsfall. Sie sind auskommentiert, weil ein frisch
+# ausgechecktes Repository ohne Zugangsdaten lauffähig bleiben soll; zum Aktivieren genügt
+# Auskommentieren plus die passenden Werte in der .env. Mock- und echte Quellen dürfen
+# nebeneinander stehen — 'wg sync --source <name>' wählt gezielt aus.
+#
+# VIER BLÖCKE, EIN NUMMERNKREIS. 'target.scope' gilt je Block, also braucht jeder Fachbereich
+# einen eigenen. Die Seiten liegen trotzdem in *einer* Confluence-Instanz, und Seiten-IDs sind
+# dort instanzweit eindeutig. Deshalb teilen sich alle Blöcke das Präfix 'confluence' und
+# erklären das mit 'shared_id_prefix: true'. Ohne diese Erklärung bricht der Start ab — und das
+# zu Recht: Ein geteiltes Präfix ohne gemeinsamen Nummernkreis hieße, dass zwei Quellen einander
+# überschreiben (§7.5). Mit Präfixen je Block ließe sich umgekehrt ein Verweis über die
+# Space-Grenze gar nicht aufschreiben: Der Adapter kennt nur die Seiten-ID des Ziels, nicht den
+# Block, der sie einmal holen wird.
+#
+# Die Scopes müssen vorher in config/wissensgraph.yaml unter 'scopes:' stehen, sonst meldet
+# 'wg doctor' einen Konfigurationsfehler.
+#
+#  - name: confluence-flwoperativesysteme
+#    adapter: confluence
+#    id_prefix: confluence
+#    shared_id_prefix: true
+#    target: {scope: flwoperativesysteme, default_type: Confluence Page}
+#    # Der Anker spart die Wiederholung in den drei Blöcken darunter: Es ist ein Gateway mit
+#    # einem Schlüssel, und drei Kopien davon wären drei Stellen, an denen ein Wert veralten kann.
+#    connection: &confluence-live
+#      base_url: ${WG_SOURCE_CONFLUENCE__BASE_URL}
+#      web_base_url: ${WG_SOURCE_CONFLUENCE__WEB_URL}
+#      token: ${WG_SOURCE_CONFLUENCE__TOKEN}
+#      # Das Gateway bietet die Confluence-Endpunkte ohne deren '/rest/api'-Präfix an, weil
+#      # seine eigene base_url bereits auf die API zeigt.
+#      api_prefix: ""
+#      # Neben dem Token verlangt das Gateway einen eigenen Schlüssel. Fehlt er, antwortet es
+#      # mit 401 — und das sähe ohne diesen Eintrag wie ein Auth-Fehler von Confluence aus.
+#      extra_headers:
+#        x-apikey: ${WG_SOURCE_CONFLUENCE__API_KEY}
+#      rate_limit_per_second: 10
+#      page_size: 50
+#    selection:
+#      spaces: [FLWOPERATIVESYSTEME]
+#
+#  - name: confluence-klfleischwerke
+#    adapter: confluence
+#    id_prefix: confluence
+#    shared_id_prefix: true
+#    target: {scope: klfleischwerke, default_type: Confluence Page}
+#    connection: *confluence-live
+#    selection:
+#      spaces: [KLFLEISCHWERKE]
+#
+#  - name: confluence-data-analytics
+#    adapter: confluence
+#    id_prefix: confluence
+#    shared_id_prefix: true
+#    target: {scope: data-analytics, default_type: Confluence Page}
+#    connection: *confluence-live
+#    selection:
+#      spaces: [KFDM]
+#
+#  - name: confluence-iot
+#    adapter: confluence
+#    id_prefix: confluence
+#    shared_id_prefix: true
+#    target: {scope: iot-platform, default_type: Confluence Page}
+#    connection: *confluence-live
+#    selection:
+#      spaces: [IEP]
+#
+#  - name: jira-flwoperativesysteme
+#    adapter: jira
+#    id_prefix: jira
+#    target: {scope: flwoperativesysteme, default_type: Jira Issue}
+#    connection:
+#      base_url: ${WG_SOURCE_JIRA__BASE_URL}
+#      web_base_url: ${WG_SOURCE_JIRA__WEB_URL}
+#      token: ${WG_SOURCE_JIRA__TOKEN}
+#      # Data Center kennt keine Version 3. Der Vorgabewert ist bereits '/rest/api/2'; die
+#      # Zeile steht hier, damit die Festlegung sichtbar ist und nicht nur gilt.
+#      api_prefix: /rest/api/2
+#      rate_limit_per_second: 10
+#      page_size: 50
+#    selection:
+#      # Ein weiteres Projekt mit demselben Scope gehört in diese Liste, nicht in einen zweiten
+#      # Block: 'project in (KFLWOPS, ANDERES)'. Ein anderer Scope braucht einen eigenen Block.
+#      jql_filter: "project in (KFLWOPS) ORDER BY updated DESC"
+#      # Remote-Links zeigen von Jira auf Confluence-Seiten. Sie kosten eine zusätzliche
+#      # Anfrage je Vorgang — bei zehntausend Vorgängen der Unterschied zwischen Minuten und
+#      # Stunden. Deshalb eine Entscheidung und keine Voreinstellung.
+#      remote_links: true
+#      remote_link_prefix: confluence
+#      fields:
+#        - summary
+#        - description
+#        - issuetype
+#        - status
+#        - priority
+#        - assignee
+#        - reporter
+#        - created
+#        - updated
+#        - resolution
+#        - labels
+#        - components
+#        - fixVersions
+#        - parent
+#        - subtasks
+#        - issuelinks

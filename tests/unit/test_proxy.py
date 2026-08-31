@@ -176,6 +176,77 @@ class TestProxypruefung:
         assert "host.docker.internal" in ergebnis.detail
 
 
+class TestGegenrichtung:
+    """Die andere Hälfte der Bedingung: Was *durch* den Proxy muss (§5.2, §15.6).
+
+    Beide Richtungen gleichzeitig richtig zu haben ist die eigentliche Vorbedingung im
+    Unternehmensnetz. Der Nachbarcontainer muss am Proxy vorbei, sonst versucht dieser einen
+    Compose-Dienstnamen aufzulösen. Das Quellsystem im Netz muss umgekehrt hindurch, sonst ist es
+    von innen gar nicht erreichbar — und der Fehlschlag ist eine Zeitüberschreitung beim ersten
+    Sync, also weit weg von seiner Ursache.
+    """
+
+    def externe_quelle(self, tmp_path: Path) -> Path:
+        """Eine Quellkonfiguration mit einem Host außerhalb der Maschine."""
+        datei = tmp_path / "sources.yaml"
+        datei.write_text(
+            yaml.safe_dump(
+                {
+                    "sources": [
+                        {
+                            "name": "jira-live",
+                            "adapter": "jira",
+                            "id_prefix": "jira",
+                            "target": {"scope": "engineering", "default_type": "Jira Issue"},
+                            "connection": {"base_url": "https://jira.example"},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return datei
+
+    def test_eine_externe_quelle_wird_nicht_in_no_proxy_verlangt(
+        self, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sie dort zu verlangen hieße, genau den Weg zu sperren, auf dem sie erreichbar ist."""
+        monkeypatch.setenv("WG_SOURCES_FILE", str(self.externe_quelle(tmp_path)))
+        umgebung = {**PROXY, "NO_PROXY": "db-shared,db-personal,broker"}
+
+        (ergebnis,) = check_proxy(settings, env=umgebung)
+
+        assert ergebnis.status is CheckStatus.OK
+        assert "jira.example" not in ergebnis.context["interne_hosts"]
+        assert "jira.example" in ergebnis.context["externe_hosts"]
+
+    def test_eine_externe_quelle_in_no_proxy_ist_eine_warnung(
+        self, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Keine Ablehnung: Es gibt Netze, in denen ein externer Host auch direkt erreichbar ist.
+        Feststellen lässt sich das von hier aus nicht — der häufigere Fall ist ein zu weit
+        gefasster NO_PROXY-Eintrag."""
+        monkeypatch.setenv("WG_SOURCES_FILE", str(self.externe_quelle(tmp_path)))
+        umgebung = {**PROXY, "NO_PROXY": "db-shared,db-personal,broker,jira.example"}
+
+        (ergebnis,) = check_proxy(settings, env=umgebung)
+
+        assert ergebnis.status is CheckStatus.WARN
+        assert "jira.example" in ergebnis.detail
+
+    def test_die_interne_richtung_wiegt_schwerer(
+        self, settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fehlen beide, wird der Fehler gemeldet und nicht die Warnung: Ein abgeschnittener
+        interner Verkehr legt das System still, ein umgangener Proxy nur eine Quelle."""
+        monkeypatch.setenv("WG_SOURCES_FILE", str(self.externe_quelle(tmp_path)))
+        umgebung = {**PROXY, "NO_PROXY": "jira.example"}
+
+        (ergebnis,) = check_proxy(settings, env=umgebung)
+
+        assert ergebnis.status is CheckStatus.FAIL
+
+
 class TestComposeVorgabe:
     """Die Compose-Datei nimmt dem Betreiber die Liste ab."""
 

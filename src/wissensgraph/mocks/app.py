@@ -11,6 +11,7 @@ keine hat schützen sollen, und er läuft nur im Compose-Profil ``dev`` und ``te
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -31,6 +32,22 @@ _log = get_logger(__name__)
 #: im Compose einen Container und macht die Steuerungs-API zu genau einer Adresse.
 CONFLUENCE_PREFIX = "/confluence"
 JIRA_PREFIX = "/jira"
+
+#: Zweiter Zugang zu denselben Confluence-Endpunkten, diesmal wie hinter einem API-Gateway: ohne
+#: das ``/rest/api``-Präfix und mit einem zusätzlich verlangten Schlüssel. Er ist kein Beiwerk,
+#: sondern der einzige Weg, die beiden Dinge in der Entwicklung wirklich zu durchlaufen, an denen
+#: eine Anbindung hinter einem Gateway sonst erst im Betrieb scheitert: ein anderes Pfadpräfix
+#: (``connection.api_prefix``) und eine zweite Kopfzeile (``connection.extra_headers``).
+CONFLUENCE_GATEWAY_PREFIX = "/gateway/confluence"
+
+#: Die Kopfzeile, die der Gateway-Zugang verlangt. Fehlt sie, antwortet er mit 401 — genau wie
+#: das echte Gateway, dessen 401 ohne diese Nachbildung wie ein Auth-Fehler des Quellsystems
+#: aussähe und an der falschen Stelle gesucht würde.
+GATEWAY_API_KEY_HEADER = "x-apikey"
+
+#: Die Jira-API-Versionen, die der Mock bedient. Data Center kennt ``2``, Cloud ``3``; der
+#: Adapter kann beide ansprechen, und beide sollen in der Entwicklung erreichbar sein.
+JIRA_API_VERSIONS = ("2", "3")
 
 
 def create_mock_app(fixtures_dir: Path | None = None) -> FastAPI:
@@ -58,8 +75,11 @@ def create_mock_app(fixtures_dir: Path | None = None) -> FastAPI:
 
     _register_middleware(app, state)
     _register_control(app, state)
-    _register_confluence(app, state)
-    _register_jira(app, state)
+    _register_confluence(app, state, f"{CONFLUENCE_PREFIX}/rest/api")
+    _register_confluence(app, state, CONFLUENCE_GATEWAY_PREFIX)
+    for version in JIRA_API_VERSIONS:
+        _register_jira(app, state, version)
+    _register_jira_agile(app, state)
     return app
 
 
@@ -81,6 +101,16 @@ def _register_middleware(app: FastAPI, state: MockState) -> None:
         pfad = request.url.path
         if pfad.startswith(defaults.MOCK_CONTROL_PREFIX):
             return await call_next(request)  # type: ignore[no-any-return]
+
+        if pfad.startswith(CONFLUENCE_GATEWAY_PREFIX) and not request.headers.get(
+            GATEWAY_API_KEY_HEADER
+        ):
+            _log.info("mock.gateway_schluessel_fehlt", path=pfad)
+            return Response(
+                content=f'{{"message":"{GATEWAY_API_KEY_HEADER} fehlt"}}',
+                status_code=401,
+                media_type="application/json",
+            )
 
         if state.latency_seconds > 0:
             # Nicht 'time.sleep': Der Server soll langsam antworten, nicht stehenbleiben. Sonst
@@ -159,18 +189,47 @@ def _register_control(app: FastAPI, state: MockState) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _register_confluence(app: FastAPI, state: MockState) -> None:
-    """Der von :class:`ConfluenceAdapter` benutzte Ausschnitt der Confluence-REST-API."""
-    basis = f"{CONFLUENCE_PREFIX}/rest/api"
+def _register_confluence(app: FastAPI, state: MockState, basis: str) -> None:
+    """Der von :class:`ConfluenceAdapter` benutzte Ausschnitt der Confluence-REST-API.
+
+    Args:
+        basis: Das Pfadpräfix, unter dem die Endpunkte erscheinen. Sie werden zweimal
+            registriert — einmal wie eine Standardinstallation, einmal wie ein Gateway —, damit
+            beide Betriebsarten in der Entwicklung wirklich durchlaufen werden und nicht nur die
+            eine, die zufällig konfiguriert ist.
+    """
 
     @app.get(f"{basis}/space", summary="Spaces auflisten")
     def spaces() -> dict[str, Any]:
         return {"results": state.spaces, "size": len(state.spaces)}
 
+    @app.get(f"{basis}/content/search", summary="Seiten über CQL suchen")
+    def suche(
+        cql: Annotated[str, Query()],
+        limit: Annotated[int, Query(ge=1)] = defaults.SOURCE_PAGE_SIZE,
+    ) -> dict[str, Any]:
+        """Die Titelsuche der Linkauflösung (Phase A).
+
+        Nachgebildet wird nicht CQL, sondern der Weg dorthin: Der Mock liest ``space=`` und
+        ``title=`` aus der Abfrage heraus und vergleicht sie. Eine echte CQL-Auswertung
+        vorzutäuschen brächte nichts — geprüft werden soll, dass der Adapter die Abfrage baut,
+        abschickt und die Antwort richtig liest.
+        """
+        space = _cql_wert(cql, "space")
+        titel = _cql_wert(cql, "title")
+        treffer = [
+            _mit_links(seite, state)
+            for seite in _sortiert(state.pages)
+            if (space is None or str(seite.get("space", {}).get("key", "")) == space)
+            and (titel is None or str(seite.get("title", "")) == titel)
+        ][:limit]
+        return {"results": treffer, "size": len(treffer), "totalSize": len(treffer)}
+
     @app.get(f"{basis}/content", summary="Seiten auflisten, seitenweise")
     def content(
         spaceKey: Annotated[list[str] | None, Query()] = None,
         since: Annotated[str | None, Query()] = None,
+        expand: Annotated[str | None, Query()] = None,
         start: Annotated[int, Query(ge=0)] = 0,
         limit: Annotated[int, Query(ge=1)] = defaults.SOURCE_PAGE_SIZE,
     ) -> dict[str, Any]:
@@ -196,7 +255,7 @@ def _register_confluence(app: FastAPI, state: MockState) -> None:
         return {"results": [{"id": page_id} for page_id in state.deleted_pages]}
 
     @app.get(f"{basis}/content/{{page_id}}", summary="Eine Seite holen")
-    def einzelne(page_id: str) -> dict[str, Any]:
+    def einzelne(page_id: str, expand: Annotated[str | None, Query()] = None) -> dict[str, Any]:
         seite = state.pages.get(page_id)
         if seite is None:
             raise HTTPException(status_code=404, detail=f"Seite '{page_id}' gibt es nicht.")
@@ -208,17 +267,30 @@ def _register_confluence(app: FastAPI, state: MockState) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _register_jira(app: FastAPI, state: MockState) -> None:
-    """Der von :class:`JiraAdapter` benutzte Ausschnitt der Jira-REST-API."""
+def _register_jira_agile(app: FastAPI, state: MockState) -> None:
+    """Der Agile-Endpunkt. Er liegt außerhalb der versionierten API und deshalb außerhalb der
+    Schleife über die Versionen."""
 
     @app.get(f"{JIRA_PREFIX}/rest/agile/1.0/board", summary="Boards auflisten")
     def boards() -> dict[str, Any]:
         return {"values": state.boards, "total": len(state.boards)}
 
-    @app.get(f"{JIRA_PREFIX}/rest/api/3/search", summary="Vorgänge suchen, seitenweise")
+
+def _register_jira(app: FastAPI, state: MockState, version: str) -> None:
+    """Der von :class:`JiraAdapter` benutzte Ausschnitt der Jira-REST-API.
+
+    Args:
+        version: Die API-Version im Pfad. Data Center antwortet unter ``2``, Cloud unter ``3``;
+            beide zu bedienen kostet eine Schleife und erspart es, den Adapter gegen die eine
+            Version zu entwickeln und gegen die andere zu betreiben.
+    """
+    basis = f"{JIRA_PREFIX}/rest/api/{version}"
+
+    @app.get(f"{basis}/search", summary="Vorgänge suchen, seitenweise")
     def search(
         jql: Annotated[str | None, Query()] = None,
         since: Annotated[str | None, Query()] = None,
+        fields: Annotated[str | None, Query()] = None,
         startAt: Annotated[int, Query(ge=0)] = 0,
         maxResults: Annotated[int, Query(ge=1)] = defaults.SOURCE_PAGE_SIZE,
     ) -> dict[str, Any]:
@@ -235,11 +307,25 @@ def _register_jira(app: FastAPI, state: MockState) -> None:
             "total": len(gewaehlt),
         }
 
-    @app.get(f"{JIRA_PREFIX}/rest/api/3/deleted", summary="Gelöschte Vorgänge melden")
+    @app.get(f"{basis}/deleted", summary="Gelöschte Vorgänge melden")
     def deleted() -> dict[str, Any]:
         return {"keys": list(state.deleted_issues)}
 
-    @app.get(f"{JIRA_PREFIX}/rest/api/3/issue/{{key}}", summary="Einen Vorgang holen")
+    @app.get(f"{basis}/issue/{{key}}/remotelink", summary="Remote-Links eines Vorgangs")
+    def remotelinks(key: str) -> list[dict[str, Any]]:
+        """Verweise auf Objekte außerhalb von Jira — üblicherweise Confluence-Seiten.
+
+        Sie stehen in der Fixture unter ``fields.remotelinks``, weil sie dort zum Vorgang
+        gehören; ausgeliefert werden sie über einen eigenen Endpunkt, weil die echte API es so
+        macht — und weil der Adapter genau deshalb eine zusätzliche Anfrage je Vorgang braucht,
+        die abschaltbar sein muss.
+        """
+        vorgang = state.issues.get(key)
+        if vorgang is None:
+            raise HTTPException(status_code=404, detail=f"Vorgang '{key}' gibt es nicht.")
+        return list(vorgang.get("fields", {}).get("remotelinks", []))
+
+    @app.get(f"{basis}/issue/{{key}}", summary="Einen Vorgang holen")
     def issue(key: str) -> dict[str, Any]:
         vorgang = state.issues.get(key)
         if vorgang is None:
@@ -271,6 +357,20 @@ def _mit_links(seite: dict[str, Any], state: MockState) -> dict[str, Any]:
     kopie = dict(seite)
     kopie["links"] = {**kopie.get("links", {}), "internal": state.links.get(str(seite["id"]), [])}
     return kopie
+
+
+def _cql_wert(cql: str, feld: str) -> str | None:
+    """Liest ``feld="wert"`` aus einer CQL-Abfrage heraus.
+
+    Bewusst genügsam: Der Mock täuscht keine CQL-Auswertung vor (§9.1 verlangt den *Codepfad* des
+    Adapters, nicht die Semantik der Quelle). Maskierte Anführungszeichen werden trotzdem
+    berücksichtigt — sonst fände ein Titel mit Anführungszeichen hier nichts, obwohl der Adapter
+    ihn korrekt maskiert hat, und der Fehler sähe nach einem Adapterfehler aus.
+    """
+    treffer = re.search(rf'{feld}\s*=\s*"((?:[^"\\]|\\.)*)"', cql)
+    if treffer is None:
+        return None
+    return treffer.group(1).replace('\\"', '"').replace("\\\\", "\\")
 
 
 def _space_passt(seite: dict[str, Any], spaces: list[str] | None) -> bool:
