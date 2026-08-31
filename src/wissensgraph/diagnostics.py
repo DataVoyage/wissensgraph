@@ -22,7 +22,7 @@ from sqlalchemy.exc import DatabaseError, SQLAlchemyError
 from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigError
 from wissensgraph.config.masking import mask_dsn
-from wissensgraph.config.models import load_models
+from wissensgraph.config.models import ModelsConfig, load_models
 from wissensgraph.config.network import is_local_dsn
 from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import load_sources
@@ -207,6 +207,74 @@ def check_models(settings: Settings, path: Path | None = None) -> tuple[CheckRes
                     + (" — Zugangsdaten fehlen." if fehlt else ".")
                 ),
                 context={"provider": route.provider, "model": route.model, "local": provider.local},
+            )
+        )
+    ergebnisse.extend(_vertex_pruefen(models))
+    return tuple(ergebnisse)
+
+
+def _vertex_pruefen(models: ModelsConfig) -> tuple[CheckResult, ...]:
+    """Prüft die Anbieter vom Typ ``vertex`` auf das, was ohne Netz feststellbar ist (§11.4).
+
+    Ausgegeben wird der **aufgelöste Endpunkt** und nicht nur ein "in Ordnung". Aus dem Standort
+    folgt der Hostname, und ein Tippfehler darin ist die eine Fehlkonfiguration, die sich nicht
+    von selbst meldet: ``europe-west4``, ``eu`` und ``global`` sind alle drei gültig und führen an
+    verschiedene Orte. Wer den Endpunkt liest, sieht sofort, ob er den gemeinten vor sich hat.
+
+    Der Dienstkonto-Schlüssel wird nur auf Vorhandensein geprüft, nicht auf Gültigkeit — das
+    beantwortet erst der erste Aufruf. Ein *fehlender* Eintrag ist dabei kein Mangel: Ohne ihn
+    gilt die Standard-Anmeldung der Umgebung, die im Betrieb auf Google-Infrastruktur der
+    übliche und sicherere Weg ist.
+    """
+    ergebnisse: list[CheckResult] = []
+    for name in sorted(models.providers):
+        provider = models.providers[name]
+        if provider.type != defaults.PROVIDER_TYPE_VERTEX:
+            continue
+        pruefung = f"vertex:{name}"
+        if not provider.project or not provider.location:
+            fehlend = "project" if not provider.project else "location"
+            ergebnisse.append(
+                CheckResult(
+                    name=pruefung,
+                    status=CheckStatus.WARN,
+                    detail=(
+                        f"'{fehlend}' fehlt (WG_PROVIDER_VERTEX__{fehlend.upper()}). Der Anbieter "
+                        "ist damit nicht benutzbar."
+                    ),
+                )
+            )
+            continue
+
+        schluessel = provider.credentials_file
+        if schluessel and not Path(schluessel).is_file():
+            ergebnisse.append(
+                CheckResult(
+                    name=pruefung,
+                    status=CheckStatus.FAIL,
+                    detail=(
+                        f"Der Dienstkonto-Schlüssel '{schluessel}' fehlt. Im Container liegt er "
+                        "unter '/app/secrets', weil Compose './secrets' dorthin einbindet."
+                    ),
+                    context={"endpoint": provider.endpoint},
+                )
+            )
+            continue
+
+        anmeldung = "Dienstkonto-Schlüssel" if schluessel else "Standard-Anmeldung der Umgebung"
+        ergebnisse.append(
+            CheckResult(
+                name=pruefung,
+                status=CheckStatus.OK,
+                detail=(
+                    f"Projekt '{provider.project}', Standort '{provider.location}' -> "
+                    f"{provider.endpoint}; Anmeldung über {anmeldung}."
+                ),
+                context={
+                    "project": provider.project,
+                    "location": provider.location,
+                    "endpoint": provider.endpoint,
+                },
             )
         )
     return tuple(ergebnisse)

@@ -16,9 +16,23 @@ providers:
     api_key: ${WG_PROVIDER_GEMINI__API_KEY:-}
     local: false
 
-  # Derselbe Modellhersteller über Vertex AI. Der Umstieg ist genau dieser Block plus ein
-  # geänderter 'provider:'-Eintrag weiter unten — die Modellnamen bleiben, weil es dieselbe
-  # Familie ist (§11.7: "Provider für dieselbe Modellfamilie -> kein erforderlicher Schritt").
+  # Derselbe Modellhersteller über Vertex AI — der Anbieter des Betriebs. Der Umstieg ist genau
+  # dieser Block plus ein geänderter 'provider:'-Eintrag weiter unten; die Modellnamen bleiben,
+  # weil es dieselbe Familie ist (§11.7: "Provider für dieselbe Modellfamilie -> kein
+  # erforderlicher Schritt").
+  #
+  # 'location' bestimmt den Endpunkt und damit den Ort der Verarbeitung:
+  #   europe-west4  -> europe-west4-aiplatform.googleapis.com   (eine Region)
+  #   eu | us       -> aiplatform.eu.rep.googleapis.com         (Mehrregion)
+  #   global        -> aiplatform.googleapis.com                (weltweit)
+  # Alle drei Formen sind gültig, und ein Tippfehler meldet sich nicht von selbst — er landet
+  # still woanders. 'wg doctor' und 'wg models describe' geben den aufgelösten Endpunkt deshalb
+  # aus, statt ihn nur zu prüfen.
+  #
+  # 'credentials_file' ist optional: Ohne Angabe gilt die Standard-Anmeldung der Umgebung
+  # (Workload Identity), die auf Google-Infrastruktur der sicherere Weg ist, weil dabei kein
+  # Schlüssel auf einer Platte liegt. Mit Angabe zeigt der Pfad auf die unveränderte
+  # JSON-Schlüsseldatei; './secrets/...' trifft auf dem Host wie im Container dieselbe Datei.
   vertex:
     type: vertex
     project: ${WG_PROVIDER_VERTEX__PROJECT:-}

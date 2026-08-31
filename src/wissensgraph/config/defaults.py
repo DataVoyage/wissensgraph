@@ -320,6 +320,22 @@ PROVIDER_TYPE_GOOGLE_GENAI: Final = "google_genai"
 PROVIDER_TYPE_VERTEX: Final = "vertex"
 PROVIDER_TYPE_OPENAI_COMPATIBLE: Final = "openai_compatible"
 
+#: Der OAuth-Scope, den ein Vertex-Aufruf braucht. Er steht hier, weil er beim Laden eines
+#: Dienstkonto-Schlüssels **mitgegeben werden muss**: Ein ohne Scope geladener Schlüssel meldet
+#: ``requires_scopes`` und scheitert erst bei der ersten Tokenanforderung — also im Betrieb und
+#: nicht beim Start. Die Google-Bibliothek setzt ihn nur auf ihrem eigenen Weg über die
+#: Standard-Anmeldung der Umgebung, nicht bei übergebenen Zugangsdaten.
+GOOGLE_CLOUD_SCOPE: Final = "https://www.googleapis.com/auth/cloud-platform"
+
+#: Vertex-Standorte, die keine einzelne Region sind (§11.4).
+#:
+#: ``global`` und die Mehrregionen ``eu``/``us`` bilden je einen eigenen Endpunkt. Sie stehen hier,
+#: weil aus dem Standort der Hostname folgt und ein Tippfehler damit still an einem falschen Ort
+#: landet: ``europe-west4`` und ``eu`` sind beides gültige Angaben mit verschiedener
+#: Datenhaltung. ``wg doctor`` gibt den aufgelösten Endpunkt deshalb aus, statt ihn nur zu prüfen.
+VERTEX_GLOBAL_LOCATION: Final = "global"
+VERTEX_MULTI_REGIONS: Final = ("eu", "us")
+
 #: Modelle der Entwicklungsumgebung. Sie stehen hier als *Default*, nicht als Festlegung: Welches
 #: Modell eine Aufgabe benutzt, entscheidet ``config/models.yaml`` (§11.1) — diese Werte greifen
 #: nur, wo dort nichts anderes steht.

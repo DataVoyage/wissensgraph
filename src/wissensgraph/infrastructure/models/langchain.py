@@ -21,6 +21,7 @@ zusätzlichen Aufrufe stünde in ``model_calls``.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from pydantic import SecretStr
@@ -154,15 +155,30 @@ def _google_zugang(provider: ProviderConfig) -> dict[str, Any]:
     Deshalb gibt es hier auch keinen zweiten Codepfad für ``vertex``: Der Wechsel von der
     Developer-API auf Vertex ist genau das, was §11.7 verspricht — "Provider für dieselbe
     Modellfamilie: kein erforderlicher Schritt".
+
+    Den Endpunkt bildet die Google-Bibliothek aus ``location``: ``global`` und die Mehrregionen
+    ``eu``/``us`` haben je einen eigenen Hostnamen, jede andere Angabe gilt als Region. Der
+    Standort wird deshalb immer mitgegeben und nicht nur, wenn er gesetzt ist — ohne ihn entstünde
+    ein Hostname aus einer fehlenden Angabe.
     """
     if provider.type == defaults.PROVIDER_TYPE_VERTEX:
         if not provider.project:
             raise ProviderUnavailableError(
                 "Ein Provider vom Typ 'vertex' braucht 'project' (WG_PROVIDER_VERTEX__PROJECT)."
             )
-        zugang: dict[str, Any] = {"vertexai": True, "project": provider.project}
-        if provider.location:
-            zugang["location"] = provider.location
+        if not provider.location:
+            raise ProviderUnavailableError(
+                "Ein Provider vom Typ 'vertex' braucht 'location' "
+                "(WG_PROVIDER_VERTEX__LOCATION). Zulässig sind eine Region wie 'europe-west4', "
+                f"eine Mehrregion ({', '.join(defaults.VERTEX_MULTI_REGIONS)}) oder "
+                f"'{defaults.VERTEX_GLOBAL_LOCATION}'. Der Standort ist keine Feinabstimmung: "
+                "Aus ihm folgt der Endpunkt und damit der Ort der Verarbeitung."
+            )
+        zugang: dict[str, Any] = {
+            "vertexai": True,
+            "project": provider.project,
+            "location": provider.location,
+        }
         if provider.credentials_file:
             zugang["credentials"] = _dienstkonto(provider.credentials_file)
         return zugang
@@ -177,7 +193,26 @@ def _google_zugang(provider: ProviderConfig) -> dict[str, Any]:
 
 
 def _dienstkonto(pfad: str) -> Any:
-    """Lädt einen Service-Account-Key von der Platte (§11.4, Ablage unter ``./secrets``)."""
+    """Lädt einen Dienstkonto-Schlüssel von der Platte (§11.4, Ablage unter ``./secrets``).
+
+    Der Scope wird **mitgegeben** und ist der Grund, warum diese Funktion mehr ist als ein
+    Einzeiler: Ein ohne Scope geladener Schlüssel ist ein gültiges Objekt, das erst bei der ersten
+    Tokenanforderung scheitert — also im ersten echten Lauf und nicht beim Start. Die
+    Google-Bibliothek ergänzt den Scope nur auf ihrem eigenen Weg über die Standard-Anmeldung der
+    Umgebung; übergebene Zugangsdaten reicht sie unverändert weiter.
+
+    Der Pfad wird relativ zum Arbeitsverzeichnis aufgelöst. ``./secrets/vertex-sa.json`` trifft
+    deshalb auf dem Host wie im Container dieselbe Datei: Compose bindet ``./secrets`` nach
+    ``/app/secrets`` ein, und ``/app`` ist dort das Arbeitsverzeichnis.
+    """
+    datei = Path(pfad)
+    if not datei.is_file():
+        raise ProviderUnavailableError(
+            f"Der Dienstkonto-Schlüssel '{pfad}' wurde nicht gefunden "
+            f"(gesucht unter '{datei.resolve()}'). Erwartet wird eine JSON-Schlüsseldatei; im "
+            "Container liegt sie unter '/app/secrets', weil Compose './secrets' dorthin "
+            "einbindet. Ohne 'credentials_file' gilt die Standard-Anmeldung der Umgebung."
+        )
     try:
         from google.oauth2 import service_account
     except ImportError as exc:  # pragma: no cover — nur ohne installiertes google-auth
@@ -186,7 +221,14 @@ def _dienstkonto(pfad: str) -> Any:
             "Standard-Anmeldung der Umgebung."
         ) from exc
     lader: Any = service_account.Credentials.from_service_account_file
-    return lader(pfad)
+    try:
+        return lader(str(datei), scopes=[defaults.GOOGLE_CLOUD_SCOPE])
+    except (ValueError, KeyError) as exc:
+        raise ProviderUnavailableError(
+            f"Der Dienstkonto-Schlüssel '{pfad}' ließ sich nicht lesen: "
+            f"{str(exc).rstrip('.')}. Erwartet wird die unveränderte JSON-Datei, die Google beim "
+            "Anlegen des Schlüssels ausgibt."
+        ) from exc
 
 
 class _LangChainChat:

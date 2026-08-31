@@ -192,6 +192,9 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
             <li key={route.task}>
               {route.task}: <code>{route.model_key}</code>
               {route.local && " (lokal)"}
+              {/* Nur bei Vertex belegt. Aus 'eu' folgt ein anderer Ort der Verarbeitung als aus
+                  'europe-west4' — sichtbar wird der Unterschied allein am Endpunkt. */}
+              {route.endpoint && <> über <code>{route.endpoint}</code></>}
               {!route.configured && " — kein Schlüssel hinterlegt"}
             </li>
           ))}

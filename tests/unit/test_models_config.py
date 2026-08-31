@@ -182,7 +182,11 @@ class TestZugangsdaten:
             ({"type": "google_genai", "api_key": "x"}, True),
             ({"type": "google_genai"}, False),
             ({"type": "google_genai", "api_key": ""}, False),
-            ({"type": "vertex", "project": "mein-projekt"}, True),
+            # Vertex braucht beides: Aus dem Standort folgt der Endpunkt, ohne ihn gibt es
+            # keinen Host, den man ansprechen könnte.
+            ({"type": "vertex", "project": "mein-projekt", "location": "eu"}, True),
+            ({"type": "vertex", "project": "mein-projekt"}, False),
+            ({"type": "vertex", "location": "eu"}, False),
             ({"type": "vertex"}, False),
             ({"type": "openai_compatible", "base_url": "http://x/v1"}, True),
             ({"type": "openai_compatible"}, False),

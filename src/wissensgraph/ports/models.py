@@ -121,6 +121,11 @@ class ResolvedRoute:
     batch_size: int = defaults.MODEL_BATCH_SIZE
     fallbacks: tuple[str, ...] = ()
     configured: bool = True
+    #: Der Host, den dieser Anbieter anspricht — nur bei ``vertex`` belegt. Er steht hier, weil
+    #: er aus dem Standort *abgeleitet* wird: Aus 'eu' wird ein anderer Ort der Verarbeitung als
+    #: aus 'europe-west4', und beides ist eine gültige Angabe. Wer die Route ansieht, soll den
+    #: Unterschied sehen, statt ihn aus der Konfiguration nachrechnen zu müssen.
+    endpoint: str | None = None
 
     @property
     def model_key(self) -> str:
@@ -150,6 +155,7 @@ class ResolvedRoute:
             "batch_size": self.batch_size,
             "fallbacks": list(self.fallbacks),
             "configured": self.configured,
+            "endpoint": self.endpoint,
             "generated_by": self.generated_by,
         }
 

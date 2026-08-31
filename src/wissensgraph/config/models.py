@@ -78,9 +78,19 @@ class ProviderConfig(FrozenModel):
     )
     base_url: str | None = None
     project: str | None = Field(default=None, description="GCP-Projekt für 'vertex'.")
-    location: str | None = Field(default=None, description="GCP-Region für 'vertex'.")
+    location: str | None = Field(
+        default=None,
+        description=(
+            "Standort für 'vertex': eine Region ('europe-west4'), eine Mehrregion ('eu', 'us') "
+            "oder 'global'. Bestimmt den Endpunkt und damit den Ort der Verarbeitung."
+        ),
+    )
     credentials_file: str | None = Field(
-        default=None, description="Service-Account-Key unter './secrets' für 'vertex'."
+        default=None,
+        description=(
+            "Pfad zum Dienstkonto-Schlüssel für 'vertex'. Ohne Angabe gilt die Standard-Anmeldung "
+            "der Umgebung (Workload Identity, 'gcloud auth application-default login')."
+        ),
     )
     local: bool = Field(
         default=False,
@@ -111,10 +121,33 @@ class ProviderConfig(FrozenModel):
         Frage, die niemand gestellt hat.
         """
         if self.type == defaults.PROVIDER_TYPE_VERTEX:
-            return bool(self.project)
+            # Der Standort gehört zum Nötigsten und nicht zur Feinabstimmung: Aus ihm folgt der
+            # Endpunkt. Ohne ihn gibt es keinen Host, den man ansprechen könnte — ein
+            # Dienstkonto-Schlüssel ist dagegen entbehrlich, weil die Standard-Anmeldung der
+            # Umgebung (Workload Identity) derselbe gültige Weg ist.
+            return bool(self.project) and bool(self.location)
         if self.type == defaults.PROVIDER_TYPE_OPENAI_COMPATIBLE:
             return bool(self.base_url)
         return bool(self.api_key)
+
+    @property
+    def endpoint(self) -> str | None:
+        """Der Host, den ein ``vertex``-Anbieter tatsächlich anspricht — sonst ``None``.
+
+        Die Ableitung bildet die Regel der Google-Bibliothek nach, damit sie **sichtbar** wird:
+        ``global`` und die Mehrregionen ``eu``/``us`` haben je einen eigenen Hostnamen, jede
+        andere Angabe wird als Region eingesetzt. Ein Tippfehler im Standort erzeugt deshalb keine
+        Fehlermeldung, sondern einen anderen Ort der Verarbeitung — und das ist bei einem System
+        mit einer Datenschutzgrenze (Leitprinzip 2) kein Detail. ``wg doctor`` und
+        ``wg models describe`` geben den Wert aus, statt ihn nur intern zu prüfen.
+        """
+        if self.type != defaults.PROVIDER_TYPE_VERTEX or not self.location:
+            return None
+        if self.location == defaults.VERTEX_GLOBAL_LOCATION:
+            return "aiplatform.googleapis.com"
+        if self.location in defaults.VERTEX_MULTI_REGIONS:
+            return f"aiplatform.{self.location}.rep.googleapis.com"
+        return f"{self.location}-aiplatform.googleapis.com"
 
 
 class RouteConfig(FrozenModel):

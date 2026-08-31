@@ -197,6 +197,8 @@ export interface ModelRoute {
   temperature: number | null;
   configured: boolean;
   fallbacks: string[];
+  /** Nur bei Vertex belegt: der Host, der tatsächlich angesprochen wird. */
+  endpoint: string | null;
   generated_by: string;
 }
 

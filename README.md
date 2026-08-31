@@ -23,7 +23,7 @@ spricht wie Confluence und Jira.
 2. [Was das System aus welchen Bausteinen tut](#2-was-das-system-aus-welchen-bausteinen-tut)
 3. [Voraussetzungen](#3-voraussetzungen)
 4. [Setup Schritt für Schritt](#4-setup-schritt-für-schritt)
-5. [Konfiguration](#5-konfiguration)
+5. [Konfiguration](#5-konfiguration) — inkl. [Vertex AI im Betrieb](#54-vertex-ai-im-betrieb)
 6. [Die Pipeline — was jeder Lauf tut](#6-die-pipeline--was-jeder-lauf-tut)
 7. [Die Web-UI](#7-die-web-ui)
 8. [Die HTTP-API](#8-die-http-api)
@@ -247,7 +247,8 @@ irgendwo im System; ein Modellwechsel ist eine Änderung in dieser Datei.
 
 * `providers`: `gemini` (Google AI Studio), `vertex`, `ollama` (`local: true`), `openai_compat`.
   Der Umstieg von der Developer-API auf Vertex ist ein geänderter `provider:`-Eintrag plus drei
-  Umgebungsvariablen — kein Codepfad ändert sich.
+  Umgebungsvariablen — kein Codepfad ändert sich. Der vollständige Weg steht in
+  [§5.4 Vertex AI im Betrieb](#54-vertex-ai-im-betrieb).
 * `defaults`: `timeout_seconds`, `max_retries`, `backoff`, `cache`, `cache_ttl_hours`.
 * `tasks`: `embedding`, `cluster_labeling`, `relation_extraction`, `cluster_matching`,
   `summarization`, `query_expansion`. Jede Task nennt Provider, Modell und Parameter getrennt.
@@ -279,6 +280,7 @@ Rate-Limit, Seitengröße), `target` (Store, Scope, Standardtyp), `selection` (S
 | `WG_BUDGET_MAX_COST_PER_RUN_EUR`, `WG_BUDGET_ON_EXCEED` | `abort` oder `warn`. |
 | `WG_PERSONAL_ALLOW_REMOTE_MODELS` | Weicht Leitprinzip 2 bewusst auf und wird protokolliert. Standard `false`. |
 | `WG_PROVIDER_GEMINI__API_KEY` | Der Schlüssel der Entwicklungsumgebung. |
+| `WG_PROVIDER_VERTEX__PROJECT`, `__LOCATION`, `__CREDENTIALS_FILE` | Vertex AI im Betrieb — siehe 5.4. |
 | `WG_PROVIDER_OLLAMA__BASE_URL` | Standard `http://host.docker.internal:11434/v1` — der plattformunabhängige Weg aus dem Container zum Host. |
 
 Was tatsächlich gilt, zeigt jederzeit:
@@ -290,6 +292,68 @@ curl -H "Authorization: Bearer $WG_API_TOKEN" http://localhost:8080/api/v1/confi
 ```
 
 Secrets erscheinen dort als `***`.
+
+### 5.4 Vertex AI im Betrieb
+
+Die Entwicklungsumgebung spricht die Gemini-Developer-API über einen API-Schlüssel an, der Betrieb
+spricht dieselben Modelle über Vertex AI. Weil es dieselbe Modellfamilie ist, verspricht §11.7 für
+den Wechsel "keinen erforderlichen Schritt" — die Modellnamen bleiben, der Vektorraum bleibt, und
+**es entstehen keine neuen Embeddings**.
+
+Drei Angaben, sonst nichts:
+
+```dotenv
+WG_PROVIDER_VERTEX__PROJECT=mein-gcp-projekt
+WG_PROVIDER_VERTEX__LOCATION=eu
+WG_PROVIDER_VERTEX__CREDENTIALS_FILE=./secrets/vertex-sa.json
+```
+
+Dazu in `config/models.yaml` je Aufgabe `provider: gemini` auf `provider: vertex` ändern. Wer alle
+Aufgaben umstellt, ändert sechs Zeilen; wer erst eine erproben will, ändert eine.
+
+**Der Standort bestimmt den Endpunkt — und damit den Ort der Verarbeitung.**
+
+| `location` | Endpunkt | Art |
+|---|---|---|
+| `europe-west4` | `europe-west4-aiplatform.googleapis.com` | einzelne Region |
+| `eu` | `aiplatform.eu.rep.googleapis.com` | **Mehrregion** |
+| `us` | `aiplatform.us.rep.googleapis.com` | Mehrregion |
+| `global` | `aiplatform.googleapis.com` | weltweit |
+
+Alle vier Formen sind gültig. Genau das macht sie gefährlich: Ein Tippfehler meldet sich nicht,
+sondern landet still an einem anderen Ort — für ein System, dessen zweites Leitprinzip die
+Datenhaltung betrifft, ist das kein Schönheitsfehler. `wg doctor` und `wg models describe` geben
+den **aufgelösten Endpunkt** deshalb aus, statt ihn nur zu prüfen:
+
+```
+[OK] vertex:vertex   Projekt 'mein-gcp-projekt', Standort 'eu' ->
+                     aiplatform.eu.rep.googleapis.com; Anmeldung über Dienstkonto-Schlüssel.
+```
+
+**Anmeldung.** Zwei Wege, beide unterstützt:
+
+* **Dienstkonto-Schlüssel** (`credentials_file`). Der Pfad zeigt auf die unveränderte JSON-Datei,
+  die Google beim Anlegen ausgibt. `./secrets/vertex-sa.json` trifft auf dem Host **und** im
+  Container dieselbe Datei, weil Compose `./secrets` nach `/app/secrets` einbindet und `/app` dort
+  das Arbeitsverzeichnis ist. Das Verzeichnis `secrets/` ist git-ignoriert.
+* **Standard-Anmeldung der Umgebung** — `credentials_file` einfach leer lassen. Auf
+  Google-Infrastruktur (Workload Identity) ist das der bessere Weg, weil dann überhaupt kein
+  Schlüssel auf einer Platte liegt.
+
+Der benötigte OAuth-Scope (`cloud-platform`) wird beim Laden des Schlüssels **mitgegeben**. Das
+klingt nach einem Detail und ist keines: Ein ohne Scope geladener Schlüssel ist ein gültiges
+Objekt, das erst bei der ersten Tokenanforderung scheitert — also im ersten echten Lauf und nicht
+beim Start, und dort sieht der Fehler aus wie ein Netzproblem. Die Google-Bibliothek ergänzt den
+Scope nur auf ihrem eigenen Weg über die Standard-Anmeldung, nicht bei übergebenen Zugangsdaten.
+
+Das Dienstkonto braucht die Rolle **`roles/aiplatform.user`** auf dem Projekt.
+
+**Vor dem ersten Lauf:**
+
+```bash
+docker compose exec api wg doctor              # Endpunkt und Anmeldung prüfen
+docker compose exec api wg models describe     # welche Aufgabe wohin geht
+```
 
 ---
 

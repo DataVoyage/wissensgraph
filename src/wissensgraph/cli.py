@@ -951,6 +951,10 @@ def models_describe(
         typer.echo(f"{_SYMBOLS[zustand]} {route.task:<20} {route.model_key} ({ort})")
         if route.dim is not None:
             typer.echo(f"         Dimension {route.dim}, Bündel zu {route.batch_size}")
+        if route.endpoint:
+            # Nur bei Vertex belegt. Der Endpunkt folgt aus dem Standort, und aus 'eu' wird ein
+            # anderer Ort der Verarbeitung als aus 'europe-west4' — sichtbar ist das nur hier.
+            typer.echo(f"         Endpunkt {route.endpoint}")
         if route.fallbacks:
             typer.echo(f"         Fallback: {', '.join(route.fallbacks)}")
         if not route.configured:

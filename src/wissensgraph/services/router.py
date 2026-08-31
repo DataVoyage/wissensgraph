@@ -288,6 +288,7 @@ class ModelRouterService:
             batch_size=route.batch_size,
             fallbacks=tuple(item.model_key for item in profil.fallback),
             configured=provider.is_configured,
+            endpoint=provider.endpoint,
         )
 
     # -- Durchführung ------------------------------------------------------------

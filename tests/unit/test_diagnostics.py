@@ -337,3 +337,116 @@ class TestAgentReadonly:
 
         assert ergebnis.status is CheckStatus.WARN
         assert "Nicht prüfbar" in ergebnis.detail
+
+
+class TestVertexpruefung:
+    """§11.4: Was sich am Vertex-Anbieter ohne Netz feststellen lässt — und was nicht.
+
+    Ausgegeben wird der aufgelöste Endpunkt. Das ist der eigentliche Zweck dieser Prüfung: Ein
+    Tippfehler im Standort erzeugt keinen Fehler, sondern einen anderen Ort der Verarbeitung, und
+    ``eu``, ``europe-west4`` und ``global`` sind alle drei gültige Angaben.
+    """
+
+    @staticmethod
+    def _models_datei(tmp_path: Any, **vertex: Any) -> Any:
+        import yaml
+
+        datei = tmp_path / "models.yaml"
+        inhalt = {
+            "providers": {"vertex": {"type": "vertex", **vertex}},
+            "tasks": {
+                "cluster_labeling": {
+                    "primary": {"provider": "vertex", "model": "gemini-3.5-flash-lite"}
+                }
+            },
+        }
+        datei.write_text(yaml.safe_dump(inhalt), encoding="utf-8")
+        return datei
+
+    def _vertex(self, ergebnisse: Any) -> Any:
+        return next(item for item in ergebnisse if item.name.startswith("vertex:"))
+
+    def test_der_aufgeloeste_endpunkt_steht_im_bericht(
+        self, settings: Settings, tmp_path: Any
+    ) -> None:
+        from wissensgraph.diagnostics import check_models
+
+        datei = self._models_datei(tmp_path, project="mein-projekt", location="eu")
+
+        ergebnis = self._vertex(check_models(settings, path=datei))
+
+        assert ergebnis.status is CheckStatus.OK
+        assert ergebnis.context["endpoint"] == "aiplatform.eu.rep.googleapis.com"
+        assert "Standard-Anmeldung" in ergebnis.detail
+
+    def test_ein_fehlender_standort_warnt(self, settings: Settings, tmp_path: Any) -> None:
+        from wissensgraph.diagnostics import check_models
+
+        datei = self._models_datei(tmp_path, project="mein-projekt")
+
+        ergebnis = self._vertex(check_models(settings, path=datei))
+
+        assert ergebnis.status is CheckStatus.WARN
+        assert "WG_PROVIDER_VERTEX__LOCATION" in ergebnis.detail
+
+    def test_ein_fehlender_schluessel_ist_ein_fehler(
+        self, settings: Settings, tmp_path: Any
+    ) -> None:
+        """Anders als eine fehlende Angabe: Hier wurde ein Pfad genannt, und er stimmt nicht."""
+        from wissensgraph.diagnostics import check_models
+
+        datei = self._models_datei(
+            tmp_path,
+            project="mein-projekt",
+            location="eu",
+            credentials_file=str(tmp_path / "gibtsnicht.json"),
+        )
+
+        ergebnis = self._vertex(check_models(settings, path=datei))
+
+        assert ergebnis.status is CheckStatus.FAIL
+        assert "/app/secrets" in ergebnis.detail
+
+    def test_ein_vorhandener_schluessel_wird_als_anmeldung_genannt(
+        self, settings: Settings, tmp_path: Any
+    ) -> None:
+        from wissensgraph.diagnostics import check_models
+
+        schluessel = tmp_path / "sa.json"
+        schluessel.write_text("{}", encoding="utf-8")
+        datei = self._models_datei(
+            tmp_path, project="mein-projekt", location="global", credentials_file=str(schluessel)
+        )
+
+        ergebnis = self._vertex(check_models(settings, path=datei))
+
+        assert ergebnis.status is CheckStatus.OK
+        assert "Dienstkonto" in ergebnis.detail
+        assert ergebnis.context["endpoint"] == "aiplatform.googleapis.com"
+
+    def test_ohne_vertex_anbieter_entsteht_kein_eintrag(
+        self, settings: Settings, tmp_path: Any
+    ) -> None:
+        """Die Prüfung meldet sich nur, wenn es etwas zu melden gibt."""
+        import yaml
+
+        from wissensgraph.diagnostics import check_models
+
+        datei = tmp_path / "models.yaml"
+        datei.write_text(
+            yaml.safe_dump(
+                {
+                    "providers": {"gemini": {"type": "google_genai", "api_key": "x"}},
+                    "tasks": {
+                        "cluster_labeling": {
+                            "primary": {"provider": "gemini", "model": "gemini-3.5-flash-lite"}
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        ergebnisse = check_models(settings, path=datei)
+
+        assert not [item for item in ergebnisse if item.name.startswith("vertex:")]
