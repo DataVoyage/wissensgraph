@@ -80,7 +80,7 @@ class CurationResult:
 
     def as_dict(self) -> dict[str, Any]:
         """Serialisierbare Form für die API."""
-        from wissensgraph.services.catalog import journal_dict, kante_dict, konzept_dict
+        from wissensgraph.services.serialization import journal_dict, kante_dict, konzept_dict
 
         return {
             "entry": journal_dict(self.entry),

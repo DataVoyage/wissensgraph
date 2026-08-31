@@ -17,8 +17,8 @@ from wissensgraph.api.schemas import SearchRequest, TraverseRequest
 from wissensgraph.config import defaults
 from wissensgraph.config.schema import RankingConfig
 from wissensgraph.ports.repositories import ConceptFilter
-from wissensgraph.services.catalog import konzept_dict
 from wissensgraph.services.graph import UnknownStartError
+from wissensgraph.services.serialization import konzept_dict
 
 router = APIRouter(prefix="/api/v1/graph", tags=["Graph"])
 

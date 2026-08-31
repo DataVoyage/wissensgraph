@@ -18,6 +18,10 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
+    // Nur die Komponententests unter src/. Ohne diese Zeile sammelt Vitest auch e2e/*.spec.ts
+    // ein — die Playwright-Tests, die einen echten Browser brauchen. Sie scheitern dann nicht an
+    // ihrem Inhalt, sondern daran, dass zwei Testläufer dieselbe Datei für sich beanspruchen.
+    include: ["src/**/*.test.{ts,tsx}"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],

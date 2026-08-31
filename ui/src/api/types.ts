@@ -97,9 +97,12 @@ export interface GraphNode {
 
 /** Das Ergebnis einer Traversierung (§12.1). */
 export interface Traversal {
-  start: Array<[string, string]>;
+  /** Die Startknoten als `"<store>:<id>"`. */
+  start: string[];
   nodes: GraphNode[];
   edges: Edge[];
+  /** Die Anzahl der Kanten — die CLI zeigt sie in ihrer Zusammenfassung. */
+  edge_count?: number;
   hops: number;
   truncated: boolean;
   queries: number;

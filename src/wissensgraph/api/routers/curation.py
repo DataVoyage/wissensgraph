@@ -15,8 +15,9 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from wissensgraph.api.dependencies import ActorDep, RuntimeDep, SettingsDep, resolve_store
 from wissensgraph.api.schemas import EdgeCreate, EdgeReject, UndoRequest
-from wissensgraph.services.catalog import CURATION_QUEUE_LIMIT, journal_dict
+from wissensgraph.services.catalog import CURATION_QUEUE_LIMIT
 from wissensgraph.services.curation import CurationError, NotFoundError
+from wissensgraph.services.serialization import journal_dict
 
 router = APIRouter(prefix="/api/v1", tags=["Kuration"])
 

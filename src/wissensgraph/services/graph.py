@@ -43,6 +43,7 @@ from wissensgraph.domain.policies import ProviderNotAllowedError
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import ModelError, ModelRouter
 from wissensgraph.ports.repositories import LexicalHit, UnitOfWorkFactory
+from wissensgraph.services.serialization import kante_dict
 
 _log = get_logger(__name__)
 
@@ -115,14 +116,21 @@ class Traversal:
     weil §24 (Stufe 6) eine Obergrenze dafür abnimmt — eine Zusicherung, die prüfbar sein muss."""
 
     def as_dict(self) -> dict[str, object]:
-        """Serialisierbare Form."""
+        """Serialisierbare Form.
+
+        ``edges`` ist die **Liste** der Kanten und nicht ihre Anzahl. §16.2 verlangt für
+        ``/graph/traverse`` "Knoten + Kanten + Scores", und eine Graph-Ansicht kann ohne die
+        Kanten nichts zeichnen — sie hätte Punkte ohne Verbindungen. Die Zahl steht daneben in
+        ``edge_count``, weil die CLI sie in ihrer Zusammenfassung braucht.
+        """
         return {
             "start": [f"{store}:{concept_id}" for store, concept_id in self.start],
             "hops": self.hops,
             "truncated": self.truncated,
             "queries": self.queries,
             "nodes": [node.as_dict() for node in self.nodes],
-            "edges": len(self.edges),
+            "edges": [kante_dict(edge) for edge in self.edges],
+            "edge_count": len(self.edges),
         }
 
 

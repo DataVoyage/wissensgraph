@@ -34,10 +34,11 @@ from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
 from wissensgraph.domain.policies import ProviderNotAllowedError
 from wissensgraph.ports.models import ModelError
-from wissensgraph.services.catalog import CatalogService, kante_dict, konzept_dict
+from wissensgraph.services.catalog import CatalogService
 from wissensgraph.services.clustering import ClusterService
 from wissensgraph.services.curation import CurationError, CurationService, NotFoundError
 from wissensgraph.services.graph import GraphService, UnknownStartError
+from wissensgraph.services.serialization import kante_dict, konzept_dict
 
 #: Schlüssel, unter dem eine gekürzte Antwort das kenntlich macht (§18.3).
 TRUNCATED_KEY = "truncated"

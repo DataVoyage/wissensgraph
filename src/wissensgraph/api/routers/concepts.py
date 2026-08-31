@@ -16,8 +16,8 @@ from wissensgraph.api.dependencies import ActorDep, RuntimeDep, SettingsDep, res
 from wissensgraph.api.schemas import ConceptCreate, ConceptPatch
 from wissensgraph.config import defaults
 from wissensgraph.ports.repositories import ConceptFilter
-from wissensgraph.services.catalog import journal_dict, konzept_dict
 from wissensgraph.services.curation import CurationError, NotFoundError
+from wissensgraph.services.serialization import journal_dict, konzept_dict
 
 router = APIRouter(prefix="/api/v1", tags=["Konzepte"])
 
