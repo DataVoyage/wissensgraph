@@ -36,9 +36,19 @@ class SqlUnitOfWork:
     ausgeschlossen.
     """
 
-    def __init__(self, registry: StoreRegistry, store: str) -> None:
+    def __init__(self, registry: StoreRegistry, store: str, *, readonly: bool = False) -> None:
+        """
+        Args:
+            registry: Die Store-Registry — der einzige Weg zu einer Verbindung (§20.1).
+            store: Der Store dieser Arbeitseinheit.
+            readonly: Ob die nur lesende Verbindung dieses Stores benutzt wird (§18.3, §20.1).
+                Die Beschränkung liegt dann in der *Datenbank* und nicht im Code: Ein
+                Schreibversuch scheitert mit einem Datenbankfehler, gleichgültig über welchen
+                Codepfad er kommt.
+        """
         self._registry = registry
         self._store = store
+        self._readonly = readonly
         self._connection: Connection | None = None
         self._concepts: SqlConceptRepository | None = None
         self._edges: SqlEdgeRepository | None = None
@@ -134,7 +144,12 @@ class SqlUnitOfWork:
         self.connection.rollback()
 
     def __enter__(self) -> Self:
-        self._connection = self._registry.engine(self._store).connect()
+        engine = (
+            self._registry.readonly_engine(self._store)
+            if self._readonly
+            else self._registry.engine(self._store)
+        )
+        self._connection = engine.connect()
         return self
 
     def __exit__(
@@ -167,8 +182,19 @@ class UnitOfWorkFactory:
     aber keine Engine anfassen und keinen DSN lesen.
     """
 
-    def __init__(self, registry: StoreRegistry) -> None:
+    def __init__(
+        self, registry: StoreRegistry, *, readonly_stores: frozenset[str] = frozenset()
+    ) -> None:
+        """
+        Args:
+            registry: Die Store-Registry.
+            readonly_stores: Stores, für die ausschließlich die nur lesende Verbindung
+                herausgegeben wird. Der MCP-Server setzt hier ``shared`` ein (§18.3): Der Agent
+                darf überall lesen und nur lokal schreiben, und diese Grenze soll nicht davon
+                abhängen, dass jeder Codepfad sie einhält.
+        """
         self._registry = registry
+        self._readonly_stores = readonly_stores
 
     @property
     def store_names(self) -> tuple[str, ...]:
@@ -182,4 +208,4 @@ class UnitOfWorkFactory:
             UnknownStoreError: Wenn der Store nicht konfiguriert ist.
         """
         self._registry.config_of(store)
-        return SqlUnitOfWork(self._registry, store)
+        return SqlUnitOfWork(self._registry, store, readonly=store in self._readonly_stores)

@@ -10,9 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from support.memory import MemoryUnitOfWorkFactory
 from support.semantik import konzept
-
 from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
 from wissensgraph.domain.changes import ChangeEntry, ChangeType
@@ -123,9 +123,7 @@ class TestAendern:
         """§10.3: Der Hash beantwortet "hat sich der Inhalt geändert?" — hier lautet sie ja."""
         vorher = uow.state("personal").concepts["note:1"].content_hash
 
-        dienst.patch_concept(
-            "note:1", store="personal", changes={"title": "Neu"}, actor=AKTEUR
-        )
+        dienst.patch_concept("note:1", store="personal", changes={"title": "Neu"}, actor=AKTEUR)
 
         assert uow.state("personal").concepts["note:1"].content_hash != vorher
 
@@ -193,9 +191,7 @@ class TestKanten:
 class TestCluster:
     def test_ein_cluster_im_falschen_store_wird_abgelehnt(self, dienst: CurationService) -> None:
         with pytest.raises(CurationError, match="liegt nicht im Store"):
-            dienst.create_cluster(
-                store="personal", scope="engineering", title="X", actor=AKTEUR
-            )
+            dienst.create_cluster(store="personal", scope="engineering", title="X", actor=AKTEUR)
 
     def test_ein_cluster_mit_sich_selbst_zu_verschmelzen_ist_sinnlos(
         self, dienst: CurationService
@@ -332,9 +328,7 @@ class TestUndo:
         with pytest.raises(NotFoundError):
             dienst.undo(999, store="shared", actor=AKTEUR)
 
-    def test_eine_zweimal_zurueckgenommene_kante_meldet_das(
-        self, dienst: CurationService
-    ) -> None:
+    def test_eine_zweimal_zurueckgenommene_kante_meldet_das(self, dienst: CurationService) -> None:
         ergebnis = dienst.add_edge(
             store="shared", from_id="confluence:1", to_id="confluence:2", actor=AKTEUR
         )
@@ -375,9 +369,7 @@ class TestUndo:
         with pytest.raises(CurationError, match="hält die Kante nicht fest"):
             dienst.undo(eintrag.id, store="shared", actor=AKTEUR)
 
-    def test_ein_verschmelzen_laesst_sich_nicht_zurueckholen(
-        self, dienst: CurationService
-    ) -> None:
+    def test_ein_verschmelzen_laesst_sich_nicht_zurueckholen(self, dienst: CurationService) -> None:
         """Die umgehängten Kanten sind nicht mehr unterscheidbar von denen, die dort standen."""
         verschmolzen = dienst.merge(
             store="shared", source_id="cluster:a", target_id="cluster:b", actor=AKTEUR

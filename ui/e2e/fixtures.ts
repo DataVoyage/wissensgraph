@@ -375,8 +375,7 @@ export async function mockApi(page: Page): Promise<Protokoll> {
         store: "shared",
         query: "warehouse",
         mode: "hybrid",
-        granularity: "auto",
-        nodes: [knoten(CLUSTER_A, 0)],
+        hits: [knoten(CLUSTER_A, 0)],
       });
     }
 

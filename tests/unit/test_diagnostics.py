@@ -300,3 +300,40 @@ class TestQuellenpruefung:
 
         assert ergebnis.status is CheckStatus.FAIL
         assert not ergebnis.ok
+
+
+class TestAgentReadonly:
+    """§18.3, §20.1 Guard 5 — als Betriebsprüfung."""
+
+    def test_warnt_ausserhalb_von_postgresql(self, settings: Settings) -> None:
+        """Auf SQLite gibt es die Zusicherung nicht — und das zu verschweigen wäre schlimmer."""
+        from wissensgraph.diagnostics import check_agent_readonly
+
+        with StoreRegistry(settings) as registry:
+            ergebnis = check_agent_readonly(registry)
+
+        assert ergebnis.status is CheckStatus.WARN
+        assert "PostgreSQL" in ergebnis.detail
+
+    def test_meldet_einen_unerreichbaren_store_als_warnung(
+        self, minimal_config_dict: dict[str, Any]
+    ) -> None:
+        from wissensgraph.diagnostics import check_agent_readonly
+
+        unerreichbar = Settings.model_validate(
+            {
+                **minimal_config_dict,
+                "stores": {
+                    "shared": {
+                        "dsn": "postgresql+psycopg://wg:wg@127.0.0.1:1/wg",
+                        "allow_remote": True,
+                    },
+                    "personal": {"dsn": "sqlite+pysqlite:///:memory:", "allow_remote": False},
+                },
+            }
+        )
+        with StoreRegistry(unerreichbar) as registry:
+            ergebnis = check_agent_readonly(registry)
+
+        assert ergebnis.status is CheckStatus.WARN
+        assert "Nicht prüfbar" in ergebnis.detail

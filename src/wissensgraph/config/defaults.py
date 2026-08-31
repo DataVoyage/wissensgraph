@@ -260,6 +260,24 @@ API_LOOPBACK_HOSTS: Final = ("127.0.0.1", "::1", "localhost")
 MCP_TRANSPORT: Final = "stdio"
 MCP_PORT: Final = 8081
 
+#: Obergrenze einer MCP-Antwort in Token (§18.3). Der Wert ist eine Schätzung über die Zeichenzahl
+#: und keine Zählung mit dem Tokenizer des Modells: Der Server weiß nicht, welches Modell ihn
+#: fragt. Eine grobe, aber immer verfügbare Grenze ist hier mehr wert als eine genaue, die nur für
+#: einen Anbieter stimmt.
+MCP_MAX_RESPONSE_TOKENS: Final = 4000
+
+#: Wie viele Zeichen ein Token im Mittel hat. Vier ist der übliche Anhaltswert für europäische
+#: Sprachen; er steht hier, damit die Deckelung an einer Stelle nachjustierbar ist.
+MCP_CHARS_PER_TOKEN: Final = 4
+
+#: Präfix des Akteurs eines Agenten im Änderungsjournal (§7.4, §18.3).
+MCP_ACTOR_PREFIX: Final = "agent:"
+
+#: Kennung einer Sitzung, wenn der Aufrufer keine mitgibt. Sie steht als Konstante hier, damit ein
+#: Journaleintrag auch dann zuzuordnen ist — "irgendein Agent" ist eine bessere Auskunft als ein
+#: leeres Feld.
+MCP_DEFAULT_SESSION: Final = "unbenannt"
+
 # ---------------------------------------------------------------------------
 # Model-Router (§11)
 # ---------------------------------------------------------------------------

@@ -128,7 +128,7 @@ export function GraphExplorer({ state, onChange, edgeKinds }: GraphExplorerProps
                   onSuccess: (ergebnis) => {
                     aufnehmen({
                       start: [],
-                      nodes: ergebnis.nodes,
+                      nodes: ergebnis.hits,
                       edges: [],
                       hops: 0,
                       truncated: false,

@@ -131,8 +131,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
       store: "shared",
       query: "Warehouse",
       mode: "hybrid",
-      granularity: "auto",
-      nodes: [],
+      hits: [],
     }));
 
     renderMitQuery(

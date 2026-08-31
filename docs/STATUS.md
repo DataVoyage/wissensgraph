@@ -24,7 +24,7 @@ festgelegte Abnahme erfüllt.
 | 9 | Semantische Kantenerkennung | **fertig** |
 | 10 | Verwaiste-Knoten-Vernetzung | **fertig** |
 | 11 | HTTP-API und Web-UI | **fertig** |
-| 12 | MCP-Retrieval-Layer | offen |
+| 12 | MCP-Retrieval-Layer | **fertig** |
 | 13 | Anbindung der echten Quellen | offen |
 
 Stufe 14 (Föderation) ist im Dokument als Ausblick geführt und nicht Teil dieser Umsetzung.
@@ -1179,6 +1179,133 @@ prüfen die Python-Tests gegen die Dienste.
 
 Mehrbenutzer-Auth und ein Rollenmodell, so vorgesehen in §24. `auth_mode: oidc` antwortet
 weiterhin mit `501`.
+
+---
+
+## Stufe 12 — was steht
+
+Die sieben Werkzeuge aus §18.1 als dritte dünne Hülle um denselben Kern, eine nur lesende
+Verbindung auf `shared`, `actor = 'agent:<session>'` in jedem Journaleintrag und ein Deckel auf
+der Antwortgröße.
+
+### Die Beschreibungen sind die Steuerung
+
+§18.2 nennt sie "die einzige wirksame Stelle, an der sich das Verhalten des Agenten steuern
+lässt", und das ist keine Übertreibung: Ein Agent liest keine Architekturdokumente, er liest
+Werkzeugbeschreibungen.
+
+Deshalb steht die Reihenfolge dort, wo er sie sieht:
+
+- `graph_overview` steht **zuerst** in der Liste und nennt sich selbst "der erste Aufruf einer
+  Sitzung"; seine Antwort trägt ein Feld `next_step`, das auf `graph_traverse` verweist.
+- `graph_traverse` sagt, dass es nach dem ersten Anker der häufigste Aufruf ist.
+- `graph_search` beginnt mit "**Fallback**" und nennt die Bedingung: nur, wenn weder eine
+  bestehende Verbindung noch die Übersicht einen Startpunkt liefert.
+
+Das dritte Abnahmekriterium aus §24 — "eine Sitzung beginnt nachweislich mit `graph_overview`
+statt mit `graph_search`" — ist damit so weit erfüllt, wie ein Server es erfüllen kann. Was ein
+Agent tatsächlich tut, entscheidet sein Modell; was dieses System dafür tun kann, ist die
+Reihenfolge in die Beschreibungen zu schreiben und sie prüfbar zu machen. Genau das prüfen die
+Tests.
+
+### Der Agent schreibt nur lokal — und das erzwingt die Datenbank
+
+§17.4: "Ein Mensch darf die geteilte Struktur ordnen; ein Agent nicht."
+
+Durchgesetzt wird das **nicht** im Werkzeugcode. Der MCP-Server bekommt eine
+Arbeitseinheiten-Fabrik, die für `shared` ausschließlich die nur lesende Verbindung herausgibt
+(`UnitOfWorkFactory(registry, readonly_stores={"shared"})`). Ein Schreibversuch scheitert damit in
+PostgreSQL, gleichgültig über welchen Codepfad er kommt und ob dieser Code die Regel kennt.
+
+`concept_upsert` hat folgerichtig **kein** `store`-Argument: Ein Agent kann den Store nicht
+wählen. `link_add` ebenso wenig ein `from_store` — eine Kante des Agenten beginnt immer im
+persönlichen Store, und die Gegenrichtung existiert nicht (§12.1).
+
+Live gegen PostgreSQL:
+
+```
+SHARED-SCHREIBEN abgewiesen: InternalError
+(psycopg.errors.ReadOnlySqlTransaction) cannot execute INSERT in a read-only transaction
+```
+
+Das ist Guard 5 aus §20.1. Er steht als Test in `tests/guards/test_mcp_readonly.py` und zusätzlich
+als Betriebsprüfung in `wg doctor` (`agent-readonly`): Dort wird ein Schreibversuch unternommen und
+sofort zurückgerollt. Außerhalb von PostgreSQL meldet die Prüfung eine **Warnung** — dort gibt es
+die Zusicherung schlicht nicht, und sie als "in Ordnung" auszuweisen wäre die gefährlichere
+Auskunft.
+
+### Der Deckel auf der Antwort
+
+§18.3: "Rückgaben sind auf `mcp.max_response_tokens` gedeckelt; überschreitende Ergebnisse werden
+gekürzt und mit `truncated: true` markiert."
+
+Gekürzt wird von **hinten**: Listen verlieren ihre letzten Einträge, Texte ihr Ende. Die
+Reihenfolge ist wichtig — die vorderen Einträge einer Trefferliste sind die besseren (§12.3), und
+ein Fließtext ist von vorn nach hinten verständlich. Von vorn zu kürzen hieße, das Nützlichste
+wegzuwerfen.
+
+Der Deckel rechnet über die Zeichenzahl und nicht mit einem Tokenizer: Der Server weiß nicht,
+welches Modell ihn fragt. Eine grobe, aber immer verfügbare Grenze ist hier mehr wert als eine
+genaue, die nur für einen Anbieter stimmt.
+
+### Der Zuschnitt: Werkzeuge als Daten
+
+`mcp/tools.py` kennt **kein** MCP-SDK. Es beschreibt Werkzeuge als Daten — Name, Beschreibung,
+Schema, Aufruf —, und `mcp/server.py` bindet sie an den Transport. Zwei Folgen:
+
+- Die Werkzeuge sind ohne Server prüfbar; die 27 Tests in `test_mcp_werkzeuge.py` brauchen weder
+  Datenbank noch Protokoll.
+- Ein Wechsel der SDK-Version ist eine Änderung an einer Datei. Das war unmittelbar nützlich: Die
+  installierte Fassung des SDK hat eine andere Server-API als die verbreitete Dekorator-Form, und
+  angepasst werden musste nur die Bindung.
+
+Die Protokollrückrufe stehen dabei getrennt vom Server (`build_handlers` neben `build_server`).
+Dort liegt die Logik — dass ein `ToolError` zu `is_error` wird und ein Programmfehler nicht —, und
+sie soll prüfbar sein, ohne eine Sitzung aufzubauen.
+
+### Fehler sind Auskünfte, keine Störungen
+
+Ein `ToolError` ("das Konzept gibt es nicht", "in den geteilten Store darfst du nicht schreiben")
+wird zur Antwort mit `is_error: true` und nicht zu einer Protokollausnahme. Er ist eine Auskunft
+an den Agenten, und daraus einen Transportfehler zu machen nähme ihm die Möglichkeit, es anders zu
+versuchen.
+
+Alles andere fliegt weiter: Ein Programmfehler gehört ins Log und nicht in eine höfliche Meldung.
+
+### Abnahme (§24, Stufe 12) — live gegen PostgreSQL
+
+Gegen den vollständigen Mock-Bestand (220 Konzepte, 20 Cluster, 448 Kanten):
+
+| Kriterium | Ergebnis |
+|---|---|
+| Notiz anlegen, auf ein `shared`-Cluster verlinken, über `graph_traverse` sofort wiederfinden | `WIEDERGEFUNDEN: True` — 15 Knoten über zwei Hops |
+| Schreibversuch auf `shared` scheitert auf Datenbankebene | `ReadOnlySqlTransaction: cannot execute INSERT in a read-only transaction` |
+| Eine Sitzung beginnt mit `graph_overview` | `graph_overview` steht an erster Stelle, nennt sich den ersten Aufruf und verweist im `next_step` auf `graph_traverse`; `graph_search` nennt sich Fallback |
+
+Die Kante lag danach im **persönlichen** Store; im geteilten Store gibt es sie nicht (§12.1). Der
+Journaleintrag trägt `agent:abnahme-12`.
+
+### Ergänzungen am Bestand
+
+- **`SqlUnitOfWork` kennt `readonly`**, und `UnitOfWorkFactory` nimmt eine Menge von Stores
+  entgegen, für die das gilt. Ohne diese eine Stelle müsste jeder Aufrufer sich selbst um die
+  richtige Verbindung kümmern — und §20.1 verlangt das Gegenteil.
+- **`mcp.max_response_tokens`** als Konfigurationswert (§18.3).
+- **`wg mcp`** als Startbefehl; der `mcp`-Container führt ihn aus statt eines Platzhalters.
+- **`wg doctor`** prüft die Agenten-Verbindung mit.
+
+### Ein Fehler, den die Live-Prüfung gefunden hat
+
+Die Oberfläche erwartete das Suchergebnis unter `nodes`, die API liefert es unter `hits`. In den
+UI-Tests fiel das nicht auf, weil die Nachbildung dieselbe falsche Annahme hatte — der Fehler kam
+erst beim Aufruf gegen den laufenden Server zum Vorschein. Behoben in `ui/src/api/types.ts` und
+`GraphExplorer`; der Unterschied ist jetzt auch benannt: Ein Treffer hat einen Rang, ein Knoten
+eine Hop-Distanz.
+
+### Ausdrücklich außen vor
+
+Schreibzugriff auf `shared` und eine Rechteverwaltung im Server, so vorgesehen in §24. Der
+`actor` unterscheidet Sitzungen, er berechtigt sie nicht.
 
 ---
 

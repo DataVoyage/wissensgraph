@@ -105,13 +105,18 @@ export interface Traversal {
   queries: number;
 }
 
-/** Das Ergebnis einer Suche; `mode` sagt, wie gesucht wurde (§12.4). */
+/**
+ * Das Ergebnis einer Suche; `mode` sagt, wie gesucht wurde (§12.4).
+ *
+ * Das Feld heißt `hits` und nicht `nodes`: Ein Treffer ist etwas anderes als ein Knoten einer
+ * Traversierung — er hat keine Hop-Distanz, sondern einen Rang. Die API unterscheidet beides,
+ * und diese Beschreibung tut es auch.
+ */
 export interface SearchResult {
   store: string;
   query: string;
   mode: "lexical" | "cluster" | "hybrid";
-  granularity: string;
-  nodes: GraphNode[];
+  hits: GraphNode[];
 }
 
 /** Ein Cluster mit Mitgliederzahl (§16.2). */

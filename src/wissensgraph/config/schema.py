@@ -331,10 +331,19 @@ class ApiConfig(FrozenModel):
 
 
 class McpConfig(FrozenModel):
-    """Transport des MCP-Servers (§18)."""
+    """Transport und Antwortdeckel des MCP-Servers (§18)."""
 
     transport: Literal["stdio", "http"] = defaults.MCP_TRANSPORT
     port: int = Field(default=defaults.MCP_PORT, ge=1, le=65535)
+    max_response_tokens: int = Field(
+        default=defaults.MCP_MAX_RESPONSE_TOKENS,
+        ge=100,
+        description=(
+            "Obergrenze einer Antwort (§18.3). Überschreitende Ergebnisse werden gekürzt und mit "
+            "'truncated: true' markiert — ein stilles Abschneiden wäre die schlechtere Variante, "
+            "weil der Agent dann nicht wüsste, dass er nur einen Teil gesehen hat."
+        ),
+    )
 
 
 class LoggingConfig(FrozenModel):

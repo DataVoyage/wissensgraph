@@ -17,7 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DatabaseError, SQLAlchemyError
 
 from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigError
@@ -523,6 +523,65 @@ def check_broker(settings: Settings) -> CheckResult:
     )
 
 
+def check_agent_readonly(registry: StoreRegistry) -> CheckResult:
+    """Prüft, ob die Agenten-Verbindung auf ``shared`` wirklich nur lesen kann (§18.3, §20.1).
+
+    Der fünfte Guard aus §20.1 im Betrieb: Geprüft wird nicht, ob der Code die Regel kennt,
+    sondern ob die *Verbindung* sie durchsetzt. Dafür wird ein Schreibversuch unternommen und
+    erwartet, dass er scheitert — und alles wird anschließend zurückgerollt.
+
+    Ein **Fehler** und keine Warnung, wenn der Versuch durchgeht: Ein Agent, der den geteilten
+    Store beschreiben kann, verletzt §17.4 in seinem Kern.
+    """
+    konfiguration = registry.config_of(defaults.STORE_SHARED)
+    dsn = konfiguration.readonly_dsn or konfiguration.dsn
+    if not dsn.startswith("postgresql"):
+        # Die Zusicherung hängt an ``default_transaction_read_only`` bzw. an einer eigenen
+        # Datenbankrolle — beides gibt es nur in PostgreSQL. Auf SQLite (Tests, Werkzeuge) ist
+        # sie schlicht nicht vorhanden, und das als "in Ordnung" zu melden wäre die gefährlichere
+        # Auskunft.
+        return CheckResult(
+            name="agent-readonly",
+            status=CheckStatus.WARN,
+            detail=(
+                "Der Store 'shared' läuft nicht auf PostgreSQL; eine nur lesende Verbindung "
+                "lässt sich dort nicht erzwingen (§18.3). Im Betrieb ist das ein Fehler."
+            ),
+        )
+
+    try:
+        with registry.readonly_engine(defaults.STORE_SHARED).connect() as connection:
+            transaktion = connection.begin()
+            try:
+                connection.execute(text("CREATE TEMP TABLE wg_schreibprobe (x int)"))
+            except DatabaseError:
+                return CheckResult(
+                    name="agent-readonly",
+                    status=CheckStatus.OK,
+                    detail=(
+                        "Die Agenten-Verbindung auf 'shared' weist Schreibversuche in der "
+                        "Datenbank ab (§18.3)."
+                    ),
+                )
+            finally:
+                transaktion.rollback()
+    except SQLAlchemyError as exc:
+        return CheckResult(
+            name="agent-readonly",
+            status=CheckStatus.WARN,
+            detail=f"Nicht prüfbar: {str(exc).splitlines()[0][:200]}",
+        )
+
+    return CheckResult(
+        name="agent-readonly",
+        status=CheckStatus.FAIL,
+        detail=(
+            "Die Agenten-Verbindung auf 'shared' konnte schreiben. Ein Agent darf die geteilte "
+            "Struktur nicht verändern (§17.4); prüfe 'stores.shared.readonly_dsn'."
+        ),
+    )
+
+
 def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsReport:
     """Führt alle Prüfungen aus und fasst sie zu einem Bericht zusammen."""
     settings_checks: tuple[Callable[[Settings], CheckResult], ...] = (
@@ -537,5 +596,6 @@ def run_diagnostics(settings: Settings, registry: StoreRegistry) -> DiagnosticsR
     results.extend(check_store_separation(registry))
     results.extend(check_models(settings))
     results.extend(check_sources(settings))
+    results.append(check_agent_readonly(registry))
     results.append(check_broker(settings))
     return DiagnosticsReport(results=tuple(results))

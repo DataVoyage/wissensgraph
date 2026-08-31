@@ -1029,6 +1029,38 @@ def worker(
     typer.echo(f"{_SYMBOLS[CheckStatus.OK]} {erledigt} Job(s) abgearbeitet.")
 
 
+@app.command("mcp")
+def mcp(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    session: Annotated[
+        str,
+        typer.Option(
+            "--session",
+            help="Kennung der Agenten-Sitzung; steht als 'agent:<session>' im Journal (§18.3).",
+        ),
+    ] = defaults.MCP_DEFAULT_SESSION,
+) -> None:
+    """Startet den MCP-Server — der Startbefehl des mcp-Containers (§5.1, §18).
+
+    Der Transport ist stdio: Der Agent startet den Prozess und spricht über seine Ströme mit ihm.
+    Auf dem geteilten Store hält der Server ausschließlich eine nur lesende Verbindung; ein
+    Schreibversuch dorthin scheitert in der Datenbank und nicht erst an einer Prüfung (§18.3).
+    """
+    import asyncio
+
+    from wissensgraph.mcp.server import serve_stdio
+
+    settings = _load(config_file, service="mcp", dotenv_file=dotenv_file)
+    try:
+        asyncio.run(serve_stdio(settings, session=session))
+    except ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    except KeyboardInterrupt:  # pragma: no cover — nur beim Beenden von Hand
+        typer.echo("MCP-Server beendet.", err=True)
+
+
 @app.command("mock-sources")
 def mock_sources(
     config_file: ConfigFileOption = None,

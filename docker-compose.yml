@@ -175,7 +175,11 @@ services:
   mcp:
     <<: *app-image
     profiles: [dev, live]
-    command: ["python", "-c", "import time; print('mcp bereit (Stufe 12)', flush=True); time.sleep(2**31)"]
+    # Der MCP-Server spricht über stdio (§18): Er hat keinen Port und keinen Healthcheck. Der
+    # Container hält den Prozess bereit; ein Agent bindet ihn über 'docker compose exec' ein.
+    command: ["wg", "mcp"]
+    stdin_open: true
+    tty: false
     environment: *app-environment
     volumes: *app-volumes
     networks: [wg-personal, wg-shared]
