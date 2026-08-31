@@ -30,6 +30,7 @@ from wissensgraph.infrastructure.db.tables import (
     cluster_centroids,
     concept_embeddings,
     concepts,
+    edge_rejections,
     edges,
     loose_concepts,
     model_calls,
@@ -40,9 +41,12 @@ from wissensgraph.ports.models import ModelCall, UsageSummary
 from wissensgraph.ports.repositories import (
     AssignmentCandidate,
     Centroid,
+    ConceptCount,
+    ConceptFilter,
     LexicalHit,
     LooseConcept,
     Neighbour,
+    Page,
 )
 from wissensgraph.ports.runs import SourceCursorState
 from wissensgraph.ports.sources import Cursor
@@ -233,6 +237,107 @@ class SqlConceptRepository(_StoreBound):
             )
             for row in rows
         )
+
+    def page(self, filter: ConceptFilter, *, limit: int, cursor: str | None = None) -> Page:
+        """Ein gefilterter Ausschnitt des Bestands, cursor-basiert über die ID (§16.1, §16.2)."""
+        statement = select(concepts).where(self._filterbedingung(filter))
+        if cursor is not None:
+            statement = statement.where(concepts.c.id > cursor)
+        # Eine Zeile mehr als angefragt: Sie beantwortet, ob es weitergeht, ohne eine zweite
+        # Zählabfrage über denselben Filter.
+        rows = self._connection.execute(
+            statement.order_by(concepts.c.id).limit(limit + 1)
+        ).mappings()
+        gefunden = [Concept.model_validate(dict(row)) for row in rows]
+        weiter = len(gefunden) > limit
+        seite = tuple(gefunden[:limit])
+        return Page(items=seite, next_cursor=seite[-1].id if weiter and seite else None)
+
+    def _filterbedingung(self, filter: ConceptFilter) -> Any:
+        """Übersetzt die Facetten aus §16.2 in eine WHERE-Bedingung."""
+        bedingungen = []
+        if not filter.include_tombstones:
+            bedingungen.append(concepts.c.status != str(ConceptStatus.TOMBSTONE))
+        if filter.scope is not None:
+            bedingungen.append(concepts.c.scope == filter.scope)
+        if filter.concept_type is not None:
+            bedingungen.append(concepts.c.type == filter.concept_type)
+        if filter.status is not None:
+            bedingungen.append(concepts.c.status == filter.status)
+        if filter.source_name is not None:
+            bedingungen.append(concepts.c.source_name == filter.source_name)
+        if filter.curated is not None:
+            bedingungen.append(concepts.c.curated.is_(filter.curated))
+        if filter.unverified is not None:
+            pruefung = concepts.c.verified_at.is_(None)
+            bedingungen.append(
+                pruefung if filter.unverified else concepts.c.verified_at.is_not(None)
+            )
+        if filter.query:
+            # ``ILIKE`` und nicht die Volltextsuche: Das hier ist die Facettenfilterung des
+            # Dokumentenbrowsers (§17.2), also ein Einschränken einer Liste. Die Suche nach
+            # Bedeutung ist ein anderer Endpunkt (§16.2, ``/graph/search``) mit einem anderen
+            # Versprechen — beides in einen Parameter zu legen, verwischte den Unterschied.
+            muster = f"%{filter.query}%"
+            bedingungen.append(
+                or_(
+                    concepts.c.title.ilike(muster),
+                    concepts.c.description.ilike(muster),
+                )
+            )
+        if filter.cluster_id is not None:
+            bedingungen.append(
+                select(edges.c.id)
+                .where(
+                    and_(
+                        edges.c.from_store == self._store,
+                        edges.c.from_id == filter.cluster_id,
+                        edges.c.kind == defaults.EDGE_KIND_MEMBER,
+                        edges.c.to_id == concepts.c.id,
+                    )
+                )
+                .exists()
+            )
+        if filter.orphan is not None:
+            lose = (
+                select(loose_concepts.c.id)
+                .where(
+                    and_(
+                        loose_concepts.c.id == concepts.c.id,
+                        loose_concepts.c.semantic_degree < filter.loose_threshold,
+                    )
+                )
+                .exists()
+            )
+            bedingungen.append(lose if filter.orphan else ~lose)
+        return and_(*bedingungen) if bedingungen else text("TRUE")
+
+    def counts(self) -> tuple[ConceptCount, ...]:
+        """Die Bestandszahlen nach Scope, Typ und Status (§16.2)."""
+        rows = self._connection.execute(
+            select(
+                concepts.c.scope,
+                concepts.c.type,
+                concepts.c.status,
+                func.count().label("anzahl"),
+            )
+            .group_by(concepts.c.scope, concepts.c.type, concepts.c.status)
+            .order_by(concepts.c.scope, concepts.c.type, concepts.c.status)
+        ).mappings()
+        return tuple(
+            ConceptCount(
+                scope=row["scope"],
+                type=row["type"],
+                status=row["status"],
+                count=int(row["anzahl"]),
+            )
+            for row in rows
+        )
+
+    def delete(self, concept_id: str) -> bool:
+        """Entfernt ein Konzept vollständig (§17.3, Undo einer Anlage)."""
+        result = self._connection.execute(delete(concepts).where(concepts.c.id == concept_id))
+        return result.rowcount > 0
 
     def save(self, concept: Concept) -> None:
         """Legt ein Konzept an oder überschreibt es (``INSERT … ON CONFLICT DO UPDATE``).
@@ -501,6 +606,190 @@ class SqlEdgeRepository(_StoreBound):
         )
         return result.rowcount
 
+    # -- Kuration (§16.2, §17.2) -------------------------------------------------
+
+    def count(self) -> int:
+        """Wie viele Kanten in diesem Store beginnen (§16.2, ``/stats``)."""
+        anzahl = self._connection.execute(
+            select(func.count()).select_from(edges).where(edges.c.from_store == self._store)
+        ).scalar_one()
+        return int(anzahl)
+
+    def get(self, edge_id: UUID) -> Edge | None:
+        """Die Kante zu einer ID, oder ``None``."""
+        row = (
+            self._connection.execute(select(edges).where(edges.c.id == edge_id)).mappings().first()
+        )
+        return None if row is None else Edge.model_validate(dict(row))
+
+    def remove(self, edge_id: UUID) -> Edge | None:
+        """Entfernt eine Kante und gibt sie zurück, damit der Aufrufer sie journalisieren kann."""
+        row = (
+            self._connection.execute(delete(edges).where(edges.c.id == edge_id).returning(edges))
+            .mappings()
+            .first()
+        )
+        return None if row is None else Edge.model_validate(dict(row))
+
+    def verify(self, *, edge_id: UUID, actor: str, now: datetime) -> Edge | None:
+        """Bestätigt eine Kante: ``verified_by``, ``verified_at`` und ``curated = true`` (§16.2).
+
+        ``curated`` gehört dazu, weil die Bestätigung sonst wirkungslos wäre: §10.4 erlaubt Läufen,
+        generierte Kanten zu ersetzen, und schützt genau die kuratierten. Eine bestätigte Kante,
+        die ein Folgelauf wieder wegräumen darf, wäre keine Bestätigung.
+        """
+        row = (
+            self._connection.execute(
+                update(edges)
+                .where(edges.c.id == edge_id)
+                .values(verified_by=actor, verified_at=now, curated=True)
+                .returning(edges)
+            )
+            .mappings()
+            .first()
+        )
+        return None if row is None else Edge.model_validate(dict(row))
+
+    def unverified(self, *, limit: int, kinds: Sequence[str] = ()) -> tuple[Edge, ...]:
+        """Generierte, noch nicht bestätigte Kanten — die Warteschlange aus §17.2.
+
+        Nach Confidence absteigend, wie §17.2 es verlangt. Kanten ohne ``generated_by`` bleiben
+        außen vor: Was ein Mensch gesetzt hat, wartet auf keine Bestätigung.
+        """
+        statement = select(edges).where(
+            and_(
+                edges.c.from_store == self._store,
+                edges.c.generated_by.is_not(None),
+                edges.c.curated.is_(False),
+                edges.c.verified_at.is_(None),
+            )
+        )
+        if kinds:
+            statement = statement.where(edges.c.kind.in_(tuple(kinds)))
+        rows = self._connection.execute(
+            statement.order_by(
+                edges.c.confidence.desc().nullslast(), edges.c.created_at.desc(), edges.c.id
+            ).limit(limit)
+        ).mappings()
+        return tuple(Edge.model_validate(dict(row)) for row in rows)
+
+    def retarget(self, *, from_id: str, to_id: str, kind: str | None = None) -> int:
+        """Hängt Kanten von einem Konzept dieses Stores auf ein anderes um (§16.2, Verschmelzen).
+
+        Beide Richtungen: Ein verschmolzenes Cluster ist Ausgangspunkt seiner ``member``-Kanten und
+        Ziel der ``related``-Kanten anderer Cluster. Tripel, die es am Ziel schon gibt, werden
+        gelöscht statt umgehängt — ``ux_edges_triple`` (§7.4) ließe die Doppelung ohnehin nicht zu,
+        und ein Abbruch mitten in einer Verschmelzung wäre der schlechtere Ausgang.
+        """
+        umgehaengt = 0
+        for spalte_id, spalte_store in (
+            (edges.c.from_id, edges.c.from_store),
+            (edges.c.to_id, edges.c.to_store),
+        ):
+            bedingung = and_(spalte_store == self._store, spalte_id == from_id)
+            if kind is not None:
+                bedingung = and_(bedingung, edges.c.kind == kind)
+            for row in self._connection.execute(select(edges).where(bedingung)).mappings().all():
+                kante = Edge.model_validate(dict(row))
+                neu = (
+                    kante.model_copy(update={"from_id": to_id})
+                    if kante.from_id == from_id and kante.from_store == self._store
+                    else kante.model_copy(update={"to_id": to_id})
+                )
+                self._connection.execute(delete(edges).where(edges.c.id == kante.id))
+                if neu.from_id == neu.to_id and neu.from_store == neu.to_store:
+                    continue
+                bereits = self._connection.execute(
+                    select(edges.c.id).where(
+                        and_(
+                            edges.c.from_store == neu.from_store,
+                            edges.c.from_id == neu.from_id,
+                            edges.c.to_store == neu.to_store,
+                            edges.c.to_id == neu.to_id,
+                            edges.c.kind == neu.kind,
+                        )
+                    )
+                ).first()
+                if bereits is not None:
+                    continue
+                werte = neu.model_dump()
+                self._connection.execute(insert(edges).values(**werte))
+                umgehaengt += 1
+        return umgehaengt
+
+    def reject(self, *, edge: Edge, actor: str, reason: str | None, now: datetime) -> None:
+        """Vermerkt ein Kantentripel als verworfen (§16.2, Migration 0003)."""
+        self._connection.execute(
+            insert(edge_rejections)
+            .values(
+                from_store=edge.from_store,
+                from_id=edge.from_id,
+                to_store=edge.to_store,
+                to_id=edge.to_id,
+                kind=edge.kind,
+                rejected_by=actor,
+                reason=reason,
+                rejected_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=[
+                    edge_rejections.c.from_store,
+                    edge_rejections.c.from_id,
+                    edge_rejections.c.to_store,
+                    edge_rejections.c.to_id,
+                    edge_rejections.c.kind,
+                ],
+                set_={"rejected_by": actor, "reason": reason, "rejected_at": now},
+            )
+        )
+
+    def rejected_kinds(self, *, from_id: str, to_id: str) -> frozenset[str]:
+        """Die verworfenen Kantenarten zwischen zwei Konzepten — in beiden Richtungen.
+
+        Beide Richtungen, obwohl der Vermerk gerichtet ist: Die Kantenerkennung fragt, *bevor* sie
+        ein Paar an ein Modell gibt (§14.5), und zu diesem Zeitpunkt kennt sie die Richtung noch
+        nicht. Ein Mensch, der eine Beziehung verworfen hat, soll dazu nicht zweimal gefragt
+        werden — einmal je Richtung.
+        """
+        rows = self._connection.execute(
+            select(edge_rejections.c.kind).where(
+                or_(
+                    and_(
+                        edge_rejections.c.from_store == self._store,
+                        edge_rejections.c.from_id == from_id,
+                        edge_rejections.c.to_id == to_id,
+                    ),
+                    and_(
+                        edge_rejections.c.from_store == self._store,
+                        edge_rejections.c.from_id == to_id,
+                        edge_rejections.c.to_id == from_id,
+                    ),
+                )
+            )
+        ).scalars()
+        return frozenset(rows)
+
+    def unreject(
+        self, *, from_store: str, from_id: str, to_store: str, to_id: str, kind: str
+    ) -> bool:
+        """Nimmt einen Negativvermerk zurück — der Undo eines ``reject`` (§17.3).
+
+        Returns:
+            Ob es einen Vermerk zum Zurücknehmen gab.
+        """
+        result = self._connection.execute(
+            delete(edge_rejections).where(
+                and_(
+                    edge_rejections.c.from_store == from_store,
+                    edge_rejections.c.from_id == from_id,
+                    edge_rejections.c.to_store == to_store,
+                    edge_rejections.c.to_id == to_id,
+                    edge_rejections.c.kind == kind,
+                )
+            )
+        )
+        return result.rowcount > 0
+
     def _insert(self, draft: EdgeDraft) -> Edge:
         """Legt eine Kante an und gibt sie mit ihrer ID zurück."""
         werte: dict[str, Any] = draft.model_dump()
@@ -724,6 +1013,7 @@ class SqlClusterRepository(_StoreBound):
                 model_key=row["model_key"],
                 vector=tuple(float(zahl) for zahl in row["embedding"]),
                 member_count=int(row["member_count"]),
+                updated_at=row["updated_at"],
             )
             for row in rows
         )
@@ -876,6 +1166,24 @@ class SqlClusterRepository(_StoreBound):
             )
         )
 
+    def include(self, *, concept_id: str, cluster_id: str) -> bool:
+        """Hebt einen Ausschluss auf (§13.4, §17.3).
+
+        Die Zeile wird gelöscht und nicht auf ``excluded = false`` gesetzt: Ein Kandidat mit
+        ``seen_count = 0`` wäre eine Beobachtung, die nie stattgefunden hat, und der nächste Lauf
+        würde von ihr aus zählen (§13.3).
+        """
+        result = self._connection.execute(
+            delete(cluster_assignment_candidates).where(
+                and_(
+                    cluster_assignment_candidates.c.concept_id == concept_id,
+                    cluster_assignment_candidates.c.cluster_id == cluster_id,
+                    cluster_assignment_candidates.c.excluded.is_(True),
+                )
+            )
+        )
+        return result.rowcount > 0
+
     def exclusions(self) -> frozenset[tuple[str, str]]:
         """Alle gesperrten Paare aus Konzept und Cluster."""
         rows = self._connection.execute(
@@ -977,8 +1285,8 @@ class SqlModelCallRepository(_StoreBound):
 class SqlChangeLogRepository(_StoreBound):
     """Änderungsjournal eines Stores in PostgreSQL."""
 
-    def append(self, entry: ChangeEntry) -> None:
-        """Hängt einen Eintrag an."""
+    def append(self, entry: ChangeEntry) -> ChangeEntry:
+        """Hängt einen Eintrag an und gibt ihn mit vergebener ID zurück."""
         werte: dict[str, Any] = {
             "concept_id": entry.concept_id,
             "edge_id": entry.edge_id,
@@ -989,7 +1297,13 @@ class SqlChangeLogRepository(_StoreBound):
         }
         if entry.changed_at is not None:
             werte["changed_at"] = entry.changed_at
-        self._connection.execute(insert(change_log).values(**werte))
+        row = (
+            self._connection.execute(insert(change_log).values(**werte).returning(change_log))
+            .mappings()
+            .first()
+        )
+        assert row is not None
+        return _journal_eintrag(dict(row))
 
     def entries_for(self, concept_id: str) -> tuple[ChangeEntry, ...]:
         """Alle Einträge zu einem Konzept, neueste zuerst."""
@@ -997,6 +1311,33 @@ class SqlChangeLogRepository(_StoreBound):
             select(change_log)
             .where(change_log.c.concept_id == concept_id)
             .order_by(change_log.c.changed_at.desc(), change_log.c.id.desc())
+        ).mappings()
+        return tuple(_journal_eintrag(dict(row)) for row in rows)
+
+    def get(self, entry_id: int) -> ChangeEntry | None:
+        """Der Eintrag zu einer ID, oder ``None`` — der Bezugspunkt des Undo (§17.3)."""
+        row = (
+            self._connection.execute(select(change_log).where(change_log.c.id == entry_id))
+            .mappings()
+            .first()
+        )
+        return None if row is None else _journal_eintrag(dict(row))
+
+    def for_edge(self, edge_id: UUID) -> tuple[ChangeEntry, ...]:
+        """Alle Einträge zu einer Kante, neueste zuerst."""
+        rows = self._connection.execute(
+            select(change_log)
+            .where(change_log.c.edge_id == edge_id)
+            .order_by(change_log.c.changed_at.desc(), change_log.c.id.desc())
+        ).mappings()
+        return tuple(_journal_eintrag(dict(row)) for row in rows)
+
+    def recent(self, *, limit: int) -> tuple[ChangeEntry, ...]:
+        """Die jüngsten Einträge dieses Stores — die Journalspalte der Betriebsansicht (§17.2)."""
+        rows = self._connection.execute(
+            select(change_log)
+            .order_by(change_log.c.changed_at.desc(), change_log.c.id.desc())
+            .limit(limit)
         ).mappings()
         return tuple(_journal_eintrag(dict(row)) for row in rows)
 
@@ -1151,6 +1492,9 @@ def _konzept_zeile(concept: Concept) -> dict[str, Any]:
 
 
 def _journal_eintrag(row: Mapping[str, Any]) -> ChangeEntry:
-    """Baut einen Journaleintrag aus einer Zeile; die Spalte ``id`` gehört nicht ins Modell."""
-    daten = {name: wert for name, wert in row.items() if name != "id"}
-    return ChangeEntry.model_validate(daten)
+    """Baut einen Journaleintrag aus einer Zeile.
+
+    Die Spalte ``id`` gehört seit Stufe 11 dazu: §17.3 verlangt "Undo über den
+    ``change_log``-Eintrag", und dafür muss der Eintrag benennbar sein.
+    """
+    return ChangeEntry.model_validate(dict(row))

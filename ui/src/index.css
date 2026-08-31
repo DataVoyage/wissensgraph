@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Wenige eigene Klassen, und alle für Dinge, die §17.2 als Regel festlegt — nicht für Geschmack.
+ */
+@layer components {
+  .wg-panel {
+    @apply rounded border border-slate-200 bg-white p-3 shadow-sm;
+  }
+  .wg-button {
+    @apply rounded border border-slate-300 px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40;
+  }
+  .wg-input {
+    @apply w-full rounded border border-slate-300 px-2 py-1 text-sm;
+  }
+  /* Ein gesperrtes Feld ist sichtbar gesperrt, nicht nur schreibgeschützt (§17.3). */
+  .wg-locked {
+    @apply cursor-not-allowed border-dashed bg-slate-100 text-slate-500;
+  }
+  .wg-tab {
+    @apply border-b-2 border-transparent px-3 py-2 text-sm hover:border-slate-300;
+  }
+  .wg-tab-active {
+    @apply border-slate-800 font-medium;
+  }
+}

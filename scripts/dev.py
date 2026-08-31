@@ -81,6 +81,21 @@ def cmd_test(args: argparse.Namespace) -> int:
     return run(["npx", "vitest", "run", "--coverage"], cwd=UI_DIR)
 
 
+def cmd_e2e(_args: argparse.Namespace) -> int:
+    """Führt die Playwright-Tests der Kernflüsse aus (§24, Stufe 11).
+
+    Getrennt von ``test``, weil sie einen Browser brauchen: ``npx playwright install chromium``
+    lädt ihn einmalig herunter. Ein Standardlauf, der still ein paar hundert Megabyte zieht, wäre
+    eine Überraschung an der falschen Stelle.
+    """
+    return run(["npx", "playwright", "test"], cwd=UI_DIR)
+
+
+def cmd_client(_args: argparse.Namespace) -> int:
+    """Erzeugt den TypeScript-Client aus dem OpenAPI-Schema neu (§24, Stufe 11)."""
+    return run(["uv", "run", "python", "scripts/generate_client.py"])
+
+
 def cmd_lint(_args: argparse.Namespace) -> int:
     """Prüft Formatierung, Lint-Regeln, Typen und die Schichtentrennung aus §4.2."""
     return run_all(
@@ -167,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     test_parser.set_defaults(func=cmd_test)
 
+    subparsers.add_parser("e2e", help="Playwright-Tests der Kernflüsse.").set_defaults(func=cmd_e2e)
+    subparsers.add_parser("client", help="TypeScript-Client neu erzeugen.").set_defaults(
+        func=cmd_client
+    )
     subparsers.add_parser("lint", help=cmd_lint.__doc__).set_defaults(func=cmd_lint)
     subparsers.add_parser("format", help=cmd_format.__doc__).set_defaults(func=cmd_format)
     subparsers.add_parser("check", help=cmd_check.__doc__).set_defaults(func=cmd_check)

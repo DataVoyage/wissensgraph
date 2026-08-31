@@ -57,6 +57,14 @@ class ChangeEntry(DomainModel):
     oder ein Log versehentlich Inhalte nach außen trägt (§21.1).
     """
 
+    id: int | None = Field(
+        default=None,
+        description=(
+            "Laufende Nummer aus der Datenbank (``BIGSERIAL``, §7.4); ``None``, solange der "
+            "Eintrag noch nicht geschrieben ist. Sie ist der Bezugspunkt des Undo aus §17.3: "
+            "Rückgängig gemacht wird ein *bestimmter* Eintrag, nicht 'die letzte Änderung'."
+        ),
+    )
     change_type: ChangeType
     actor: str = Field(
         min_length=1,

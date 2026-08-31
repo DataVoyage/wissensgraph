@@ -105,6 +105,22 @@ change_log = Table(
     Column("detail", JSONB),
 )
 
+#: Verworfene Kantentripel (§16.2, Migration 0003). Der Schlüssel ist das Tripel und nicht die
+#: ``edge_id``: Die ID verschwindet mit der Kante, das Tripel ist das, was ein Folgelauf erneut
+#: erzeugen würde.
+edge_rejections = Table(
+    "edge_rejections",
+    metadata,
+    Column("from_store", Text, primary_key=True),
+    Column("from_id", Text, primary_key=True),
+    Column("to_store", Text, primary_key=True),
+    Column("to_id", Text, primary_key=True),
+    Column("kind", Text, primary_key=True),
+    Column("rejected_by", Text, nullable=False),
+    Column("reason", Text),
+    _timestamp("rejected_at", nullable=False),
+)
+
 runs = Table(
     "runs",
     metadata,

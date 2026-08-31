@@ -199,6 +199,8 @@ class GraphService:
         max_nodes: int | None = None,
         ranking: RankingConfig | None = None,
         include_tombstones: bool = False,
+        kinds: Sequence[str] | None = None,
+        stores: Sequence[str] | None = None,
     ) -> Traversal:
         """Löst den Kernspace um einen oder mehrere Startknoten auf (§12.1).
 
@@ -210,6 +212,12 @@ class GraphService:
             ranking: Abweichende Gewichte. §12.3: "Die Gewichte sind pro Anfrage überschreibbar,
                 damit sich Varianten in der UI vergleichen lassen."
             include_tombstones: Ob Grabsteine im Ergebnis erscheinen (§12.3).
+            kinds: Nur diesen Kantenarten folgen. Der Filter wirkt beim *Ausbreiten* und nicht
+                erst am Ergebnis: Wer nur ``member`` verfolgt, soll auch nur die Knoten erreichen,
+                die über ``member`` erreichbar sind — sonst zeigte die gefilterte Ansicht Knoten
+                ohne sichtbaren Weg dorthin (§17.2, Filterleiste).
+            stores: Nur diese Stores betreten. Der Startstore bleibt immer dabei; ihn
+                auszuschließen hieße, die Frage gegen sich selbst zu stellen.
 
         Returns:
             Die erreichten Knoten, nach Bewertung sortiert, mit den Kanten dazwischen.
@@ -223,7 +231,13 @@ class GraphService:
 
         bruecken, abfragen = self._bruecken_index()
         entfernung, kanten, kosten, gedeckelt = self._ausbreiten(
-            start=start, store=store, tiefe=tiefe, deckel=deckel, bruecken=bruecken
+            start=start,
+            store=store,
+            tiefe=tiefe,
+            deckel=deckel,
+            bruecken=bruecken,
+            kinds=None if kinds is None else frozenset(kinds),
+            stores=None if stores is None else frozenset(stores) | {store},
         )
         abfragen += kosten
         konzepte, ladekosten = self._konzepte_laden(entfernung)
@@ -437,6 +451,8 @@ class GraphService:
         tiefe: int,
         deckel: int,
         bruecken: Mapping[str, Mapping[str, frozenset[str]]],
+        kinds: frozenset[str] | None = None,
+        stores: frozenset[str] | None = None,
     ) -> tuple[dict[NodeKey, int], list[Edge], int, bool]:
         """Die Breitensuche aus §12.1, Schritt 1 bis 6.
 
@@ -455,11 +471,20 @@ class GraphService:
 
         for hop in range(1, tiefe + 1):
             neue = _Front()
-            for aktueller_store in self._zu_befragende_stores(front, bruecken):
+            zu_fragen = self._zu_befragende_stores(front, bruecken)
+            if stores is not None:
+                zu_fragen = tuple(name for name in zu_fragen if name in stores)
+            for aktueller_store in zu_fragen:
                 gefunden, kosten = self._kanten_laden(aktueller_store, front, bruecken)
                 abfragen += kosten
                 for edge in gefunden:
                     if edge.triple in gesehen:
+                        continue
+                    if kinds is not None and edge.kind not in kinds:
+                        continue
+                    if stores is not None and (
+                        edge.from_store not in stores or edge.to_store not in stores
+                    ):
                         continue
                     gesehen.add(edge.triple)
                     kanten.append(edge)

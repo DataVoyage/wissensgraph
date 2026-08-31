@@ -30,9 +30,12 @@ from wissensgraph.ports.models import ModelCall, UsageSummary
 from wissensgraph.ports.repositories import (
     AssignmentCandidate,
     Centroid,
+    ConceptCount,
+    ConceptFilter,
     LexicalHit,
     LooseConcept,
     Neighbour,
+    Page,
 )
 from wissensgraph.ports.runs import SourceBusy, SourceCursorState
 from wissensgraph.ports.sources import Cursor
@@ -68,6 +71,11 @@ class StoreState:
     centroids: dict[str, Centroid] = field(default_factory=dict)
     candidates: dict[tuple[str, str], _Kandidat] = field(default_factory=dict)
     model_calls: list[ModelCall] = field(default_factory=list)
+    #: Verworfene Kantentripel (§16.2, Migration 0003) — der Schlüssel ist das Tripel selbst.
+    rejections: dict[tuple[str, str, str, str, str], str] = field(default_factory=dict)
+    #: Der Zähler der ``BIGSERIAL``-Spalte ``change_log.id``. Er steht hier und nicht als
+    #: Klassenvariable, weil jeder Store seine eigene Sequenz hat.
+    next_change_id: int = 1
 
 
 class MemoryConceptRepository:
@@ -171,6 +179,67 @@ class MemoryConceptRepository:
                 )
         treffer.sort(key=lambda item: (item.semantic_degree, item.id))
         return tuple(treffer)
+
+    def page(self, filter: ConceptFilter, *, limit: int, cursor: str | None = None) -> Page:
+        """Nachbildung der Facettenfilterung aus §16.2 — dieselbe Auswahl, ohne SQL."""
+        treffer: list[Concept] = []
+        for concept in sorted(self._state.concepts.values(), key=lambda item: item.id):
+            if cursor is not None and concept.id <= cursor:
+                continue
+            if not filter.include_tombstones and concept.status is ConceptStatus.TOMBSTONE:
+                continue
+            if filter.scope is not None and concept.scope != filter.scope:
+                continue
+            if filter.concept_type is not None and concept.type != filter.concept_type:
+                continue
+            if filter.status is not None and str(concept.status) != filter.status:
+                continue
+            if filter.source_name is not None and concept.source_name != filter.source_name:
+                continue
+            if filter.curated is not None and concept.curated != filter.curated:
+                continue
+            if filter.unverified is not None and (concept.verified_at is None) != filter.unverified:
+                continue
+            if filter.query and not self._passt_zur_suche(concept, filter.query):
+                continue
+            if filter.cluster_id is not None and not any(
+                edge.from_store == self._store
+                and edge.from_id == filter.cluster_id
+                and edge.kind == defaults.EDGE_KIND_MEMBER
+                and edge.to_id == concept.id
+                for edge in self._state.edges
+            ):
+                continue
+            if filter.orphan is not None:
+                lose = {item.id for item in self.loose(threshold=filter.loose_threshold)}
+                if (concept.id in lose) != filter.orphan:
+                    continue
+            treffer.append(concept)
+            if len(treffer) > limit:
+                break
+        weiter = len(treffer) > limit
+        seite = tuple(treffer[:limit])
+        return Page(items=seite, next_cursor=seite[-1].id if weiter and seite else None)
+
+    @staticmethod
+    def _passt_zur_suche(concept: Concept, query: str) -> bool:
+        begriff = query.casefold()
+        return any(
+            begriff in (feld or "").casefold() for feld in (concept.title, concept.description)
+        )
+
+    def counts(self) -> tuple[ConceptCount, ...]:
+        gezaehlt: dict[tuple[str, str, str], int] = {}
+        for concept in self._state.concepts.values():
+            schluessel = (concept.scope, concept.type, str(concept.status))
+            gezaehlt[schluessel] = gezaehlt.get(schluessel, 0) + 1
+        return tuple(
+            ConceptCount(scope=scope, type=typ, status=status, count=anzahl)
+            for (scope, typ, status), anzahl in sorted(gezaehlt.items())
+        )
+
+    def delete(self, concept_id: str) -> bool:
+        return self._state.concepts.pop(concept_id, None) is not None
 
     def save(self, concept: Concept) -> None:
         if concept.store != self._store:
@@ -349,6 +418,81 @@ class MemoryEdgeRepository:
             and {edge.from_id, edge.to_id} == {from_id, to_id}
         )
 
+    # -- Kuration (§16.2) ---------------------------------------------------------
+
+    def count(self) -> int:
+        return sum(1 for edge in self._state.edges if edge.from_store == self._store)
+
+    def get(self, edge_id: UUID) -> Edge | None:
+        return next((edge for edge in self._state.edges if edge.id == edge_id), None)
+
+    def remove(self, edge_id: UUID) -> Edge | None:
+        kante = self.get(edge_id)
+        if kante is not None:
+            self._state.edges.remove(kante)
+        return kante
+
+    def verify(self, *, edge_id: UUID, actor: str, now: datetime) -> Edge | None:
+        kante = self.get(edge_id)
+        if kante is None:
+            return None
+        index = self._state.edges.index(kante)
+        neu = kante.model_copy(update={"verified_by": actor, "verified_at": now, "curated": True})
+        self._state.edges[index] = neu
+        return neu
+
+    def unverified(self, *, limit: int, kinds: Sequence[str] = ()) -> tuple[Edge, ...]:
+        treffer = [
+            edge
+            for edge in self._state.edges
+            if edge.from_store == self._store
+            and edge.generated_by is not None
+            and not edge.curated
+            and edge.verified_at is None
+            and (not kinds or edge.kind in kinds)
+        ]
+        treffer.sort(key=lambda edge: (-(edge.confidence or 0.0), str(edge.id)))
+        return tuple(treffer[:limit])
+
+    def retarget(self, *, from_id: str, to_id: str, kind: str | None = None) -> int:
+        umgehaengt = 0
+        for kante in list(self._state.edges):
+            if kind is not None and kante.kind != kind:
+                continue
+            if kante.from_store == self._store and kante.from_id == from_id:
+                neu = kante.model_copy(update={"from_id": to_id})
+            elif kante.to_store == self._store and kante.to_id == from_id:
+                neu = kante.model_copy(update={"to_id": to_id})
+            else:
+                continue
+            self._state.edges.remove(kante)
+            if neu.from_id == neu.to_id and neu.from_store == neu.to_store:
+                continue
+            if any(edge.triple == neu.triple for edge in self._state.edges):
+                continue
+            self._state.edges.append(neu)
+            umgehaengt += 1
+        return umgehaengt
+
+    def reject(self, *, edge: Edge, actor: str, reason: str | None, now: datetime) -> None:
+        del now
+        self._state.rejections[edge.triple] = reason or actor
+
+    def rejected_kinds(self, *, from_id: str, to_id: str) -> frozenset[str]:
+        return frozenset(
+            triple[4]
+            for triple in self._state.rejections
+            if triple[0] == self._store and {triple[1], triple[3]} == {from_id, to_id}
+        )
+
+    def unreject(
+        self, *, from_store: str, from_id: str, to_store: str, to_id: str, kind: str
+    ) -> bool:
+        return (
+            self._state.rejections.pop((from_store, from_id, to_store, to_id, kind), None)
+            is not None
+        )
+
     def refresh_resolution(self) -> int:
         anzahl = 0
         for index, edge in enumerate(self._state.edges):
@@ -373,13 +517,26 @@ class MemoryChangeLogRepository:
     def store(self) -> str:
         return self._store
 
-    def append(self, entry: ChangeEntry) -> None:
-        self._state.changes.append(entry)
+    def append(self, entry: ChangeEntry) -> ChangeEntry:
+        """Vergibt eine ID wie die ``BIGSERIAL``-Spalte und hängt den Eintrag an."""
+        vergeben = entry.model_copy(update={"id": self._state.next_change_id})
+        self._state.next_change_id += 1
+        self._state.changes.append(vergeben)
+        return vergeben
 
     def entries_for(self, concept_id: str) -> tuple[ChangeEntry, ...]:
         return tuple(
             entry for entry in reversed(self._state.changes) if entry.concept_id == concept_id
         )
+
+    def for_edge(self, edge_id: UUID) -> tuple[ChangeEntry, ...]:
+        return tuple(entry for entry in reversed(self._state.changes) if entry.edge_id == edge_id)
+
+    def get(self, entry_id: int) -> ChangeEntry | None:
+        return next((entry for entry in self._state.changes if entry.id == entry_id), None)
+
+    def recent(self, *, limit: int) -> tuple[ChangeEntry, ...]:
+        return tuple(reversed(self._state.changes))[:limit]
 
     def has_open_curation_conflict(self, *, concept_id: str, source_content_hash: str) -> bool:
         return any(
@@ -577,6 +734,7 @@ class MemoryClusterRepository:
             model_key=model_key,
             vector=tuple(vector),
             member_count=member_count,
+            updated_at=datetime.now(UTC),
         )
 
     def centroids(self, *, model_key: str) -> tuple[Centroid, ...]:
@@ -660,6 +818,14 @@ class MemoryClusterRepository:
             )
             return
         vorhanden.excluded = True
+
+    def include(self, *, concept_id: str, cluster_id: str) -> bool:
+        schluessel = (concept_id, cluster_id)
+        vorhanden = self._state.candidates.get(schluessel)
+        if vorhanden is None or not vorhanden.excluded:
+            return False
+        del self._state.candidates[schluessel]
+        return True
 
     def exclusions(self) -> frozenset[tuple[str, str]]:
         return frozenset(

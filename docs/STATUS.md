@@ -23,7 +23,7 @@ festgelegte Abnahme erfüllt.
 | 8 | Embeddings und Clustering | **fertig** |
 | 9 | Semantische Kantenerkennung | **fertig** |
 | 10 | Verwaiste-Knoten-Vernetzung | **fertig** |
-| 11 | HTTP-API und Web-UI | offen |
+| 11 | HTTP-API und Web-UI | **fertig** |
 | 12 | MCP-Retrieval-Layer | offen |
 | 13 | Anbindung der echten Quellen | offen |
 
@@ -1026,6 +1026,159 @@ Prompt-Format für dieselbe Frage wäre die Stelle, an der die beiden Läufe aus
 
 Periodisches Scheduling, so vorgesehen in §24. Die vier Läufe sind als `RunKind` in der Queue
 angemeldet und laufen über den Worker; was fehlt, ist allein der Auslöser über die Zeit.
+
+---
+
+## Stufe 11 — was steht
+
+Die vollständige HTTP-API nach §16, ein aus dem OpenAPI-Schema erzeugter TypeScript-Client, alle
+sechs Ansichten aus §17.2, der Kurationsdienst samt Undo, Server-Sent Events für den
+Lauf-Fortschritt und Playwright-Tests der Kernflüsse.
+
+### Löschen und Verwerfen sind zwei verschiedene Dinge
+
+Der Unterschied zwischen `DELETE /edges/{id}` und `POST /edges/{id}/reject` ist der Kern dieser
+Stufe und keine Geschmacksfrage:
+
+- **Löschen** heißt "hier gehört sie nicht hin". Die Kante verschwindet, mehr nicht.
+- **Verwerfen** heißt "diese Beziehung gibt es nicht". Die Kante verschwindet **und** ihr Tripel
+  wird als Negativ vermerkt.
+
+Nur das zweite bindet einen Folgelauf, und genau das verlangt §24: "der verworfene entsteht im
+Folgelauf nicht neu". Ohne den Vermerk fände die Kantenerkennung dasselbe Paar mit derselben
+Ähnlichkeit, fragte dasselbe Modell und bekäme dieselbe Antwort — die Kuration wäre nach einem
+Lauf verschwunden.
+
+Dafür kam **Migration `0003_edge_rejections`** dazu. Der Schlüssel ist das Kantentripel aus §7.4
+und nicht die `edge_id`: Die ID verschwindet mit der Kante, das Tripel ist das, was ein Folgelauf
+erneut erzeugen würde. Die Richtung gehört zum Schlüssel — wer `a depends_on b` verwirft, hat über
+`b depends_on a` nichts gesagt, und §17.2 bietet dafür ausdrücklich "Richtung umdrehen" an.
+
+Der Vermerk wirkt an zwei Stellen und beide Male **vor** dem Modellaufruf: in
+`RelationService._vorfiltern` (§14.5, "Verarbeitung nur neuer/geänderter Paare") und in
+`OrphanService._nahe_kante`. Ein verworfenes Paar kostet damit bei keinem Folgelauf einen weiteren
+Token.
+
+### Was ein Undo kann — und was nicht
+
+§17.3 verlangt: "Jede Kuration ist rückgängig machbar (Undo über den `change_log`-Eintrag)."
+Umgesetzt ist das für **Strukturentscheidungen**: Kanten anlegen und entfernen, Mitgliedschaften,
+Bestätigen, Verwerfen, Anlegen eines Konzepts, Statuswechsel.
+
+**Nicht** umkehrbar ist eine inhaltliche Änderung an Titel, Beschreibung oder Fließtext, und der
+Endpunkt sagt das mit `409` und einer Begründung, statt es zu versuchen und stillschweigend nur
+die Hälfte wiederherzustellen. Der Grund steht im Journal selbst: Es hält Feldnamen fest, keine
+Werte (§7.4, §21.1). Den alten Text dort abzulegen hieße, Inhalte an einer zweiten Stelle zu
+führen — und aus einem Journal, das heute gefahrlos exportierbar ist, würde eines, das es nicht
+mehr ist.
+
+Rückgängig gemacht wird immer ein *bestimmter* Eintrag und nie "die letzte Änderung": In einem
+System, das nebenher synchronisiert, clustert und Kanten erkennt, wäre "die letzte" selten die
+gemeinte. Dafür trägt `ChangeEntry` seit dieser Stufe die `id` der `BIGSERIAL`-Spalte, und
+`append()` gibt den geschriebenen Eintrag zurück — die Oberfläche kann ein Undo damit sofort
+anbieten, ohne die Historie erneut zu laden.
+
+### Gesperrt heißt sichtbar gesperrt
+
+§17.3: "Inhaltsfelder quellgespiegelter Konzepte sind sichtbar gesperrt, nicht nur
+schreibgeschützt." *Sichtbar* ist der Punkt — die Oberfläche muss es wissen, **bevor** jemand
+tippt, und darf es nicht erst an einer abgelehnten Anfrage merken.
+
+Deshalb liefert `GET /concepts/{id}` ein Feld `locked_fields`, und die Oberfläche liest es, statt
+die Regel nachzubauen (§17.1). Maßgeblich ist die Herkunft des einzelnen Konzepts und nicht allein
+die Taxonomie: Eine lokal angelegte Notiz vom Typ `Note` ist frei, dieselbe ID mit `source_name`
+wäre es nicht.
+
+### Der Lauf entsteht vor dem Job
+
+Alle `POST /runs/*` antworten mit `202 Accepted`, einer Run-ID und `Location`. Die Zeile in `runs`
+entsteht dabei **zuerst**, der Job ist nur ein Verweis darauf (§16.3). Das ist der Grund, warum die
+Oberfläche einen Lauf abonnieren kann, bevor der Worker ihn überhaupt entnommen hat — und warum
+"Läufe blockieren die UI nie" (§17.3) eine Eigenschaft des Aufbaus ist und keine
+Absichtserklärung.
+
+`Runtime._verbuchter_lauf` nimmt dafür eine `run_id` entgegen: Der Worker führt den *vorhandenen*
+Lauf aus, statt einen zweiten anzulegen. Ohne das verfolgte die Oberfläche einen Lauf, der nie
+startet, während ein anderer unbemerkt arbeitet. Ein vor dem Start abgebrochener Lauf wird dabei
+erkannt und gar nicht erst ausgeführt.
+
+`GET /runs/{id}/events` liefert Server-Sent Events und schickt nur bei *Änderung* — ein Strom, der
+jede Sekunde denselben Zustand wiederholt, ist für den Empfänger nicht von Fortschritt zu
+unterscheiden. Er endet mit dem Lauf, bei Verbindungsabbruch des Clients und spätestens nach einer
+Stunde.
+
+### Zwei neue Dienste
+
+- **`services/catalog.py`** — der Lesepfad: Listen, Detailansichten, Cluster, Warteschlange,
+  Zahlen, Läufe, Modellnutzung. Er schreibt nichts, und das ist keine Formalie: Der Lesepfad hängt
+  damit an keiner Transaktion, die ein Lauf hält.
+- **`services/curation.py`** — der Schreibpfad des Menschen. Jede Operation setzt `curated = true`
+  (sonst hätte eine Handbewegung die Lebensdauer eines Laufs, §10.4) und hinterlässt einen
+  Journaleintrag mit `actor`.
+
+Cluster sind dabei keine eigene Gattung, sondern Konzepte vom Typ `Cluster` mit `member`-Kanten
+(§13.2). Der Cluster-Arbeitsplatz bekommt deshalb keine zweite Datenquelle, sondern denselben
+Graphen aus einem anderen Blickwinkel.
+
+### Die Oberfläche enthält keine Fachlogik
+
+§17.1 verlangt es, und es ist überprüfbar: Scopes, Konzepttypen, Kantenarten und die Store-Liste
+kommen aus `/api/v1/config/effective`, die Sperren aus `locked_fields`, die Modellrouten aus
+`/api/v1/models`. Solange die Konfiguration nicht geladen ist, zeigt die SPA **keine** Ansicht —
+nicht aus Vorsicht, sondern weil sie ohne sie nicht wüsste, was es gibt. Eine Vorbelegung wäre
+genau die eingebaute Fachregel, die dort ausgeschlossen ist.
+
+Der lokale Zustand steht in der URL (§17.1): Eine Kuration besprechen heißt, jemandem *dieselbe*
+Ansicht zu zeigen.
+
+### Der TypeScript-Client ist erzeugt — teilweise
+
+`scripts/generate_client.py` liest das OpenAPI-Schema direkt aus der Anwendung (kein laufender
+Server, keine Datenbank, keine Zugangsdaten) und schreibt `ui/src/api/schema.ts`.
+
+Erzeugt werden die **Eingabeformen** und die Liste der Pfade. Die **Antwortformen** nicht: Sie
+entstehen in den Diensten als `as_dict()` und stehen deshalb nicht vollständig im Schema; sie von
+dort abzuleiten hieße, eine Genauigkeit zu behaupten, die es nicht gibt. Sie stehen von Hand in
+`ui/src/api/types.ts` und sagen damit aus, was die Oberfläche tatsächlich benutzt.
+
+### Abweichungen und Ergänzungen
+
+- **`GET /graph/loose`** ist ein Endpunkt mehr als §16.2 nennt. Die Graph-Ansicht führt "nur lose
+  Knoten" als eigene Ebene (§17.2), und sie soll dieselbe Definition benutzen wie der Lauf aus §15
+  — sonst zeigte die Oberfläche etwas anderes an, als der Lauf bearbeitet.
+- **`GET /curation/journal`** ebenso: §17.3 verlangt Nachvollziehbarkeit, und die Betriebsansicht
+  braucht dafür den Journalstrom eines Stores, nicht nur den eines Konzepts.
+- **`traverse` bekam `kinds` und `stores`.** §16.2 führt beide im Anfragekörper; der Graphdienst
+  kannte sie noch nicht. Der Filter wirkt beim *Ausbreiten* und nicht am Ergebnis: Wer nur `member`
+  verfolgt, soll auch nur erreichen, was über `member` erreichbar ist — sonst zeigte die gefilterte
+  Ansicht Knoten ohne sichtbaren Weg dorthin.
+- **`ClusterRepository.include`** als Gegenstück zu `exclude` (§13.4): Wer ein entferntes Mitglied
+  von Hand wieder hineinzieht, hat seine Entscheidung geändert, und ein stehen gebliebener Vermerk
+  hielte es beim nächsten Lauf wieder heraus.
+- **Die UI-Coverage-Schwellen sind aufgeteilt.** Zeilen und Anweisungen auf 90 % wie im
+  Python-Teil; Funktionen und Zweige auf 80 %. In JSX zählt v8 jeden Render-Rückruf einer Liste als
+  eigene Funktion — eine Ansicht mit sechs Tabellen hat Dutzende "Funktionen", die nichts
+  entscheiden. Sie auf 90 % zu treiben hieße, Tests zu schreiben, damit ein Zähler steigt.
+
+### Abnahme (§24, Stufe 11)
+
+| Kriterium | Nachweis |
+|---|---|
+| Graph von einer persönlichen Notiz über mehrere Hops | Playwright, `kernfluesse.spec.ts` |
+| Mitglied per Drag-and-Drop verschoben, überlebt den Clustering-Lauf | Playwright **und** `test_ein_verschobenes_mitglied_ueberlebt_den_naechsten_lauf` |
+| Vorschlag bestätigt, einer verworfen — der verworfene entsteht nicht neu | `test_der_folgelauf_schreibt_sie_nicht_wieder`, `test_die_paarpruefung_ueberspringt_verworfene_paare` |
+| Sync aus der UI gestartet, Fortschritt live | Playwright über echte `EventSource`; `test_api_laeufe.py::TestFortschrittsstrom` |
+| Inhaltsfelder gespiegelter Konzepte erkennbar gesperrt | Playwright; `test_gespiegelte_inhaltsfelder_sind_sichtbar_gesperrt` |
+
+Die Drag-and-Drop-Geste und die Zeichenfläche werden im **Browser** geprüft und nicht in jsdom:
+Beides hängt an Fähigkeiten, die jsdom nicht hat — ein Canvas für Cytoscape und echte
+Zeigerereignisse. Die Playwright-Läufe fangen die API im Browser ab; ob sie *richtig* antwortet,
+prüfen die Python-Tests gegen die Dienste.
+
+### Ausdrücklich außen vor
+
+Mehrbenutzer-Auth und ein Rollenmodell, so vorgesehen in §24. `auth_mode: oidc` antwortet
+weiterhin mit `501`.
 
 ---
 

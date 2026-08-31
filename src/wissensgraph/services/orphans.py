@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -148,6 +148,24 @@ class OrphanRequest:
     min_confidence: float | None = None
     pattern_files: tuple[str, ...] = ()
     dry_run: bool = False
+
+    @classmethod
+    def from_params(cls, params: Mapping[str, Any]) -> OrphanRequest:
+        """Baut die Anfrage aus den ``params`` eines Jobs (§16.3).
+
+        Unbekannte Schlüssel werden übergangen und nicht zum Fehler: In ``runs.params`` steht,
+        was der Lauf angestoßen hat, und dort kann mit einer späteren Stufe etwas dazukommen, das
+        dieser Lauf nicht kennt. Ein Abbruch machte den Lauf unwiederholbar.
+        """
+        bekannt = {feld.name for feld in fields(cls)}
+        werte = {
+            name: wert for name, wert in params.items() if name in bekannt and wert is not None
+        }
+        werte.setdefault("scope", "")
+        muster = werte.get("pattern_files")
+        if muster is not None:
+            werte["pattern_files"] = tuple(muster)
+        return cls(**werte)
 
     def gegen(self, settings: Settings) -> OrphanRequest:
         """Füllt die offenen Werte aus der Konfiguration auf (§15.4, §6.2)."""
@@ -408,6 +426,11 @@ class OrphanService:
             bericht.proximity_committed += 1
             return
         with self._unit_of_work(store) as uow:
+            # Ein verworfenes Tripel entsteht nicht neu (§16.2, §24) — auch dann nicht, wenn die
+            # gemessene Nähe unverändert hoch ist. Die Messung war nie strittig; das Urteil
+            # darüber, ob sie eine Beziehung bedeutet, hat ein Mensch gefällt.
+            if defaults.EDGE_KIND_RELATED in uow.edges.rejected_kinds(from_id=knoten, to_id=ziel):
+                return
             edge = uow.edges.add(
                 EdgeDraft(
                     from_store=store,

@@ -77,6 +77,7 @@ class RelationReport:
     pairs_considered: int = 0
     pairs_filtered: int = 0
     pairs_known: int = 0
+    pairs_rejected: int = 0
     calls: int = 0
     cached: int = 0
     no_relation: int = 0
@@ -95,6 +96,7 @@ class RelationReport:
             "pairs_considered": self.pairs_considered,
             "pairs_filtered": self.pairs_filtered,
             "pairs_known": self.pairs_known,
+            "pairs_rejected": self.pairs_rejected,
             "calls": self.calls,
             "cached": self.cached,
             "no_relation": self.no_relation,
@@ -278,6 +280,13 @@ class RelationService:
                 # schon im Graphen steht, ist keine offene Frage mehr.
                 if uow.edges.kinds_between(from_id=links, to_id=rechts) & semantisch:
                     bericht.pairs_known += 1
+                    continue
+                # Ein Paar, dessen Beziehung ein Mensch verworfen hat, ist erst recht keine offene
+                # Frage (§16.2, §24). Der Vermerk wirkt hier und nicht erst beim Schreiben: Sonst
+                # kostete jedes verworfene Paar bei jedem Lauf erneut einen Modellaufruf, und
+                # genau das schließt §14.5 aus.
+                if uow.edges.rejected_kinds(from_id=links, to_id=rechts) & semantisch:
+                    bericht.pairs_rejected += 1
                     continue
                 ergebnis.append((links, rechts, aehnlichkeit))
         return tuple(ergebnis)

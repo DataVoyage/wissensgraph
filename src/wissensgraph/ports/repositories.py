@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from types import TracebackType
 from typing import Protocol, Self, runtime_checkable
 from uuid import UUID
@@ -66,6 +67,57 @@ class LooseConcept:
 
 
 @dataclass(frozen=True)
+class ConceptFilter:
+    """Die Facetten des Dokumentenbrowsers (§16.2, §17.2).
+
+    Jedes Feld ist optional, und ``None`` heißt immer "nicht einschränken" — nicht "leer". Der
+    Unterschied ist bei den drei Wahrheitswerten wichtig: ``curated=False`` fragt nach den *nicht*
+    kuratierten Konzepten und ist damit eine andere Frage als ``curated=None``.
+    """
+
+    scope: str | None = None
+    concept_type: str | None = None
+    status: str | None = None
+    query: str | None = None
+    cluster_id: str | None = None
+    source_name: str | None = None
+    orphan: bool | None = None
+    curated: bool | None = None
+    unverified: bool | None = None
+    include_tombstones: bool = False
+    loose_threshold: int = 1
+    """Ab welcher semantischen Nachbarschaft ein Konzept nicht mehr als lose gilt (§15.1).
+
+    Der Wert wandert mit dem Filter, weil er aus der Konfiguration kommt
+    (``orphans.loose_threshold``) und ein Repository keine Konfiguration liest (§20.1).
+    """
+
+
+@dataclass(frozen=True)
+class Page:
+    """Ein Ausschnitt einer Liste mit dem Anschlusspunkt für den nächsten (§16.1).
+
+    Cursor-basiert und nicht seitenbasiert: Ein ``OFFSET`` verschiebt sich, sobald jemand während
+    des Blätterns etwas anlegt oder löscht — und in einem System, das nächtlich synchronisiert,
+    passiert genau das. Der Cursor ist die zuletzt gesehene ID; die Sortierung ist deshalb
+    durchgängig die ID.
+    """
+
+    items: tuple[Concept, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class ConceptCount:
+    """Eine Zeile der Bestandsstatistik (§16.2, ``/stats``)."""
+
+    scope: str
+    type: str
+    status: str
+    count: int
+
+
+@dataclass(frozen=True)
 class Centroid:
     """Der Mittelpunkt eines Clusters (§13.2 Schritt 5)."""
 
@@ -73,6 +125,13 @@ class Centroid:
     model_key: str
     vector: tuple[float, ...]
     member_count: int
+    updated_at: datetime | None = None
+    """Wann der Mittelpunkt zuletzt neu berechnet wurde.
+
+    §16.2 verlangt das Zentroid-Alter in der Cluster-Detailansicht: Es beantwortet, ob die
+    angezeigten Mitglieder noch zu dem Mittelpunkt passen, gegen den der nächste Lauf messen wird.
+    ``None`` heißt, dass die Umsetzung den Zeitpunkt nicht führt — nicht, dass er null ist.
+    """
 
 
 @dataclass(frozen=True)
@@ -155,6 +214,29 @@ class ConceptRepository(Protocol):
 
         Gezählt werden nur nicht-strukturelle Kanten. Ein Konzept, das ausschließlich in einem
         Cluster hängt, ist thematisch weiterhin unvernetzt und gehört deshalb hierher (§7.7).
+        """
+
+    def page(self, filter: ConceptFilter, *, limit: int, cursor: str | None = None) -> Page:
+        """Ein gefilterter, cursor-basierter Ausschnitt des Bestands (§16.2).
+
+        Die Facetten sind die aus §16.2 und §17.2. ``orphan`` und ``cluster_id`` gehen dabei über
+        die Kanten und nicht über eine Spalte: Beides sind Aussagen über die Nachbarschaft eines
+        Konzepts, und die steht nirgends redundant im Konzept selbst.
+        """
+
+    def counts(self) -> tuple[ConceptCount, ...]:
+        """Die Bestandszahlen dieses Stores nach Scope, Typ und Status (§16.2, ``/stats``)."""
+
+    def delete(self, concept_id: str) -> bool:
+        """Entfernt ein Konzept vollständig.
+
+        Ausdrücklich **nicht** der Weg, ein quellgespiegeltes Konzept loszuwerden: Dafür gibt es
+        den Grabstein (§7.6). Gebraucht wird das echte Löschen nur für lokal Angelegtes — und für
+        das Rückgängigmachen einer Anlage (§17.3), bei der ein Grabstein etwas behaupten würde,
+        das nie in einer Quelle stand.
+
+        Returns:
+            Ob es das Konzept gab.
         """
 
     def save(self, concept: Concept) -> None:
@@ -250,6 +332,39 @@ class EdgeRepository(Protocol):
         Modellaufruf darauf wäre genau die Verschwendung, die §14.5 mit "Verarbeitung nur
         neuer/geänderter Paare" ausschließt.
         """
+
+    def count(self) -> int:
+        """Wie viele Kanten in diesem Store beginnen (§16.2, ``/stats``)."""
+
+    def get(self, edge_id: UUID) -> Edge | None:
+        """Die Kante zu einer ID, oder ``None``."""
+
+    def remove(self, edge_id: UUID) -> Edge | None:
+        """Entfernt eine Kante und gibt zurück, was entfernt wurde (§16.2).
+
+        Die entfernte Kante kommt zurück, weil der Journaleintrag sie braucht: ``edge_removed``
+        ohne die Angabe, *was* entfernt wurde, wäre nicht rückgängig zu machen (§17.3).
+        """
+
+    def verify(self, *, edge_id: UUID, actor: str, now: datetime) -> Edge | None:
+        """Bestätigt eine Kante und macht sie damit kuratiert (§16.2)."""
+
+    def unverified(self, *, limit: int, kinds: Sequence[str] = ()) -> tuple[Edge, ...]:
+        """Generierte, unbestätigte Kanten nach Confidence — die Kurationsliste (§17.2)."""
+
+    def retarget(self, *, from_id: str, to_id: str, kind: str | None = None) -> int:
+        """Hängt die Kanten eines Konzepts auf ein anderes um — das Verschmelzen aus §16.2."""
+
+    def reject(self, *, edge: Edge, actor: str, reason: str | None, now: datetime) -> None:
+        """Vermerkt ein Kantentripel als verworfen, damit es nicht neu entsteht (§16.2)."""
+
+    def rejected_kinds(self, *, from_id: str, to_id: str) -> frozenset[str]:
+        """Die verworfenen Kantenarten zwischen zwei Konzepten, in beiden Richtungen."""
+
+    def unreject(
+        self, *, from_store: str, from_id: str, to_store: str, to_id: str, kind: str
+    ) -> bool:
+        """Nimmt einen Negativvermerk zurück — der Undo eines ``reject`` (§17.3)."""
 
     def refresh_resolution(self) -> int:
         """Gleicht ``resolved`` für alle Kanten *innerhalb* dieses Stores mit der Wirklichkeit ab.
@@ -434,6 +549,18 @@ class ClusterRepository(Protocol):
         recht behalten.
         """
 
+    def include(self, *, concept_id: str, cluster_id: str) -> bool:
+        """Hebt einen Ausschluss wieder auf — das Gegenstück zu :meth:`exclude` (§13.4).
+
+        Gebraucht an zwei Stellen: wenn ein Mensch ein zuvor entferntes Mitglied von Hand wieder
+        hineinzieht, und beim Undo eines Entfernens (§17.3). Beide Male hat sich die Entscheidung
+        geändert, die den Ausschluss begründet hat — und ein stehen gebliebener Vermerk würde den
+        nächsten Lauf zwingen, das Mitglied wieder herauszuhalten.
+
+        Returns:
+            Ob es einen Ausschluss aufzuheben gab.
+        """
+
     def exclusions(self) -> frozenset[tuple[str, str]]:
         """Alle gesperrten Paare aus Konzept und Cluster."""
 
@@ -446,11 +573,25 @@ class ChangeLogRepository(Protocol):
     def store(self) -> str:
         """Der Store, für den dieses Repository zuständig ist."""
 
-    def append(self, entry: ChangeEntry) -> None:
-        """Hängt einen Eintrag an."""
+    def append(self, entry: ChangeEntry) -> ChangeEntry:
+        """Hängt einen Eintrag an und gibt ihn mit vergebener ID zurück.
+
+        Die ID kommt zurück, weil §17.3 verlangt, dass jede Kuration rückgängig gemacht werden
+        kann — "Undo über den ``change_log``-Eintrag". Ohne die ID im selben Atemzug müsste die
+        Oberfläche raten, welcher der eben geschriebenen Einträge zu ihrer Aktion gehört.
+        """
 
     def entries_for(self, concept_id: str) -> tuple[ChangeEntry, ...]:
         """Alle Einträge zu einem Konzept, neueste zuerst."""
+
+    def for_edge(self, edge_id: UUID) -> tuple[ChangeEntry, ...]:
+        """Alle Einträge zu einer Kante, neueste zuerst."""
+
+    def get(self, entry_id: int) -> ChangeEntry | None:
+        """Der Eintrag zu einer ID — der Bezugspunkt des Undo (§17.3)."""
+
+    def recent(self, *, limit: int) -> tuple[ChangeEntry, ...]:
+        """Die jüngsten Einträge dieses Stores (§17.2, Betriebsansicht)."""
 
     def has_open_curation_conflict(self, *, concept_id: str, source_content_hash: str) -> bool:
         """Ob genau dieser Konflikt schon vermerkt ist.

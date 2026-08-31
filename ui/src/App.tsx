@@ -1,97 +1,142 @@
 /**
- * Wurzelkomponente der SPA.
+ * Die Hülle der Oberfläche — sechs Ansichten, ein Zustand, keine Fachlogik (§17.1, §17.2).
  *
- * Stufe 0 verlangt eine "leere SPA mit Verbindungsanzeige" (§24). Mehr steht hier bewusst nicht:
- * Die eigentlichen Ansichten aus §17.2 kommen mit Stufe 11, und eine vorgezogene Halbversion
- * wäre nur Ballast.
+ * Die Fachregeln kommen aus `/api/v1/config/effective` und `/api/v1/models`. Solange die
+ * Konfiguration nicht geladen ist, zeigt diese Komponente deshalb *keine* Ansicht — nicht aus
+ * Vorsicht, sondern weil sie ohne sie nicht wüsste, welche Scopes, Typen und Kantenarten es
+ * überhaupt gibt (§17.1). Eine Vorbelegung wäre genau die eingebaute Fachregel, die dort
+ * ausgeschlossen ist.
  */
 
 import { useEffect, useState } from "react";
-import { fetchReadyz, type ConnectionState } from "./api";
-import { loadConfig } from "./config";
 
-/** Wie oft die Verbindung erneut geprüft wird, solange sie nicht steht (Millisekunden). */
-const RETRY_INTERVAL_MS = 3000;
+import { configure } from "./api/client";
+import { useConfig } from "./api/hooks";
+import { loadConfig } from "./config";
+import { useUiState, type ViewName } from "./state";
+import { ClusterWorkbench } from "./views/ClusterWorkbench";
+import { CurationList } from "./views/CurationList";
+import { DocumentBrowser } from "./views/DocumentBrowser";
+import { GraphExplorer } from "./views/GraphExplorer";
+import { Operations } from "./views/Operations";
+import { PersonalArea } from "./views/PersonalArea";
+
+const ANSICHTEN: Array<{ name: ViewName; label: string }> = [
+  { name: "graph", label: "Graph" },
+  { name: "browser", label: "Dokumente" },
+  { name: "cluster", label: "Cluster" },
+  { name: "kuration", label: "Kuration" },
+  { name: "persoenlich", label: "Persönlich" },
+  { name: "betrieb", label: "Betrieb" },
+];
+
+/** Schlüssel, unter dem der Bearer-Token in der Sitzung liegt (§17.1). */
+const TOKEN_KEY = "wg.token";
 
 export function App(): JSX.Element {
-  const [state, setState] = useState<ConnectionState>({ kind: "pruefe" });
-  const { apiBaseUrl } = loadConfig();
-
-  useEffect(() => {
-    let abgebrochen = false;
-
-    async function pruefen(): Promise<void> {
-      const ergebnis = await fetchReadyz(apiBaseUrl);
-      if (!abgebrochen) {
-        setState(ergebnis);
-      }
-    }
-
-    void pruefen();
-    // Solange die API nicht bereit ist, weiter versuchen: Beim Hochfahren des Stacks startet die
-    // UI unabhängig von der API (§5.5) und soll den Zustand von selbst einholen.
-    const timer = window.setInterval(() => void pruefen(), RETRY_INTERVAL_MS);
-    return () => {
-      abgebrochen = true;
-      window.clearInterval(timer);
-    };
-  }, [apiBaseUrl]);
-
-  return (
-    <main>
-      <h1>Wissensgraph</h1>
-      <ConnectionBanner state={state} apiBaseUrl={apiBaseUrl} />
-    </main>
+  const laufzeit = loadConfig();
+  const [token, setzeToken] = useState<string>(
+    () => window.sessionStorage.getItem(TOKEN_KEY) ?? "",
   );
-}
 
-function ConnectionBanner({
-  state,
-  apiBaseUrl,
-}: {
-  state: ConnectionState;
-  apiBaseUrl: string;
-}): JSX.Element {
-  const ziel = apiBaseUrl || "(gleicher Ursprung)";
+  // Der Client wird vor dem ersten Aufruf eingerichtet — auch beim allerersten Rendern, deshalb
+  // direkt und nicht in einem Effekt.
+  configure({ baseUrl: laufzeit.apiBaseUrl, token: token || null });
+  useEffect(() => {
+    configure({ baseUrl: laufzeit.apiBaseUrl, token: token || null });
+    if (token) {
+      window.sessionStorage.setItem(TOKEN_KEY, token);
+    }
+  }, [laufzeit.apiBaseUrl, token]);
 
-  switch (state.kind) {
-    case "pruefe":
-      return <p role="status">Verbindung zur API wird geprüft …</p>;
+  const [zustand, aendern] = useUiState();
+  const konfiguration = useConfig();
 
-    case "verbunden":
-      return (
-        <section role="status">
-          <p>Verbunden mit {ziel}. Beide Stores sind erreichbar.</p>
-          <StoreList stores={state.stores} />
-        </section>
-      );
-
-    case "nicht_bereit":
-      return (
-        <section role="alert">
-          <p>Die API antwortet, ist aber nicht bereit — mindestens ein Store fehlt.</p>
-          <StoreList stores={state.stores} />
-        </section>
-      );
-
-    case "unerreichbar":
-      return (
-        <section role="alert">
-          <p>Keine Verbindung zu {ziel}.</p>
-          <p>{state.grund}</p>
-        </section>
-      );
+  if (konfiguration.isError) {
+    return (
+      <main className="p-4">
+        <h1 className="text-lg font-semibold">Wissensgraph</h1>
+        <p role="alert" className="mt-2 text-sm text-red-700">
+          Die Konfiguration ließ sich nicht laden: {konfiguration.error.message}
+        </p>
+        <label className="mt-2 block text-sm">
+          Bearer-Token
+          <input
+            className="wg-input"
+            aria-label="Bearer-Token"
+            type="password"
+            defaultValue={token}
+            onBlur={(ereignis) => setzeToken(ereignis.target.value)}
+          />
+        </label>
+      </main>
+    );
   }
-}
 
-function StoreList({ stores }: { stores: ReadonlyArray<{ store: string; healthy: boolean }> }) {
+  if (konfiguration.data === undefined) {
+    return (
+      <main className="p-4">
+        <p role="status">Konfiguration wird geladen …</p>
+      </main>
+    );
+  }
+
+  const config = konfiguration.data;
+
   return (
-    <ul>
-      {stores.map((store) => (
-        <li key={store.store}>
-          {store.store}: {store.healthy ? "erreichbar" : "nicht erreichbar"}
-        </li>
-      ))}
-    </ul>
+    <div className="flex h-screen flex-col">
+      <header className="flex items-center gap-3 border-b px-3">
+        <h1 className="text-base font-semibold">Wissensgraph</h1>
+        <nav className="flex" aria-label="Ansichten">
+          {ANSICHTEN.map((eintrag) => (
+            <button
+              key={eintrag.name}
+              type="button"
+              className={`wg-tab ${zustand.view === eintrag.name ? "wg-tab-active" : ""}`}
+              aria-current={zustand.view === eintrag.name ? "page" : undefined}
+              onClick={() => aendern({ view: eintrag.name })}
+            >
+              {eintrag.label}
+            </button>
+          ))}
+        </nav>
+        <label className="ml-auto text-sm">
+          Store
+          <select
+            className="wg-input ml-1 w-32"
+            aria-label="Store"
+            value={zustand.store}
+            onChange={(ereignis) => aendern({ store: ereignis.target.value, id: undefined })}
+          >
+            {Object.keys(config.stores).map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </header>
+
+      <main className="min-h-0 flex-1 p-3">
+        {zustand.view === "graph" && (
+          <GraphExplorer
+            state={zustand}
+            onChange={aendern}
+            edgeKinds={[...config.edge_kinds.structural, ...config.edge_kinds.semantic]}
+          />
+        )}
+        {zustand.view === "browser" && (
+          <DocumentBrowser state={zustand} onChange={aendern} config={config} />
+        )}
+        {zustand.view === "cluster" && (
+          <ClusterWorkbench state={zustand} onChange={aendern} />
+        )}
+        {zustand.view === "kuration" && <CurationList state={zustand} />}
+        {zustand.view === "persoenlich" && (
+          <PersonalArea state={zustand} onChange={aendern} config={config} />
+        )}
+        {zustand.view === "betrieb" && <Operations state={zustand} onChange={aendern} />}
+      </main>
+    </div>
   );
 }

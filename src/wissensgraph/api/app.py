@@ -18,11 +18,17 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from wissensgraph.api.errors import register_error_handlers
+from wissensgraph.api.routers import clusters as clusters_router
+from wissensgraph.api.routers import concepts as concepts_router
 from wissensgraph.api.routers import config as config_router
+from wissensgraph.api.routers import curation as curation_router
+from wissensgraph.api.routers import graph as graph_router
 from wissensgraph.api.routers import health as health_router
+from wissensgraph.api.routers import models as models_router
+from wissensgraph.api.routers import runs as runs_router
 from wissensgraph.config.schema import Settings
-from wissensgraph.infrastructure.db import StoreRegistry
 from wissensgraph.observability.logging import bind_context, clear_context, get_logger
+from wissensgraph.runtime import Runtime
 
 #: Header, über den ein Aufrufer eine eigene Korrelations-ID mitgeben kann. Fehlt er, wird eine
 #: erzeugt. Die ID landet als Pflichtfeld ``request_id`` in jedem Logeintrag der Anfrage (§21.1).
@@ -33,23 +39,33 @@ _logger = get_logger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Legt die Store-Registry an und schließt ihre Verbindungspools beim Herunterfahren."""
+    """Baut die Laufzeit auf und gibt ihre Verbindungen beim Herunterfahren wieder frei.
+
+    Die Laufzeit ist dieselbe Klasse, die auch ``wg`` und der Worker benutzen. Sie hier zu bauen
+    statt in jedem Router ist der Grund, warum ein Lauf über HTTP und derselbe Lauf über die
+    Kommandozeile nicht auseinanderlaufen können (Leitprinzip 14).
+    """
     settings: Settings = app.state.settings
-    registry = StoreRegistry(settings)
-    app.state.registry = registry
-    _logger.info("api_gestartet", env=settings.env, stores=list(registry.store_names))
+    runtime = app.state.runtime if getattr(app.state, "runtime", None) else Runtime(settings)
+    app.state.runtime = runtime
+    app.state.registry = runtime.stores
+    _logger.info("api_gestartet", env=settings.env, stores=list(runtime.stores.store_names))
     try:
         yield
     finally:
-        registry.dispose()
+        runtime.close()
         _logger.info("api_beendet")
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(settings: Settings, *, runtime: Runtime | None = None) -> FastAPI:
     """Baut die Anwendung für eine bestimmte Konfiguration.
 
     Args:
         settings: Die bereits aufgelöste und validierte Konfiguration (§6.1 Regel 4).
+        runtime: Eine fertig zusammengesteckte Laufzeit. Ohne Angabe baut die Anwendung sich
+            beim Start eine eigene. Der Parameter ist der Weg, die API gegen speicherresidente
+            Repositories und den Fake-Provider zu fahren — ohne Datenbank, ohne Netz und ohne
+            einen einzigen Token.
     """
     app = FastAPI(
         title="Wissensgraph",
@@ -61,6 +77,7 @@ def create_app(settings: Settings) -> FastAPI:
         lifespan=_lifespan,
     )
     app.state.settings = settings
+    app.state.runtime = runtime
 
     # CORS strikt aus der Konfiguration, kein Wildcard (§20.3). Die Validierung des Schemas
     # lehnt '*' bereits ab; hier wird nur noch angewandt, was dort erlaubt wurde.
@@ -87,4 +104,10 @@ def create_app(settings: Settings) -> FastAPI:
     register_error_handlers(app)
     app.include_router(health_router.router)
     app.include_router(config_router.router)
+    app.include_router(concepts_router.router)
+    app.include_router(graph_router.router)
+    app.include_router(curation_router.router)
+    app.include_router(clusters_router.router)
+    app.include_router(runs_router.router)
+    app.include_router(models_router.router)
     return app
