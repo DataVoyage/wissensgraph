@@ -107,6 +107,21 @@ class ProviderConfig(FrozenModel):
             "'batch_size' der Aufgabe. Ohne Angabe gilt die Grenze, die der Anbietertyp mitbringt."
         ),
     )
+    max_concurrency: int = Field(
+        default=defaults.MODEL_MAX_CONCURRENCY,
+        ge=1,
+        description=(
+            "Wie viele Aufrufe gleichzeitig an diesen Anbieter gehen dürfen. Vorgabe 1: nach- "
+            "einander, so wie bisher. Der Wert gehört zum Anbieter und nicht zur Aufgabe, denn "
+            "was ihn begrenzt, ist sein Ratenlimit — und das gilt für alle Aufgaben zusammen. "
+            "Er ist der Hebel gegen lange Läufe bei Vertex: Dort nimmt ein Embedding-Aufruf "
+            "genau einen Text entgegen, 120 Seiten sind also 120 Round-Trips nacheinander. "
+            "ACHTUNG: Jeder gleichzeitige Aufruf schreibt seine Zeile in 'model_calls' und "
+            "braucht dafür kurz eine Datenbankverbindung. 'database.pool_size' sollte deshalb "
+            "mindestens so groß sein wie der höchste Wert hier, sonst warten die Aufrufe "
+            "aufeinander statt auf den Anbieter."
+        ),
+    )
     options: dict[str, Any] = Field(
         default_factory=dict,
         description=(

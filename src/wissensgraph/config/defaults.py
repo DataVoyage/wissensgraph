@@ -378,6 +378,17 @@ VERTEX_MULTI_REGIONS: Final = ("eu", "us")
 #: trotzdem, falls ein späteres Modell mehr kann.
 VERTEX_EMBEDDING_BATCH: Final = 1
 
+#: Wie viele Modellaufrufe gleichzeitig an einen Anbieter gehen, wenn ``models.yaml`` nichts
+#: anderes sagt. Eins bedeutet: nacheinander — dasselbe Verhalten wie vor der Einführung des
+#: Werts. Die Vorgabe ist bewusst zurückhaltend: Wer sie erhöht, verteilt damit auch das
+#: Ratenlimit seines Anbieters und die Verbindungen seines Datenbankpools neu, und diese
+#: Entscheidung soll jemand treffen, der die Grenzen seiner Installation kennt.
+MODEL_MAX_CONCURRENCY: Final = 1
+
+#: Präfix der Arbeitsthreads für gleichzeitige Modellaufrufe. Er steht hier, damit ein Thread-Dump
+#: unter Last zuzuordnen ist — ohne Namen sieht man dort nur 'Thread-7'.
+MODEL_WORKER_PREFIX: Final = "wg-modell"
+
 #: Modelle der Entwicklungsumgebung. Sie stehen hier als *Default*, nicht als Festlegung: Welches
 #: Modell eine Aufgabe benutzt, entscheidet ``config/models.yaml`` (§11.1) — diese Werte greifen
 #: nur, wo dort nichts anderes steht.
@@ -534,7 +545,24 @@ SEARCH_RRF_K: Final = 60
 #: Ab welcher Ähnlichkeit ein Cluster-Zentroid als Anker einer Suche gilt (§12.4 Stufe 1).
 #: Trifft ein Cluster über dieser Schwelle, wird *es* geliefert und nicht seine Mitglieder — die
 #: Antwort auf "worum geht es hier?" ist ein Thema, keine Liste von Dokumenten.
-SEARCH_CLUSTER_HIT_THRESHOLD: Final = 0.75
+#:
+#: Der Wert ist gemessen und nicht geschätzt. Gegen ``gemini-embedding-2`` und den Bestand der
+#: Entwicklungsumgebung liefern drei Anfragen:
+#:
+#: ===================================================  ==========
+#: Anfrage                                              beste Ähnlichkeit
+#: ===================================================  ==========
+#: "Wie verwalte ich Benutzerrechte und Token?"          0,799
+#: "Zugangskontrolle und Berechtigungsmanagement"        0,729
+#: "Rezept für Apfelkuchen mit Zimt"                     0,535
+#: ===================================================  ==========
+#:
+#: Die frühere Schwelle 0,75 lag **innerhalb** des Trefferbandes: Selbst der wörtliche Titel
+#: eines Clusters erreichte sein eigenes Zentroid nicht, und ``granularity: "cluster"`` gab
+#: praktisch immer eine leere Liste zurück. Das ist kein Zufall — ein Zentroid ist der Mittelwert
+#: vieler Vektoren und damit flacher als jeder einzelne; eine Schwelle, die für Dokumente
+#: stimmt, ist für Zentroide zu hoch. 0,70 trennt beide Bänder mit Abstand nach oben wie unten.
+SEARCH_CLUSTER_HIT_THRESHOLD: Final = 0.70
 
 #: Die Modi, die eine Suche im Ergebnis ausweist (§12.4). ``lexical`` ist keine Notlösung, die man
 #: verschweigt: Ohne Embedding-Modell ist er der einzige Modus, und ein stiller Qualitätsverlust

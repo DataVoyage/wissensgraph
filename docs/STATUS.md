@@ -1304,6 +1304,64 @@ eine Hop-Distanz.
 Schreibzugriff auf `shared` und eine Rechteverwaltung im Server, so vorgesehen in §24. Der
 `actor` unterscheidet Sitzungen, er berechtigt sie nicht.
 
+### Nachtrag: drei Fehler, die ein Agent im Betrieb gefunden hat
+
+Ein Agent an der HTTP-Schnittstelle hat drei Dinge aufgedeckt, die keiner der 1448 Tests
+abgedeckt hatte — alle drei an Stellen, an denen zwei richtige Regeln aufeinandertreffen.
+
+**`graph_search` stürzte auf `shared` ab.** Nicht die Suche war schuld, sondern die Buchführung:
+Eine semantische Suche braucht ein Anfrage-Embedding, das ist ein Modellaufruf, und der gehört
+nach §11.6 in `model_calls` — auf `shared` darf der MCP-Server aber nicht schreiben (§18.3).
+`psycopg.errors.ReadOnlySqlTransaction`, und zwar erst in der Datenbank. Weichen musste keine der
+beiden Regeln: Der Router kennt jetzt einen `accounting_store`, und der MCP-Server setzt ihn auf
+`personal`. Umgelenkt wird nur die *Zeile*; `call.store` nennt weiterhin `shared`, sonst wiese die
+Abrechnung die Kosten dem falschen Store zu.
+
+**`concept_upsert` mit `type: "note"` scheiterte.** Die Taxonomie heißt `Note` und prüft exakt
+(§7.2) — richtig so. Falsch war, dass das Schema nur `"string"` sagte: Der Agent konnte nicht auf
+die Schreibweise kommen, ohne sie zu raten. Das Feld führt die Typen dieser Installation jetzt als
+`enum` auf, gebildet aus der Konfiguration. `Cluster` bleibt draußen, obwohl die Taxonomie ihn für
+`personal` zulässt: Eine Themengruppe entsteht aus dem Clustering-Lauf, von Hand angelegt hätte
+sie keine Mitglieder.
+
+**`concept_get` lieferte leere Kennfelder.** `{"id": "", "store": "", "scope": "", "type": ""}` bei
+vorhandenem `body` — die Deckelung aus §18.3. Sie lief über *alle* Zeichenketten und zog von jeder
+den **gesamten** Überschuss ab; die kurzen Felder standen vorn und waren sofort leer, der lange
+Text blieb. Der Agent bekam einen Fließtext, den er nicht zuordnen und über den er nicht
+weitergehen konnte. Gekürzt wird jetzt der jeweils längste Text, und die Kennfelder bleiben ganz
+unangetastet — ohne `id` gibt es kein `graph_traverse`.
+
+**Dazu eine vierte Sache, die kein Absturz war.** `granularity: "cluster"` gab immer `hits: []`
+zurück. Die Schwelle stand auf 0,75, gemessen ergibt sich aber:
+
+| Anfrage | beste Ähnlichkeit zum Zentroid |
+|---|---|
+| „Wie verwalte ich Benutzerrechte und Token?" | 0,799 |
+| „Zugangskontrolle und Berechtigungsmanagement" (wörtlicher Clustertitel) | 0,729 |
+| „Rezept für Apfelkuchen mit Zimt" | 0,535 |
+
+Die Schwelle lag **innerhalb** des Trefferbandes: Selbst der wörtliche Titel erreichte sein eigenes
+Zentroid nicht. Das ist kein Zufall — ein Zentroid ist der Mittelwert vieler Vektoren und damit
+flacher als jeder einzelne; eine Schwelle, die für Dokumente stimmt, ist für Zentroide zu hoch.
+Jetzt 0,70, mit Abstand nach oben wie unten. Und eine leere Cluster-Suche trägt einen
+`next_step`: Sie sah aus wie „dazu gibt es nichts" und hieß nur „kein Cluster liegt nah genug".
+
+### Nachtrag: gleichzeitige Modellaufrufe
+
+`max_concurrency` je Anbieter in `models.yaml`, Vorgabe 1. Der Anlass ist der Vertex-Zuschnitt:
+Dort nimmt ein Embedding-Aufruf genau einen Text entgegen, 120 Seiten sind also 120 Round-Trips
+nacheinander. Gemessen gegen die echte Gemini-API, 24 Texte zu je einem Aufruf: **9,1 s bei 1,
+1,2 s bei 8.**
+
+Threads und nicht asyncio: Der ganze Weg darunter ist synchron, ein Wechsel färbte bis in die
+Repositories durch, und gewonnen wäre nichts — was hier wartet, ist das Netz, und dabei gibt ein
+Thread den GIL frei. Zwei Stellen brauchten Aufmerksamkeit. Der lose Budgetzähler wird jetzt unter
+einer Sperre erhöht: `+=` ist in Python nicht unteilbar, und ein verlorener Aufruf im Zähler wäre
+ein Loch im Wächter aus §11.6. Und die Reihenfolge der Vektoren muss die der Texte bleiben —
+kämen die Bündel in der Reihenfolge ihrer Antworten zurück, bekäme jedes Konzept das Embedding
+eines anderen, und der Graph wäre falsch, ohne dass irgendetwas fehlschlägt. Ein Test vergleicht
+deshalb das parallele Ergebnis Vektor für Vektor mit dem seriellen.
+
 ### Nachtrag: FastMCP und Streamable HTTP
 
 Der Server läuft jetzt auf `MCPServer` aus dem SDK `mcp` 2.x — das ist FastMCP, die Klasse trägt

@@ -17,6 +17,7 @@ Alles, was den Router ausmacht, liegt zwischen Aufgabe und Anbieter — nicht im
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -831,6 +832,33 @@ class TestProtokollUndAuswertung:
         assert len(uow.state("personal").model_calls) == 1
         assert uow.state("shared").model_calls == []
 
+    def test_ein_abrechnungsstore_lenkt_die_zeile_um_und_laesst_den_eintrag_gleich(
+        self, settings: Settings, models: ModelsConfig, uow: MemoryUnitOfWorkFactory
+    ) -> None:
+        """Der Ausweg für den MCP-Server (§18.3).
+
+        Er hält auf ``shared`` eine nur lesende Verbindung, braucht für eine semantische Suche
+        dort aber ein Anfrage-Embedding — also einen Modellaufruf, der nach §11.6 verbucht
+        gehört. Ohne diese Umleitung scheiterte ``graph_search`` an der Schreibsperre, und zwar
+        in der Datenbank: Die Suche selbst ist fehlerfrei, es ist die Buchführung, die anstößt.
+
+        Umgelenkt wird nur die *Zeile*. ``call.store`` nennt weiterhin ``shared`` — sonst wiese
+        die Abrechnung die Kosten dem falschen Store zu.
+        """
+        ModelRouterService(
+            settings,
+            models,
+            FakeClients(dim=DIM),
+            unit_of_work=uow,
+            accounting_store="personal",
+            sleep=lambda _: None,
+        ).embed(defaults.TASK_EMBEDDING, ["eine Anfrage des Agenten"], store="shared")
+
+        assert uow.state("shared").model_calls == []
+        eintraege = uow.state("personal").model_calls
+        assert len(eintraege) == 1
+        assert eintraege[0].store == "shared"
+
     def test_usage_gruppiert_nach_aufgabe_und_modell(
         self, settings: Settings, models: ModelsConfig, uow: MemoryUnitOfWorkFactory
     ) -> None:
@@ -927,3 +955,116 @@ class TestNoRoute:
 
         with pytest.raises(NoRouteError, match="models describe"):
             dienst.embed(defaults.TASK_EMBEDDING, ["A"], store="shared")
+
+
+class TestGleichzeitigkeit:
+    """``max_concurrency`` je Anbieter (§11.4).
+
+    Der Anlass ist gemessen und nicht theoretisch: Vertex nimmt für die Embedding-Modelle genau
+    einen Text je Aufruf entgegen. Ein Lauf über 120 Seiten sind dort 120 Round-Trips
+    nacheinander, und was dabei wartet, ist ausschließlich das Netz.
+    """
+
+    @staticmethod
+    def _messende_clients(dim: int, dauer: float = 0.05) -> Any:
+        """Eine Client-Fabrik, die zählt, wie viele Aufrufe sich zeitlich überlappen."""
+        import threading
+
+        class Messend:
+            def __init__(self) -> None:
+                self.gleichzeitig = 0
+                self.hoechststand = 0
+                self.aufrufe = 0
+                self._sperre = threading.Lock()
+                self._echt = FakeEmbeddings(dim)
+
+            def embed(self, texts: Any) -> Any:
+                with self._sperre:
+                    self.gleichzeitig += 1
+                    self.aufrufe += 1
+                    self.hoechststand = max(self.hoechststand, self.gleichzeitig)
+                try:
+                    time.sleep(dauer)
+                    return self._echt.embed(texts)
+                finally:
+                    with self._sperre:
+                        self.gleichzeitig -= 1
+
+        messend = Messend()
+
+        class Fabrik:
+            embeddings_client = messend
+
+            def chat(self, task: str, route: object) -> Any:  # pragma: no cover — ungenutzt
+                raise NotImplementedError
+
+            def embeddings(self, task: str, route: object) -> Any:
+                return messend
+
+        return Fabrik(), messend
+
+    def test_ohne_angabe_laufen_die_aufrufe_nacheinander(
+        self, settings: Settings, models_dict: dict[str, Any], uow: MemoryUnitOfWorkFactory
+    ) -> None:
+        """Die Vorgabe ändert am bisherigen Verhalten nichts."""
+        models_dict["tasks"]["embedding"]["primary"]["batch_size"] = 1
+        fabrik, messend = self._messende_clients(DIM)
+
+        router(settings, ModelsConfig.model_validate(models_dict), fabrik, uow=uow).embed(
+            defaults.TASK_EMBEDDING, [f"text {i}" for i in range(6)], store="shared"
+        )
+
+        assert messend.aufrufe == 6
+        assert messend.hoechststand == 1
+
+    def test_mit_max_concurrency_ueberlappen_sich_die_aufrufe(
+        self, settings: Settings, models_dict: dict[str, Any], uow: MemoryUnitOfWorkFactory
+    ) -> None:
+        """Gemessen, nicht behauptet: Der Zähler sieht mehr als einen Aufruf gleichzeitig."""
+        models_dict["providers"]["gemini"]["max_concurrency"] = 3
+        models_dict["tasks"]["embedding"]["primary"]["batch_size"] = 1
+        fabrik, messend = self._messende_clients(DIM)
+
+        router(settings, ModelsConfig.model_validate(models_dict), fabrik, uow=uow).embed(
+            defaults.TASK_EMBEDDING, [f"text {i}" for i in range(6)], store="shared"
+        )
+
+        assert messend.aufrufe == 6
+        assert messend.hoechststand > 1
+
+    def test_die_reihenfolge_der_vektoren_bleibt_die_der_texte(
+        self, settings: Settings, models_dict: dict[str, Any], uow: MemoryUnitOfWorkFactory
+    ) -> None:
+        """Der Punkt, an dem Parallelität still falsch würde.
+
+        Vektor und Text sind über die Position verbunden, sonst nichts. Kämen die Bündel in der
+        Reihenfolge ihrer Antworten zurück, bekäme jedes Konzept das Embedding eines anderen —
+        und der Graph wäre falsch, ohne dass irgendetwas fehlschlägt.
+        """
+        models_dict["providers"]["gemini"]["max_concurrency"] = 4
+        models_dict["tasks"]["embedding"]["primary"]["batch_size"] = 1
+        texte = [f"ganz eigener text {i}" for i in range(8)]
+        erlaubt = ModelsConfig.model_validate(models_dict)
+
+        parallel = router(settings, erlaubt, FakeClients(dim=DIM), uow=uow).embed(
+            defaults.TASK_EMBEDDING, texte, store="shared"
+        )
+        models_dict["providers"]["gemini"]["max_concurrency"] = 1
+        seriell = router(
+            settings, ModelsConfig.model_validate(models_dict), FakeClients(dim=DIM), uow=uow
+        ).embed(defaults.TASK_EMBEDDING, texte, store="shared")
+
+        assert parallel.vectors == seriell.vectors
+
+    def test_der_budgetzaehler_verliert_unter_last_keinen_aufruf(
+        self, settings: Settings, models_dict: dict[str, Any], uow: MemoryUnitOfWorkFactory
+    ) -> None:
+        """``+=`` ist nicht unteilbar; ein verlorener Aufruf wäre ein Loch im Wächter (§11.6)."""
+        models_dict["providers"]["gemini"]["max_concurrency"] = 8
+        models_dict["tasks"]["embedding"]["primary"]["batch_size"] = 1
+
+        router(
+            settings, ModelsConfig.model_validate(models_dict), FakeClients(dim=DIM), uow=uow
+        ).embed(defaults.TASK_EMBEDDING, [f"text {i}" for i in range(40)], store="shared")
+
+        assert len(uow.state("shared").model_calls) == 40

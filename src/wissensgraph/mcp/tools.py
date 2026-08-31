@@ -43,6 +43,12 @@ from wissensgraph.services.serialization import kante_dict, konzept_dict
 #: Schlüssel, unter dem eine gekürzte Antwort das kenntlich macht (§18.3).
 TRUNCATED_KEY = "truncated"
 
+#: Felder, die eine Kürzung nie anfasst. Es sind die, mit denen ein Agent weiterarbeitet: Ohne
+#: ``id`` gibt es kein ``graph_traverse`` und kein zweites ``concept_get``, ohne ``store`` weiß er
+#: nicht, wo er nachfragen muss. Sie sind kurz — sie einzusparen bringt fast nichts und kostet
+#: alles.
+KENNFELDER: frozenset[str] = frozenset({"id", "store", "scope", "type"})
+
 
 class ToolError(RuntimeError):
     """Ein Werkzeugaufruf ist nicht zulässig oder findet sein Ziel nicht.
@@ -112,6 +118,39 @@ class Toolbox:
     def actor(self) -> str:
         """Der Akteur dieser Sitzung im Änderungsjournal (§7.4, §18.3)."""
         return f"{defaults.MCP_ACTOR_PREFIX}{self._session}"
+
+    def _persoenliche_typen(self) -> tuple[str, ...]:
+        """Die Konzepttypen, die im persönlichen Store zulässig sind (§7.2)."""
+        return tuple(
+            eintrag.name
+            for eintrag in self._settings.concept_types
+            if defaults.STORE_PERSONAL in eintrag.stores
+            # 'Cluster' steht in der Taxonomie auch für ``personal``, aber ein Cluster entsteht
+            # aus dem Clustering-Lauf und nicht von Hand. Böte man ihn dem Agenten an, legte er
+            # eine Themengruppe an, die keine Mitglieder hat und die der nächste Lauf nicht
+            # kennt — ``cluster_project`` ist der Weg dorthin, nicht ``concept_upsert``.
+            and eintrag.name != defaults.CONCEPT_TYPE_CLUSTER
+        )
+
+    def _typ_feld(self) -> dict[str, Any]:
+        """Das ``type``-Feld von ``concept_upsert`` — mit den Typen dieser Installation.
+
+        Die Aufzählung kommt aus der Taxonomie und steht nicht als Liste im Code. Das ist der
+        Punkt: §7.2 sagt, ein Typ gehört in ``config/wissensgraph.yaml``, und die Prüfung dort ist
+        exakt — Groß- und Kleinschreibung eingeschlossen. Ein Agent, der die erlaubten Werte nicht
+        kennt, rät ``note`` und bekommt "Unbekannter Typ 'note'" zurück; er hat keine Möglichkeit,
+        auf ``Note`` zu kommen, ohne es zu probieren. Steht die Aufzählung im Schema, entfällt das
+        Raten — und wer die Taxonomie erweitert, muss diese Datei nicht anfassen.
+        """
+        typen = self._persoenliche_typen()
+        return {
+            **_STR,
+            "enum": list(typen),
+            "description": (
+                "Der Konzepttyp aus der Taxonomie dieser Installation. Genau so geschrieben: "
+                f"{', '.join(typen)}."
+            ),
+        }
 
     # -- Die Werkzeuge -----------------------------------------------------------
 
@@ -206,7 +245,7 @@ class Toolbox:
                 ),
                 input_schema=_schema(
                     {
-                        "type": _STR,
+                        "type": self._typ_feld(),
                         "title": _STR,
                         "description": _STR,
                         "body": _STR,
@@ -325,7 +364,16 @@ class Toolbox:
             )
         except (ProviderNotAllowedError, ModelError) as exc:  # pragma: no cover — defensiv
             raise ToolError(f"Die Suche ist nicht möglich: {exc}") from exc
-        return self._deckeln({"store": store, **ergebnis.as_dict()})
+        antwort: dict[str, Any] = {"store": store, **ergebnis.as_dict()}
+        if not antwort.get("hits") and antwort.get("mode") == defaults.SEARCH_MODE_CLUSTER:
+            # Eine leere Liste ohne Erklärung ist die schlechteste Antwort: Sie sieht aus wie
+            # "dazu gibt es nichts", heißt aber nur "kein Cluster liegt nah genug". Auf der
+            # Dokumentebene steht dieselbe Frage womöglich beantwortet da (§12.4).
+            antwort["next_step"] = (
+                "Kein Cluster liegt nah genug an dieser Anfrage — das heißt nicht, dass es dazu "
+                "nichts gibt. Rufe dasselbe noch einmal mit granularity: 'document' auf."
+            )
+        return self._deckeln(antwort)
 
     def concept_get(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Der Volltext eines Konzepts (§18.1)."""
@@ -450,6 +498,18 @@ class Toolbox:
         Gekürzt werden Listen von hinten und Texte am Ende. Die Reihenfolge ist wichtig: Die
         vorderen Einträge einer Trefferliste sind die besseren (§12.3), und ein Fließtext ist von
         vorn nach hinten verständlich. Von vorn zu kürzen hieße, das Nützlichste wegzuwerfen.
+
+        Unter den Texten wird immer der **längste** angefasst, und zwar einer nach dem anderen.
+        Der Grund ist ein Fehler, den diese Fassung behebt: Vorher lief eine Schleife über alle
+        Zeichenketten und zog von jeder den *gesamten* Überschuss ab. Bei einem Konzept mit langem
+        ``body`` traf das zuerst ``id``, ``store``, ``scope``, ``type``, ``title`` und
+        ``description`` — alle kurz, alle sofort auf ``""`` — während der lange Text übrig blieb.
+        Der Agent bekam einen Fließtext ohne Kennung: nicht zuzuordnen und nicht weiterzuverfolgen.
+        Nach der Länge vorzugehen dreht das um. Die Felder aus :data:`KENNFELDER` bleiben
+        zusätzlich ganz unangetastet: Sie sind kurz, und mit ihnen kann der Agent weiterarbeiten —
+        ohne ``id`` gibt es kein ``graph_traverse`` und kein zweites ``concept_get``. Ist die
+        Grenze so eng, dass selbst danach nichts mehr passt, bleibt eine knappe Antwort mit
+        ``truncated: true`` übrig. Das ist besser als eine ausführliche, die niemand zuordnen kann.
         """
         grenze = self._settings.mcp.max_response_tokens * defaults.MCP_CHARS_PER_TOKEN
         if _laenge(antwort) <= grenze:
@@ -461,10 +521,23 @@ class Toolbox:
                 while len(wert) > 1 and _laenge(gekuerzt) > grenze:
                     wert = wert[:-1]
                     gekuerzt[schluessel] = wert
-        for schluessel, wert in list(gekuerzt.items()):
-            if isinstance(wert, str) and _laenge(gekuerzt) > grenze:
-                ueberschuss = _laenge(gekuerzt) - grenze
-                gekuerzt[schluessel] = wert[: max(0, len(wert) - ueberschuss)]
+
+        while _laenge(gekuerzt) > grenze:
+            texte = [
+                s for s, w in gekuerzt.items() if isinstance(w, str) and w and s not in KENNFELDER
+            ]
+            if not texte:
+                # Alles Kürzbare ist leer; übrig bleiben Zahlen, Strukturen und die Kennfelder.
+                # Weiter geht es nicht, und das Ergebnis wird trotzdem als gekürzt markiert. Eine
+                # zu enge Grenze führt so zu einer knappen, aber brauchbaren Antwort statt zu
+                # einer vollständigen, die niemand zuordnen kann.
+                break
+            laengster = max(texte, key=lambda s: len(gekuerzt[s]))
+            ueberschuss = _laenge(gekuerzt) - grenze
+            gekuerzt[laengster] = gekuerzt[laengster][
+                : max(0, len(gekuerzt[laengster]) - ueberschuss)
+            ]
+
         gekuerzt[TRUNCATED_KEY] = True
         return gekuerzt
 

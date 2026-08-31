@@ -15,6 +15,10 @@ providers:
     type: google_genai
     api_key: ${WG_PROVIDER_GEMINI__API_KEY:-}
     local: false
+    # Wie viele Aufrufe gleichzeitig hinausgehen. 1 heißt nacheinander. Der Hebel gegen lange
+    # Läufe: Was dabei wartet, ist das Netz, nicht der Rechner. Die Obergrenze ist das Ratenlimit
+    # des Anbieters — wer sie überschreitet, tauscht Wartezeit gegen 429er und Wiederholungen.
+    max_concurrency: ${WG_PROVIDER_GEMINI__MAX_CONCURRENCY:-1}
 
   # Derselbe Modellhersteller über Vertex AI — der Anbieter des Betriebs. Der Umstieg ist genau
   # dieser Block plus ein geänderter 'provider:'-Eintrag weiter unten; die Modellnamen bleiben,
@@ -44,6 +48,10 @@ providers:
     location: ${WG_PROVIDER_VERTEX__LOCATION:-europe-west4}
     credentials_file: ${WG_PROVIDER_VERTEX__CREDENTIALS_FILE:-}
     local: false
+    # Hier zählt der Wert am meisten: Vertex nimmt für die Embedding-Modelle genau *einen* Text
+    # je Aufruf entgegen (siehe 'embedding_batch'), 120 Seiten sind also 120 Round-Trips. Bündeln
+    # lässt sich das auf der Gegenseite nicht — gleichzeitig schicken schon.
+    max_concurrency: ${WG_PROVIDER_VERTEX__MAX_CONCURRENCY:-1}
 
   # Ein lokaler Modellserver. 'local: true' ist hier die wichtigste Zeile der ganzen Datei: Nur
   # ein so gekennzeichneter Anbieter darf persönliche Inhalte sehen (§11.5, Leitprinzip 2).

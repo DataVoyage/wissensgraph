@@ -79,6 +79,7 @@ class Runtime:
         queue: JobQueue | None = None,
         clients: ModelClientFactory | None = None,
         unit_of_work: PortUnitOfWorkFactory | None = None,
+        accounting_store: str | None = None,
     ) -> None:
         """
         Args:
@@ -95,6 +96,9 @@ class Runtime:
             unit_of_work: Eine abweichende Fabrik für Arbeitseinheiten. Ohne Angabe die über die
                 Store-Registry. Zusammen mit ``clients`` ist das der Weg, die ganze Laufzeit —
                 und damit auch die HTTP-API — ohne Datenbank zu betreiben.
+            accounting_store: Der Store, in dem ``model_calls`` landen, wenn der betroffene selbst
+                nicht beschreibbar ist. Nur der MCP-Server setzt ihn (§18.3); siehe
+                :class:`~wissensgraph.services.router.ModelRouterService`.
         """
         self._settings = settings
         self._sources = load_sources(settings, path=sources_file)
@@ -113,6 +117,7 @@ class Runtime:
             self._models,
             clients if clients is not None else LangChainClients(self._models),
             unit_of_work=self._uow,
+            accounting_store=accounting_store,
             cache=self._cache,
         )
         self.sync = SyncService(

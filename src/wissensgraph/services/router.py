@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
@@ -86,6 +88,7 @@ class ModelRouterService:
         clients: ModelClientFactory,
         *,
         unit_of_work: UnitOfWorkFactory | None = None,
+        accounting_store: str | None = None,
         cache: ResponseCache | None = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], None] | None = None,
@@ -97,6 +100,13 @@ class ModelRouterService:
             clients: Die Fabrik, die zu einer Route einen Anbieter-Client baut.
             unit_of_work: Fabrik für Transaktionen je Store — für ``model_calls``. Ohne Angabe
                 wird nicht protokolliert; das ist der Zustand in Unit-Tests, nicht im Betrieb.
+            accounting_store: Der Store, in dem ``model_calls`` landen, wenn der durchsuchte
+                selbst nicht beschreibbar ist. Gebraucht wird das genau einmal: Der MCP-Server
+                hält auf ``shared`` eine nur lesende Verbindung (§18.3), und eine semantische
+                Suche dort braucht trotzdem ein Anfrage-Embedding — also einen Modellaufruf, der
+                nach §11.6 in die Abrechnung gehört. Ohne diesen Ausweg müsste eines von beidem
+                weichen: die Schreibsperre oder die Buchführung. Der Eintrag behält sein Feld
+                ``store`` mit dem tatsächlich durchsuchten Store; nur die Zeile liegt woanders.
             cache: Der Zwischenspeicher aus §11.6. Ohne Angabe gibt es keinen — jeder Aufruf geht
                 dann hinaus, was langsamer und teurer, aber nie falsch ist.
             clock: Zeitquelle.
@@ -107,6 +117,7 @@ class ModelRouterService:
         self._models = models
         self._clients = clients
         self._unit_of_work = unit_of_work
+        self._accounting_store = accounting_store
         self._cache = cache
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleep = sleep or time.sleep
@@ -120,6 +131,12 @@ class ModelRouterService:
         # der einzige Weg am Wächter vorbei.
         self._lose_aufrufe = 0
         self._lose_kosten = 0.0
+        # Der lose Zähler wird von mehreren Threads erhöht, sobald ein Anbieter
+        # ``max_concurrency > 1`` hat. ``+=`` ist in Python nicht unteilbar: Lesen, Addieren und
+        # Zurückschreiben sind drei Schritte, und zwei Threads dazwischen verlieren einen Aufruf.
+        # Ein verlorener Aufruf im Budgetzähler ist kein Rundungsfehler, sondern ein Loch im
+        # Wächter aus §11.6 — deshalb die Sperre.
+        self._zaehler_sperre = threading.Lock()
 
     # -- Beschreiben -------------------------------------------------------------
 
@@ -320,10 +337,14 @@ class ModelRouterService:
         # Die Bündelgröße der Aufgabe, eingegrenzt auf das, was der Anbieter annimmt. Vertex
         # nimmt genau einen Text je Aufruf — ohne diese Grenze scheitert jeder Embedding-Lauf
         # dort an der ersten Anfrage, und zwar nach allen Wiederholungen.
-        groesse = self._models.provider(route.provider).embedding_batch(route.batch_size)
-        for stapel in _stapel(offen, groesse):
-            if client is None:
-                client = self._clients.embeddings(task, route)
+        anbieter = self._models.provider(route.provider)
+        groesse = anbieter.embedding_batch(route.batch_size)
+        buendel = list(_stapel(offen, groesse))
+        if buendel:
+            client = self._clients.embeddings(task, route)
+
+        def _ein_buendel(stapel: Sequence[int]) -> tuple[Sequence[int], Any, Usage]:
+            assert client is not None
             eingabe = [texts[index] for index in stapel]
             roh, teil = self._mit_wiederholung(
                 task=task,
@@ -332,6 +353,26 @@ class ModelRouterService:
                 run_id=run_id,
                 aufruf=_Einbettung(client, eingabe),
             )
+            return stapel, roh, teil
+
+        # Die Bündel sind voneinander unabhängig: jedes ist eine eigene HTTP-Anfrage, und keines
+        # liest, was ein anderes schreibt. Genau deshalb dürfen sie gleichzeitig laufen. Threads
+        # und nicht asyncio, weil der ganze Weg darunter — LangChain, SQLAlchemy, psycopg —
+        # synchron ist; ein Wechsel auf async färbte von hier bis in die Repositories durch, und
+        # gewonnen wäre nichts: Was hier wartet, ist das Netz, und dabei gibt ein Thread den GIL
+        # frei. Bei ``max_concurrency = 1`` entsteht kein Pool und der Ablauf ist der alte.
+        gleichzeitig = min(anbieter.max_concurrency, len(buendel))
+        if gleichzeitig > 1:
+            with ThreadPoolExecutor(
+                max_workers=gleichzeitig, thread_name_prefix=defaults.MODEL_WORKER_PREFIX
+            ) as pool:
+                # ``map`` hält die Reihenfolge und wirft beim Einsammeln die erste Ausnahme —
+                # ein erschöpftes Budget bricht damit hier ab und nicht irgendwo im Hintergrund.
+                ergebnisse = list(pool.map(_ein_buendel, buendel))
+        else:
+            ergebnisse = [_ein_buendel(stapel) for stapel in buendel]
+
+        for stapel, roh, teil in ergebnisse:
             verbrauch = verbrauch + teil
             for position, index in enumerate(stapel):
                 vektor = tuple(float(zahl) for zahl in roh.vectors[position])
@@ -547,7 +588,8 @@ class ModelRouterService:
     def _verbraucht(self, *, store: str, run_id: UUID | None) -> tuple[int, float]:
         """Was dieser Lauf bislang verbraucht hat — aus ``model_calls`` oder dem losen Zähler."""
         if run_id is None or self._unit_of_work is None:
-            return self._lose_aufrufe, self._lose_kosten
+            with self._zaehler_sperre:
+                return self._lose_aufrufe, self._lose_kosten
         with self._unit_of_work(store) as uow:
             return uow.model_calls.spent(run_id)
 
@@ -562,8 +604,9 @@ class ModelRouterService:
         attempt: int,
     ) -> None:
         """Schreibt einen gelungenen Aufruf fort — in ``model_calls`` und im losen Zähler."""
-        self._lose_aufrufe += 1
-        self._lose_kosten += verbrauch.cost_estimate_eur
+        with self._zaehler_sperre:
+            self._lose_aufrufe += 1
+            self._lose_kosten += verbrauch.cost_estimate_eur
         self._protokollieren(
             ModelCall(
                 task=task,
@@ -587,10 +630,16 @@ class ModelRouterService:
         Sie muss von der Transaktion des Aufrufers getrennt sein. Ein Lauf, der am Ende zurückrollt
         — ein Trockenlauf etwa —, soll seine Modellaufrufe trotzdem in der Abrechnung stehen
         haben: Sie haben stattgefunden, und Token kommen nicht zurück.
+
+        Ist ein ``accounting_store`` gesetzt, geht die Zeile dorthin statt in den Store, um den es
+        ging. Der MCP-Server braucht das: Er darf auf ``shared`` nicht schreiben (§18.3), und ohne
+        diesen Ausweg ließe schon eine Suche dort den Aufruf an der Schreibsperre scheitern. Der
+        Eintrag selbst bleibt unverändert — ``call.store`` nennt weiterhin den durchsuchten Store,
+        sonst wiese die Abrechnung die Kosten dem falschen zu.
         """
         if self._unit_of_work is None:
             return
-        with self._unit_of_work(store) as uow:
+        with self._unit_of_work(self._accounting_store or store) as uow:
             uow.model_calls.record(call)
 
     # -- Cache -------------------------------------------------------------------

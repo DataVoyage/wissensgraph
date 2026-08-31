@@ -61,7 +61,17 @@ def readonly_runtime(settings: Settings, **kwargs: Any) -> Runtime:
     """
     registry = StoreRegistry(settings)
     fabrik = UnitOfWorkFactory(registry, readonly_stores=frozenset({defaults.STORE_SHARED}))
-    return Runtime(settings, unit_of_work=fabrik, **kwargs)
+    # Die Abrechnung geht in den persönlichen Store. Eine semantische Suche über ``shared``
+    # braucht ein Anfrage-Embedding, also einen Modellaufruf, und der gehört nach §11.6 in
+    # ``model_calls`` — auf ``shared`` darf dieser Prozess aber nicht schreiben. Ohne diese
+    # Umleitung scheiterte 'graph_search' an der Schreibsperre, und zwar erst in der Datenbank:
+    # Die Suche selbst ist fehlerfrei, es ist die Buchführung, die anstößt.
+    return Runtime(
+        settings,
+        unit_of_work=fabrik,
+        accounting_store=defaults.STORE_PERSONAL,
+        **kwargs,
+    )
 
 
 def _feldtyp(schema: dict[str, Any]) -> Any:

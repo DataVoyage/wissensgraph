@@ -99,6 +99,32 @@ class TestWerkzeugliste:
         assert "persönlichen Store" in upsert.description
         assert "store" not in upsert.input_schema["properties"]
 
+    def test_das_schreibwerkzeug_zaehlt_die_zulaessigen_typen_auf(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        """Sonst rät der Agent — und die Taxonomie aus §7.2 prüft exakt.
+
+        Ein Aufruf mit ``type: "note"`` scheiterte an "Unbekannter Typ 'note'", weil die
+        Taxonomie ``Note`` heißt. Der Agent hatte keine Möglichkeit, darauf zu kommen: Das Schema
+        nannte nur "string". Die Aufzählung stammt aus der Konfiguration und nicht aus einer
+        Liste im Code — wer die Taxonomie erweitert, muss diese Datei nicht anfassen.
+
+        ``Cluster`` bleibt draußen, obwohl die Taxonomie ihn für ``personal`` zulässt: Eine
+        Themengruppe entsteht aus dem Clustering-Lauf. Von Hand angelegt hätte sie keine
+        Mitglieder, und der nächste Lauf wüsste nichts von ihr.
+        """
+        upsert = next(spec for spec in werkzeuge.specs() if spec.name == "concept_upsert")
+        erlaubt = upsert.input_schema["properties"]["type"]["enum"]
+        taxonomie = [
+            eintrag.name
+            for eintrag in semantik_settings.concept_types
+            if defaults.STORE_PERSONAL in eintrag.stores
+        ]
+
+        assert erlaubt == [name for name in taxonomie if name != defaults.CONCEPT_TYPE_CLUSTER]
+        assert "Note" in erlaubt
+        assert defaults.CONCEPT_TYPE_CLUSTER not in erlaubt
+
     def test_jedes_werkzeug_hat_ein_geschlossenes_schema(self, werkzeuge: Toolbox) -> None:
         """Ein durchgereichtes Feld sähe für den Agenten aus wie eine angenommene Angabe."""
         for spec in werkzeuge.specs():
@@ -266,6 +292,40 @@ class TestAntwortdeckel:
 
         assert TRUNCATED_KEY not in ergebnis
 
+    def test_die_kennfelder_ueberleben_die_kuerzung(
+        self, minimal_config_dict: dict[str, Any], umgebung: Any
+    ) -> None:
+        """Gekürzt wird der lange Text, nicht die Kennung.
+
+        Die frühere Fassung zog von *jeder* Zeichenkette den gesamten Überschuss ab. Bei einem
+        Konzept mit langem ``body`` traf das zuerst ``id``, ``store``, ``scope``, ``type``,
+        ``title`` und ``description`` — alle kurz, alle sofort leer — während der lange Text
+        stehen blieb. Der Agent bekam einen Fließtext, den er nicht zuordnen und über den er
+        nicht weitergehen konnte: Ohne ``id`` gibt es kein ``graph_traverse``.
+        """
+        eng = Settings.model_validate(
+            {
+                **minimal_config_dict,
+                "embedding_dim": DIM,
+                "clustering": {"neighbors_k": 4},
+                "mcp": {"max_response_tokens": 100},
+            }
+        )
+        kiste = Toolbox(
+            eng,
+            graph=umgebung.graph,
+            catalog=CatalogService(eng, umgebung.uow, router=umgebung.router),
+            curation=CurationService(eng, umgebung.uow),
+            clusters=umgebung.clusters,
+        )
+
+        ergebnis = kiste.concept_get({"concept_id": "confluence:100"})
+
+        assert ergebnis[TRUNCATED_KEY] is True
+        assert ergebnis["id"] == "confluence:100"
+        assert ergebnis["store"] == defaults.STORE_SHARED
+        assert ergebnis["scope"] and ergebnis["type"]
+
 
 class TestOhnePersoenlichenScope:
     def test_ein_agent_ohne_persoenlichen_scope_bekommt_eine_auskunft(
@@ -304,3 +364,20 @@ class TestSitzung:
         )
 
         assert kiste.actor == f"agent:{defaults.MCP_DEFAULT_SESSION}"
+
+
+class TestLeereClustersuche:
+    """Eine leere Trefferliste ohne Erklärung ist die schlechteste Antwort (§12.4)."""
+
+    def test_sie_sagt_dem_agenten_wie_es_weitergeht(self, werkzeuge: Toolbox) -> None:
+        ergebnis = werkzeuge.graph_search(
+            {"query": "etwas, das mit nichts hier zu tun hat", "granularity": "cluster"}
+        )
+
+        if not ergebnis["hits"]:
+            assert "document" in ergebnis["next_step"]
+
+    def test_eine_treffende_suche_traegt_keinen_hinweis(self, werkzeuge: Toolbox) -> None:
+        ergebnis = werkzeuge.graph_search({"query": "Datenbank", "granularity": "document"})
+
+        assert "next_step" not in ergebnis

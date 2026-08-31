@@ -370,8 +370,37 @@ dafür nichts zu ändern, und `wg models describe` zeigt die **wirksame** Größ
          Dimension 768, Bündel zu 1
 ```
 
-Zwei Folgen für den Betrieb: Ein Embedding-Lauf braucht einen Modellaufruf **je Konzept** statt je
-64, und er läuft entsprechend länger. Der Budgetwächter zählt Aufrufe — bei mehr als
+**Dagegen hilft `max_concurrency`.** Bündeln lässt sich auf der Gegenseite nichts — gleichzeitig
+schicken schon. Der Wert steht je Anbieter in `models.yaml` und ist über ENV steuerbar:
+
+```yaml
+providers:
+  vertex:
+    max_concurrency: ${WG_PROVIDER_VERTEX__MAX_CONCURRENCY:-1}
+```
+
+Vorgabe ist `1`, also der bisherige Ablauf nacheinander. Gemessen gegen die echte Gemini-API, 24
+Texte zu je einem Aufruf:
+
+| `max_concurrency` | Dauer |
+|---|---|
+| 1 | 9,1 s |
+| 8 | 1,2 s |
+
+Der Wert gehört zum **Anbieter** und nicht zur Aufgabe: Was ihn begrenzt, ist dessen Ratenlimit,
+und das gilt für alle Aufgaben zusammen. Zwei Dinge sind beim Erhöhen zu bedenken. Über dem
+Ratenlimit tauscht man Wartezeit gegen 429er und Wiederholungen — schneller wird es dadurch
+nicht. Und jeder gleichzeitige Aufruf schreibt seine Zeile in `model_calls` und braucht dafür
+kurz eine Datenbankverbindung: `WG_DB_POOL_SIZE` sollte mindestens so groß sein wie der höchste
+`max_concurrency`, sonst warten die Aufrufe aufeinander statt auf den Anbieter.
+
+Umgesetzt ist es mit Threads und nicht mit asyncio. Der ganze Weg darunter — LangChain,
+SQLAlchemy, psycopg — ist synchron; ein Wechsel auf async färbte von der Router-Schnittstelle bis
+in die Repositories durch, und gewonnen wäre nichts: Was hier wartet, ist das Netz, und dabei gibt
+ein Thread den GIL frei.
+
+Zwei Folgen für den Betrieb bleiben: Ein Embedding-Lauf braucht einen Modellaufruf **je Konzept**
+statt je 64. Der Budgetwächter zählt Aufrufe — bei mehr als
 `WG_BUDGET_MAX_MODEL_CALLS_PER_RUN` Konzepten (Vorgabe 2000) endet der Lauf mit einem sauberen
 Teilergebnis, und der nächste macht dort weiter, weil `wg embed` nur einbettet, was sich geändert
 hat. Wer den Bestand in einem Zug einbetten will, setzt die Grenze für diesen Lauf hoch.
