@@ -22,6 +22,20 @@ class TestIsSecretKey:
     def test_erkennt_harmlose_schluessel(self, key: str) -> None:
         assert not is_secret_key(key)
 
+    def test_der_antwortdeckel_ist_kein_secret(self) -> None:
+        """``max_response_tokens`` trägt den Marker 'token', ist aber eine Zahl aus §18.3.
+
+        Maskiert stand in ``wg config show`` und unter ``/config/effective`` ein ``***`` — genau
+        an der Stelle, an der man nachsieht, warum eine Agentenantwort gekürzt wurde. Ein
+        Diagnosewerkzeug, das über harmlose Werte schweigt, wird beim Suchen nicht mehr geglaubt.
+        """
+        assert not is_secret_key("max_response_tokens")
+
+    def test_die_ausnahme_gilt_nur_fuer_den_genauen_namen(self) -> None:
+        """Sonst wäre die Liste ein Loch: Ein Präfix davor macht daraus wieder ein Secret."""
+        assert is_secret_key("max_response_tokens_secret")
+        assert is_secret_key("provider_max_response_tokens")
+
 
 class TestMaskDsn:
     def test_maskiert_passwort_behaelt_host(self) -> None:

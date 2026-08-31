@@ -29,6 +29,15 @@ SECRET_KEY_MARKERS: tuple[str, ...] = (
     "authorization",
 )
 
+#: Schlüssel, die trotz eines Markers im Namen keine Secrets sind.
+#:
+#: ``max_response_tokens`` ist der Antwortdeckel aus §18.3 — eine Zahl, die in die Diagnose
+#: gehört. Maskiert stand dort ``***``, und damit log ``wg config show`` genau über den Wert, den
+#: man beim Zuschneiden einer Agentenantwort nachsehen will. Die Ausnahme steht als Liste
+#: einzelner Namen und nicht als klügere Regel über den Markern: Was hier nicht drinsteht, wird
+#: maskiert. Ein Irrtum in dieser Datei soll zu viel schwärzen und nicht zu wenig.
+NON_SECRET_KEYS: frozenset[str] = frozenset({"max_response_tokens"})
+
 #: Schlüssel, deren Wert eine URL mit möglicherweise eingebetteten Zugangsdaten ist. Hier wird
 #: nicht der ganze Wert maskiert, sondern nur der Credential-Teil — die Hostangabe bleibt für die
 #: Diagnose erhalten.
@@ -40,6 +49,8 @@ _URL_CREDENTIALS = re.compile(r"^(?P<user>[^:@/]*):(?P<password>[^@/]*)@")
 def is_secret_key(key: str) -> bool:
     """Sagt, ob ein Konfigurationsschlüssel als Secret zu behandeln ist."""
     lowered = key.lower()
+    if lowered in NON_SECRET_KEYS:
+        return False
     return any(marker in lowered for marker in SECRET_KEY_MARKERS)
 
 

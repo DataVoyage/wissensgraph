@@ -234,11 +234,14 @@ services:
       # Portfreigabe damit wirkungslos. Nach außen entscheidet die Adresse in 'ports'.
       WG_MCP_TRANSPORT: http
       WG_MCP_HOST: 0.0.0.0
-      WG_MCP_PORT: "8800"
+      # Der Port steht an EINER Stelle: Er geht an den Prozess, an die Freigabe und an den
+      # Healthcheck. Nagelte man ihn hier fest, hätte ein WG_MCP_PORT in der .env keine Wirkung
+      # auf den Container — und der Irrtum fiele erst auf, wenn niemand den Server erreicht.
+      WG_MCP_PORT: ${WG_MCP_PORT:-8800}
       WG_MCP_PATH: ${WG_MCP_PATH:-/mcp}
     volumes: *app-volumes
     ports:
-      - "${WG_MCP_HOST_BIND:-0.0.0.0}:${WG_MCP_HOST_PORT:-8800}:8800"
+      - "${WG_MCP_HOST_BIND:-0.0.0.0}:${WG_MCP_HOST_PORT:-8800}:${WG_MCP_PORT:-8800}"
     # Zusätzlich zu beiden Datenbanknetzen liegt er im Randnetz — dort kommt der Verkehr vom
     # Host an, genau wie bei der API.
     networks: [wg-personal, wg-shared, wg-edge]
@@ -252,7 +255,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import socket; socket.create_connection(('127.0.0.1', 8800), 3).close()",
+          "import socket; socket.create_connection(('127.0.0.1', ${WG_MCP_PORT:-8800}), 3).close()",
         ]
       interval: 10s
       timeout: 5s
