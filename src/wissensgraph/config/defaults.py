@@ -32,6 +32,12 @@ SECRET_MASK: Final = "***"
 
 ENV: Final = "dev"
 CONFIG_DIR: Final = "/app/config"
+
+#: Das Config-Verzeichnis neben dem Arbeitsverzeichnis. Es wird ohne ausdrueckliche Angabe
+#: zuerst versucht, weil :data:`CONFIG_DIR` der Pfad *im Container* ist und auf dem Host nicht
+#: existiert. Im Container bezeichnen beide dieselbe Stelle: Dort ist "/app" das
+#: Arbeitsverzeichnis, und Compose bindet "./config" nach "/app/config" ein.
+LOCAL_CONFIG_DIR: Final = "config"
 CORE_CONFIG_FILENAME: Final = "wissensgraph.yaml"
 MODELS_CONFIG_FILENAME: Final = "models.yaml"
 SOURCES_CONFIG_FILENAME: Final = "sources.yaml"

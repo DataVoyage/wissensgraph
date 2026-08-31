@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 import yaml
 
-from wissensgraph.config.errors import ConfigValidationError, PlaceholderResolutionError
+from wissensgraph.config.errors import (
+    ConfigFileError,
+    ConfigValidationError,
+    PlaceholderResolutionError,
+)
 from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import SourcesConfig, load_sources, sources_file
 
@@ -40,12 +44,23 @@ def schreibe_sources(tmp_path: Path) -> Any:
 
 
 class TestLaden:
-    def test_eine_fehlende_datei_ist_kein_fehler(self, settings: Settings, tmp_path: Path) -> None:
+    def test_am_standardort_ist_eine_fehlende_datei_kein_fehler(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
         """Ein System ohne angebundene Quellen ist zulässig (Compose-Profil 'minimal')."""
-        config = load_sources(settings, path=tmp_path / "gibt-es-nicht.yaml", env={})
+        ohne = settings.model_copy(update={"config_dir": str(tmp_path)})
+
+        config = load_sources(ohne, env={})
 
         assert config.sources == ()
         assert config.enabled == ()
+
+    def test_ein_benannter_pfad_der_nicht_stimmt_ist_ein_fehler(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        """Sonst meldete ein Sync-Lauf ohne eine einzige Quelle einen Erfolg."""
+        with pytest.raises(ConfigFileError, match="existiert nicht"):
+            load_sources(settings, path=tmp_path / "gibt-es-nicht.yaml", env={})
 
     def test_die_beispielkonfiguration_des_repositories_laedt(self, settings: Settings) -> None:
         """Das mitgelieferte config/sources.yaml muss gegen die Kernkonfiguration passen."""

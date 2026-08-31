@@ -220,6 +220,15 @@ uv run python scripts/dev.py down --profile dev --volumes   # inkl. Datenbankinh
 Code-Defaults  <  config/*.yaml  <  .env-Datei  <  Prozess-ENV  <  CLI-Flag / API-Parameter
 ```
 
+Die `.env` gilt für **alle drei** Config-Dateien und darüber hinaus: Ihre Werte landen in der
+Prozessumgebung, ohne bereits gesetzte zu überschreiben. Damit sehen sie auch
+`config/models.yaml`, `config/sources.yaml` und die SDKs der Anbieter, die ihre eigenen Namen
+lesen (`GOOGLE_APPLICATION_CREDENTIALS`, `HTTP_PROXY`, `SSL_CERT_FILE`).
+
+Ohne `WG_CONFIG_DIR` wird zuerst `./config` neben dem Arbeitsverzeichnis gesucht, danach
+`/app/config`. Im Container sind das dieselbe Stelle — dort ist `/app` das Arbeitsverzeichnis —,
+auf dem Host funktioniert damit `uv run wg …` ohne weitere Angabe.
+
 Drei Regeln gelten ausnahmslos:
 
 1. **Kein Secret in `config/*.yaml`, nie im Image, nie im Repository.** Zugangsdaten stehen dort

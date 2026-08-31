@@ -26,7 +26,7 @@ from typing import Any, Literal
 from pydantic import Field, ValidationError, field_validator, model_validator
 
 from wissensgraph.config import defaults
-from wissensgraph.config.errors import ConfigValidationError
+from wissensgraph.config.errors import ConfigFileError, ConfigValidationError
 from wissensgraph.config.loader import load_yaml_mapping
 from wissensgraph.config.placeholders import resolve_placeholders
 from wissensgraph.config.schema import FrozenModel, Settings, empty_to_none
@@ -379,8 +379,19 @@ def load_models(
         ConfigValidationError: Bei jedem Verstoß gegen §11.4 oder §6.5.
     """
     umgebung = dict(os.environ if env is None else env)
+    benannt = path is not None or bool(umgebung.get(defaults.MODELS_FILE_ENV, "").strip())
     ziel = models_file(settings, umgebung) if path is None else path
     if not ziel.is_file():
+        # Schweigen ist nur richtig, wenn niemand gesagt hat, wo die Datei liegt: Ein System ohne
+        # Modell ist ein zulässiger Zustand (§11.5). Wurde der Pfad dagegen ausdrücklich benannt
+        # und stimmt nicht, ist das ein Vertipper — und eine leere Konfiguration meldete sich
+        # später nur als "keine Task-Profile konfiguriert", also weit weg von der Ursache.
+        if benannt:
+            raise ConfigFileError(
+                f"Die angegebene Router-Konfiguration '{ziel}' existiert nicht "
+                f"({defaults.MODELS_FILE_ENV} oder --models). Ohne Angabe wird "
+                f"'{Path(settings.config_dir) / defaults.MODELS_CONFIG_FILENAME}' verwendet."
+            )
         return ModelsConfig()
 
     roh = load_yaml_mapping(ziel)

@@ -8,6 +8,8 @@ eigenen Code zu haben, ist verlässlicher als eine fremde Voreinstellung.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 
 _EXPORT_PREFIX = "export "
@@ -41,6 +43,27 @@ def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
+
+
+def export_dotenv(values: Mapping[str, str], env: MutableMapping[str, str] | None = None) -> None:
+    """Übernimmt ``.env``-Werte in die Prozessumgebung, ohne bestehende zu überschreiben.
+
+    Ohne diesen Schritt sähe **nur** :class:`Settings` die Datei. ``config/models.yaml`` und
+    ``config/sources.yaml`` lösen ihre ``${WG_…}``-Platzhalter aber gegen ``os.environ`` auf, und
+    dasselbe tun die SDKs der Anbieter für ihre eigenen Variablen (``GOOGLE_APPLICATION_
+    CREDENTIALS``, ``HTTP_PROXY``, ``SSL_CERT_FILE``). Ein Prozess auf dem Host bekäme also eine
+    gültige Kernkonfiguration und daneben einen Model-Router ohne Zugangsdaten.
+
+    Das Tückische daran ist nicht das Fehlen, sondern der Rückfallwert: Aus
+    ``${WG_PROVIDER_VERTEX__LOCATION:-europe-west4}`` wird dann stillschweigend ``europe-west4``,
+    obwohl in der ``.env`` ``eu`` steht — kein Fehler, nur ein anderer Ort der Verarbeitung.
+
+    ``setdefault`` und nicht Zuweisung: §6.2 stellt die Prozessumgebung **über** die Datei. Wer
+    eine Variable beim Aufruf mitgibt, hat damit weiterhin das letzte Wort.
+    """
+    ziel = os.environ if env is None else env
+    for key, value in values.items():
+        ziel.setdefault(key, value)
 
 
 def load_dotenv(path: Path) -> dict[str, str]:

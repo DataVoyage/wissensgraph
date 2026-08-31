@@ -230,7 +230,25 @@ class TestSourcesList:
         assert eintrag["name"] == "dummy"
         assert eintrag["capabilities"]["single_fetch"] is True
 
-    def test_ohne_quellen_ist_das_keine_stoerung(self, config_file: Path, tmp_path: Path) -> None:
+    def test_ohne_quellen_ist_das_keine_stoerung(
+        self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Am Standardort keine ``sources.yaml`` zu finden heißt: Es gibt keine Quellen."""
+        monkeypatch.setenv("WG_CONFIG_DIR", str(tmp_path))
+
+        result = invoke("sources", "list", "--config", str(config_file))
+
+        assert result.exit_code == 0
+        assert "Keine eingeschaltete Quelle" in result.stdout
+
+    def test_ein_falscher_pfad_wird_gemeldet_statt_als_leer_ausgegeben(
+        self, config_file: Path, tmp_path: Path
+    ) -> None:
+        """Ein Vertipper in ``--sources`` darf nicht wie 'keine Quellen konfiguriert' aussehen.
+
+        Das ist der Unterschied zwischen einer Feststellung über die Welt und einem Fehler des
+        Aufrufers — und er entscheidet, wo jemand mit der Suche anfängt.
+        """
         result = invoke(
             "sources",
             "list",
@@ -240,8 +258,8 @@ class TestSourcesList:
             str(tmp_path / "gibt-es-nicht.yaml"),
         )
 
-        assert result.exit_code == 0
-        assert "Keine eingeschaltete Quelle" in result.stdout
+        assert result.exit_code != 0
+        assert "existiert nicht" in result.output
 
     def test_ein_unbekannter_adapter_bricht_ab(self, config_file: Path, tmp_path: Path) -> None:
         """§6.5: Eine Quelle auf einen unauffindbaren Adapter ist ein Konfigurationsfehler."""

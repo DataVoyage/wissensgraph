@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from wissensgraph.config import defaults
-from wissensgraph.config.errors import ConfigValidationError
+from wissensgraph.config.errors import ConfigFileError, ConfigValidationError
 from wissensgraph.config.models import (
     ModelsConfig,
     UnknownProviderError,
@@ -212,13 +212,36 @@ class TestZugangsdaten:
 
 
 class TestLaden:
-    def test_fehlende_datei_ergibt_eine_leere_konfiguration(
+    def test_am_standardort_ergibt_eine_fehlende_datei_eine_leere_konfiguration(
         self, settings: Settings, tmp_path: Path
     ) -> None:
-        """Ein System ohne Modell ist ein zulässiger Zustand (§11.5) und kein Startfehler."""
-        config = load_models(settings, path=tmp_path / "gibtsnicht.yaml")
+        """Ein System ohne Modell ist ein zulässiger Zustand (§11.5) und kein Startfehler.
+
+        Der Standardort ist der Fall, für den diese Zusage gilt: Niemand hat gesagt, wo die Datei
+        liegt, und am üblichen Platz ist keine.
+        """
+        ohne = settings.model_copy(update={"config_dir": str(tmp_path)})
+
+        config = load_models(ohne, env={})
 
         assert config.tasks == {}
+
+    def test_ein_benannter_pfad_der_nicht_stimmt_ist_ein_fehler(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        """Der andere Fall, und er ist etwas völlig anderes: Hier wurde ein Pfad genannt.
+
+        Stimmt er nicht, ist das ein Vertipper. Eine leere Konfiguration meldete sich erst viel
+        später als "keine Task-Profile konfiguriert" — weit weg von der Ursache.
+        """
+        with pytest.raises(ConfigFileError, match="existiert nicht"):
+            load_models(settings, path=tmp_path / "gibtsnicht.yaml")
+
+    def test_auch_ein_falscher_pfad_aus_der_umgebung_meldet_sich(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ConfigFileError, match="WG_MODELS_FILE"):
+            load_models(settings, env={"WG_MODELS_FILE": str(tmp_path / "gibtsnicht.yaml")})
 
     def test_platzhalter_kommen_aus_der_umgebung(
         self, settings: Settings, write_models: Any, models_dict: dict[str, Any]

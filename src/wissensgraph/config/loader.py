@@ -20,7 +20,7 @@ import yaml
 from pydantic import ValidationError
 
 from wissensgraph.config import defaults
-from wissensgraph.config.dotenv import load_dotenv
+from wissensgraph.config.dotenv import export_dotenv, load_dotenv
 from wissensgraph.config.env_mapping import ENV_BINDINGS
 from wissensgraph.config.errors import ConfigFileError, ConfigValidationError
 from wissensgraph.config.placeholders import resolve_placeholders
@@ -129,6 +129,7 @@ def build_settings(
         PlaceholderResolutionError: Bei nicht auflösbarem ``${...}``-Platzhalter.
         ConfigValidationError: Bei jedem Verstoß gegen die Regeln aus §6.5.
     """
+    prozessumgebung_verwendet = env is None
     process_env = dict(os.environ if env is None else env)
 
     dotenv_path = Path(".env") if dotenv_file is None else dotenv_file
@@ -136,6 +137,9 @@ def build_settings(
 
     # §6.2: Prozess-ENV schlägt .env-Datei.
     effective_env = {**file_env, **process_env}
+
+    if prozessumgebung_verwendet:
+        export_dotenv(file_env)
 
     resolved_config_file = _resolve_config_file(config_file, effective_env)
     raw = load_yaml_mapping(resolved_config_file)
@@ -147,6 +151,11 @@ def build_settings(
     with_env = apply_env_overrides(resolved, effective_env)
     merged = deep_merge(with_env, overrides or {})
 
+    # Die Nachbardateien liegen beim Kern: Wer eine Config-Datei benennt, meint auch die
+    # 'models.yaml' und 'sources.yaml' daneben. Ohne diese Zeile bliebe 'config_dir' auf dem
+    # Container-Default stehen, und der Router suchte anderswo als der Kern.
+    merged.setdefault("config_dir", str(resolved_config_file.parent))
+
     try:
         return Settings.model_validate(merged)
     except ValidationError as exc:
@@ -154,11 +163,27 @@ def build_settings(
 
 
 def _resolve_config_file(config_file: Path | None, env: Mapping[str, str]) -> Path:
-    """Bestimmt den Pfad der Kern-Config-Datei aus Argument, ENV oder Code-Default."""
+    """Bestimmt den Pfad der Kern-Config-Datei aus Argument, ENV oder Code-Default.
+
+    Der Code-Default ``/app/config`` ist der Pfad **im Container** — dort bindet Compose das
+    Verzeichnis dorthin ein. Auf dem Host gibt es ihn nicht, und ein Aufruf wie ``uv run wg
+    doctor`` scheiterte deshalb mit "Config-Datei '/app/config/wissensgraph.yaml' existiert
+    nicht", obwohl das Verzeichnis danebenliegt.
+
+    Deshalb wird ohne ausdrückliche Angabe zuerst ``./config`` im Arbeitsverzeichnis versucht.
+    Das ist keine Rateübung mit zwei Ausgängen: Im Container ist ``/app`` das Arbeitsverzeichnis,
+    ``./config`` und ``/app/config`` bezeichnen dort also dieselbe Stelle. Die Regel ändert nur
+    den Fall, in dem der bisherige Default ohnehin ins Leere zeigte.
+    """
     if config_file is not None:
         return config_file
-    config_dir = env.get("WG_CONFIG_DIR", defaults.CONFIG_DIR)
-    return Path(config_dir) / defaults.CORE_CONFIG_FILENAME
+    angegeben = env.get("WG_CONFIG_DIR", "").strip()
+    if angegeben:
+        return Path(angegeben) / defaults.CORE_CONFIG_FILENAME
+    daneben = Path(defaults.LOCAL_CONFIG_DIR) / defaults.CORE_CONFIG_FILENAME
+    if daneben.is_file():
+        return daneben
+    return Path(defaults.CONFIG_DIR) / defaults.CORE_CONFIG_FILENAME
 
 
 def _format_validation_error(exc: ValidationError, source: Path) -> str:

@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import Field, ValidationError, field_validator, model_validator
 
 from wissensgraph.config import defaults
-from wissensgraph.config.errors import ConfigValidationError
+from wissensgraph.config.errors import ConfigFileError, ConfigValidationError
 from wissensgraph.config.loader import load_yaml_mapping
 from wissensgraph.config.placeholders import resolve_placeholders
 from wissensgraph.config.schema import FrozenModel, Settings, empty_to_none
@@ -242,8 +242,18 @@ def load_sources(
         ConfigValidationError: Bei jedem Verstoß gegen §8.4 oder §6.5.
     """
     umgebung = dict(os.environ if env is None else env)
+    benannt = path is not None or bool(umgebung.get(defaults.SOURCES_FILE_ENV, "").strip())
     ziel = sources_file(settings, umgebung) if path is None else path
     if not ziel.is_file():
+        # Wie beim Model-Router: Eine fehlende Datei am Standardort heißt "keine Quellen", ein
+        # falsch benannter Pfad heißt Vertipper. Das zweite still zu behandeln, hieße einen
+        # Sync-Lauf ohne eine einzige Quelle als Erfolg zu melden.
+        if benannt:
+            raise ConfigFileError(
+                f"Die angegebene Quellkonfiguration '{ziel}' existiert nicht "
+                f"({defaults.SOURCES_FILE_ENV} oder --sources). Ohne Angabe wird "
+                f"'{Path(settings.config_dir) / defaults.SOURCES_CONFIG_FILENAME}' verwendet."
+            )
         return SourcesConfig()
 
     roh = load_yaml_mapping(ziel)
