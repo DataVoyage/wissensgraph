@@ -381,3 +381,82 @@ class TestLeereClustersuche:
         ergebnis = werkzeuge.graph_search({"query": "Datenbank", "granularity": "document"})
 
         assert "next_step" not in ergebnis
+
+
+class TestUebersichtBlaettert:
+    """Eine abgeschnittene Übersicht darf nicht wie eine vollständige aussehen (§18.1).
+
+    ``graph_overview`` nennt sich selbst "der erste Aufruf einer Sitzung" und beantwortet die
+    Frage, worum es in diesem Graphen geht. Vorher benutzte es die *Such*-Grenze von 20 und warf
+    den Cursor weg: Ein Store mit sechzig Themengruppen zeigte davon zwanzig, und nichts an der
+    Antwort verriet, dass es weitergeht. Der Agent hielt für den ganzen Graphen, was nur sein
+    Anfang war.
+    """
+
+    def test_eine_abgeschnittene_liste_nennt_ihren_cursor(self, werkzeuge: Toolbox) -> None:
+        ergebnis = werkzeuge.graph_overview({"limit": 1})
+
+        assert len(ergebnis["clusters"]) == 1
+        assert ergebnis["next_cursor"]
+        assert "nicht die vollständige Liste" in ergebnis["next_step"]
+
+    def test_der_cursor_fuehrt_zum_naechsten_cluster(self, werkzeuge: Toolbox) -> None:
+        erste = werkzeuge.graph_overview({"limit": 1})
+
+        zweite = werkzeuge.graph_overview({"limit": 1, "cursor": erste["next_cursor"]})
+
+        assert zweite["clusters"][0]["id"] != erste["clusters"][0]["id"]
+
+    def test_eine_vollstaendige_liste_traegt_keinen_cursor(self, werkzeuge: Toolbox) -> None:
+        """Sonst blätterte ein Agent im Kreis, weil er das Ende nicht erkennt."""
+        ergebnis = werkzeuge.graph_overview({})
+
+        assert "next_cursor" not in ergebnis
+        assert "vollständige" not in ergebnis["next_step"]
+
+    def test_die_vorgabe_ist_nicht_mehr_die_suchgrenze(self, werkzeuge: Toolbox) -> None:
+        """Zwei verschiedene Fragen, zwei verschiedene Zahlen."""
+        uebersicht = next(spec for spec in werkzeuge.specs() if spec.name == "graph_overview")
+
+        assert defaults.MCP_OVERVIEW_LIMIT > defaults.SEARCH_LIMIT
+        assert "limit" in uebersicht.input_schema["properties"]
+        assert "cursor" in uebersicht.input_schema["properties"]
+
+
+class TestScoreSkala:
+    """Dieselbe Spalte ``score``, drei Bedeutungen — sie muss dabeistehen (§12.3, §12.4).
+
+    Bei ``mode: cluster`` ist der Wert eine Kosinusähnlichkeit (0,73 heißt "nah dran"), bei
+    ``mode: hybrid`` ein RRF-Wert (0,016 ist dort ein *guter* Platz), bei einer Traversierung die
+    gewichtete Formel über Nähe, Dichte und Aktualität. Ein Agent, der 0,016 gegen 0,73 hält,
+    zieht daraus den falschen Schluss — und der Zahl allein sieht er es nicht an.
+    """
+
+    def test_die_traversierung_nennt_ihre_skala(self, werkzeuge: Toolbox, umgebung: Any) -> None:
+        ergebnis = werkzeuge.graph_traverse({"concept_id": umgebung.cluster_ids()[0]})
+
+        assert ergebnis["score_kind"] == defaults.SCORE_KIND_RANKING
+        assert ergebnis["score_hint"]
+
+    def test_die_suche_nennt_ihre_skala_passend_zum_modus(self, werkzeuge: Toolbox) -> None:
+        ergebnis = werkzeuge.graph_search({"query": "Faktentabellen"})
+
+        erwartet = {
+            "cluster": defaults.SCORE_KIND_SIMILARITY,
+            "hybrid": defaults.SCORE_KIND_RRF,
+            "lexical": defaults.SCORE_KIND_LEXICAL,
+        }
+        assert ergebnis["score_kind"] == erwartet[ergebnis["mode"]]
+
+    def test_der_hinweis_gehoert_zur_genannten_skala(self, werkzeuge: Toolbox) -> None:
+        """Er steht in der Antwort und nicht nur in der Beschreibung: Die liest ein Agent einmal."""
+        ergebnis = werkzeuge.graph_search({"query": "Faktentabellen"})
+
+        assert ergebnis["score_hint"] == defaults.SCORE_KIND_HINTS[ergebnis["score_kind"]]
+
+    def test_die_skalen_sind_paarweise_verschieden(self, werkzeuge: Toolbox, umgebung: Any) -> None:
+        """Sonst wäre die Angabe wertlos — sie soll ja gerade unterscheiden."""
+        traversierung = werkzeuge.graph_traverse({"concept_id": umgebung.cluster_ids()[0]})
+        suche = werkzeuge.graph_search({"query": "Faktentabellen"})
+
+        assert traversierung["score_kind"] != suche["score_kind"]

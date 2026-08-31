@@ -128,6 +128,10 @@ class Traversal:
             "hops": self.hops,
             "truncated": self.truncated,
             "queries": self.queries,
+            # Dieselbe Spalte 'score' trägt hier die Formel aus §12.3 und in einer Suche eine
+            # Ähnlichkeit oder einen RRF-Wert. Ohne diese Angabe sieht man der Zahl nicht an,
+            # welche von beiden es ist.
+            "score_kind": defaults.SCORE_KIND_RANKING,
             "nodes": [node.as_dict() for node in self.nodes],
             "edges": [kante_dict(edge) for edge in self.edges],
             "edge_count": len(self.edges),
@@ -146,12 +150,27 @@ class SearchResult:
     das im Ergebnis". Solange es keine Embeddings gibt, ist das der einzige Modus — und dass er
     im Ergebnis steht, ist der Unterschied zwischen einer Einschränkung und einer Täuschung."""
 
+    @property
+    def score_kind(self) -> str:
+        """Welche Skala das Feld ``score`` der Treffer benutzt (§12.4).
+
+        Sie folgt aus dem Modus und wird trotzdem ausgeschrieben: Dass ``cluster`` eine
+        Ähnlichkeit liefert und ``hybrid`` einen RRF-Wert, steht sonst nirgends in der Antwort.
+        Ein Leser, der 0,016 gegen 0,73 hält, zieht daraus den falschen Schluss.
+        """
+        if self.mode == defaults.SEARCH_MODE_CLUSTER:
+            return defaults.SCORE_KIND_SIMILARITY
+        if self.mode == defaults.SEARCH_MODE_HYBRID:
+            return defaults.SCORE_KIND_RRF
+        return defaults.SCORE_KIND_LEXICAL
+
     def as_dict(self) -> dict[str, object]:
         """Serialisierbare Form."""
         return {
             "query": self.query,
             "store": self.store,
             "mode": self.mode,
+            "score_kind": self.score_kind,
             "hits": [hit.as_dict() for hit in self.hits],
         }
 

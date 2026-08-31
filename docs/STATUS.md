@@ -1346,6 +1346,27 @@ flacher als jeder einzelne; eine Schwelle, die für Dokumente stimmt, ist für Z
 Jetzt 0,70, mit Abstand nach oben wie unten. Und eine leere Cluster-Suche trägt einen
 `next_step`: Sie sah aus wie „dazu gibt es nichts" und hieß nur „kein Cluster liegt nah genug".
 
+### Nachtrag: zwei Fehler beim Durchsehen der Antworten
+
+Beim Aufschreiben, was jedes der sieben Werkzeuge zurückgibt, kamen zwei weitere Sachen heraus.
+
+**`graph_overview` schnitt still bei 20 ab.** Es benutzte `SEARCH_LIMIT` — die Grenze der *Suche*
+— und warf den Cursor der Katalogabfrage in ein `_`. Eine Suche liefert die besten Treffer, und
+zwanzig davon sind genug; die Übersicht beantwortet aber „worum geht es in diesem Graphen", und
+dort ist eine abgeschnittene Liste keine kürzere Antwort, sondern eine falsche. Der Agent hielt
+für den ganzen Graphen, was nur dessen Anfang war. Aufgefallen ist es nur deshalb nicht, weil der
+Entwicklungsbestand genau **19** Cluster hat — einen unter der Grenze. Jetzt eine eigene Vorgabe
+von 50, dazu `limit` und `cursor` als Argumente und `next_cursor` in der Antwort; der Hinweis
+steht im `next_step`, weil ein Agent Antworttexte liest und keine Schemata. Ist die Liste
+vollständig, fehlt beides — sonst blätterte er im Kreis, weil er das Ende nicht erkennt.
+
+**Das Feld `score` hatte drei Bedeutungen.** Bei `mode: cluster` eine Kosinusähnlichkeit (0,73
+heißt „nah dran"), bei `mode: hybrid` einen RRF-Wert (0,016 ist dort ein *guter* Platz), bei einer
+Traversierung die gewichtete Formel aus §12.3. Vergleichbar machen lassen sie sich nicht — ein
+RRF-Wert *ist* keine Ähnlichkeit —, benennen schon: Jede Antwort trägt jetzt `score_kind` und
+einen Satz `score_hint` dazu. Beides einmal je Antwort und nicht je Knoten, denn die Skala gilt
+für das ganze Ergebnis.
+
 ### Nachtrag: gleichzeitige Modellaufrufe
 
 `max_concurrency` je Anbieter in `models.yaml`, Vorgabe 1. Der Anlass ist der Vertex-Zuschnitt:

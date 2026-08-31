@@ -305,6 +305,15 @@ MCP_CHARS_PER_TOKEN: Final = 4
 #: Präfix des Akteurs eines Agenten im Änderungsjournal (§7.4, §18.3).
 MCP_ACTOR_PREFIX: Final = "agent:"
 
+#: Wie viele Cluster ``graph_overview`` ohne weitere Angabe liefert (§18.1).
+#:
+#: Bewusst ein eigener Wert und nicht ``SEARCH_LIMIT``: Eine Suche liefert die *besten* Treffer,
+#: und zwanzig davon sind genug. Die Übersicht beantwortet dagegen "worum geht es in diesem
+#: Graphen überhaupt" — dort ist eine abgeschnittene Liste keine kürzere Antwort, sondern eine
+#: falsche. Vorher stand hier die Suchgrenze; ein Store mit sechzig Themengruppen zeigte davon
+#: zwanzig, und nichts an der Antwort verriet, dass es weitergeht.
+MCP_OVERVIEW_LIMIT: Final = 50
+
 #: Kennung einer Sitzung, wenn der Aufrufer keine mitgibt. Sie steht als Konstante hier, damit ein
 #: Journaleintrag auch dann zuzuordnen ist — "irgendein Agent" ist eine bessere Auskunft als ein
 #: leeres Feld.
@@ -567,6 +576,38 @@ SEARCH_CLUSTER_HIT_THRESHOLD: Final = 0.70
 #: Die Modi, die eine Suche im Ergebnis ausweist (§12.4). ``lexical`` ist keine Notlösung, die man
 #: verschweigt: Ohne Embedding-Modell ist er der einzige Modus, und ein stiller Qualitätsverlust
 #: ohne Hinweis wäre die schlechtere Variante.
+#: Womit die Zahl im Feld ``score`` gebildet wurde (§12.3, §12.4).
+#:
+#: Sie ist **nicht** über Antworten hinweg vergleichbar, und das war lange nur im Code zu sehen:
+#: Bei ``mode: cluster`` ist sie eine Kosinusähnlichkeit (0,73 heißt "nah dran"), bei
+#: ``mode: hybrid`` ein RRF-Wert (0,016 ist dort ein *guter* Platz), bei einer Traversierung die
+#: gewichtete Formel aus §12.3 über Nähe, Dichte und Aktualität. Dieselbe Zahlenspalte, drei
+#: verschiedene Bedeutungen — ein Agent, der 0,016 gegen 0,73 hält, zieht daraus den falschen
+#: Schluss. Deshalb steht neben jedem Ergebnis, welche Skala gilt.
+SCORE_KIND_SIMILARITY: Final = "similarity"
+SCORE_KIND_RRF: Final = "rrf"
+SCORE_KIND_LEXICAL: Final = "lexical"
+SCORE_KIND_RANKING: Final = "ranking"
+
+#: Ein Satz je Skala, für den Agenten. Er steht in der Antwort und nicht nur in der
+#: Werkzeugbeschreibung: Die Beschreibung liest ein Agent einmal, die Antwort jedes Mal.
+SCORE_KIND_HINTS: Final = {
+    SCORE_KIND_SIMILARITY: (
+        "Kosinusähnlichkeit zur Anfrage, 0 bis 1. Höher ist ähnlicher; über 0,7 gilt als nah."
+    ),
+    SCORE_KIND_RRF: (
+        "Reciprocal-Rank-Fusion aus Vektor- und Volltextsuche. Die Werte sind klein (um 0,016) "
+        "und nur untereinander vergleichbar — sie sind keine Ähnlichkeit."
+    ),
+    SCORE_KIND_LEXICAL: (
+        "Rang der reinen Volltext-/Trigrammsuche. Nur innerhalb dieser Antwort vergleichbar."
+    ),
+    SCORE_KIND_RANKING: (
+        "Gewichtete Mischung aus Nähe, Referenzdichte und Aktualität (§12.3), auf den größten "
+        "Wert dieser Antwort normiert. Nur innerhalb dieser Antwort vergleichbar."
+    ),
+}
+
 SEARCH_MODE_LEXICAL: Final = "lexical"
 SEARCH_MODE_HYBRID: Final = "hybrid"
 SEARCH_MODE_CLUSTER: Final = "cluster"

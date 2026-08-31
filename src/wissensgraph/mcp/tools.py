@@ -174,6 +174,19 @@ class Toolbox:
                     {
                         "scope": {**_STR, "description": "Nur Cluster dieses Scopes."},
                         "store": {**_STR, "description": "'shared' (Vorgabe) oder 'personal'."},
+                        "limit": {
+                            **_INT,
+                            "minimum": 1,
+                            "description": (
+                                f"Höchstzahl Themengruppen, Vorgabe {defaults.MCP_OVERVIEW_LIMIT}."
+                            ),
+                        },
+                        "cursor": {
+                            **_STR,
+                            "description": (
+                                "Zum Weiterblättern: der 'next_cursor' aus der vorigen Antwort."
+                            ),
+                        },
                     }
                 ),
                 call=self.graph_overview,
@@ -295,27 +308,40 @@ class Toolbox:
     def graph_overview(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Die Cluster eines Stores (§18.1)."""
         store = self._store(args.get("store"))
-        zusammenfassungen, _ = self._catalog.clusters(
-            store=store, scope=args.get("scope"), limit=defaults.SEARCH_LIMIT
+        zusammenfassungen, weiter = self._catalog.clusters(
+            store=store,
+            scope=args.get("scope"),
+            limit=int(args.get("limit", defaults.MCP_OVERVIEW_LIMIT)),
+            cursor=args.get("cursor"),
         )
-        return self._deckeln(
-            {
-                "store": store,
-                "clusters": [
-                    {
-                        "id": eintrag.concept.id,
-                        "title": eintrag.concept.title,
-                        "description": eintrag.concept.description,
-                        "member_count": eintrag.member_count,
-                    }
-                    for eintrag in zusammenfassungen
-                ],
-                "next_step": (
-                    "Wähle ein Cluster und rufe graph_traverse damit auf. Suche nur, wenn hier "
-                    "nichts passt."
-                ),
-            }
+        naechster = (
+            "Wähle ein Cluster und rufe graph_traverse damit auf. Suche nur, wenn hier "
+            "nichts passt."
         )
+        if weiter:
+            # Ohne diesen Satz sähe eine abgeschnittene Übersicht aus wie eine vollständige, und
+            # der Agent hielte für den ganzen Graphen, was nur sein Anfang ist.
+            naechster = (
+                "Dies ist nicht die vollständige Liste. Rufe graph_overview erneut mit "
+                f"cursor: '{weiter}' auf, um weiterzublättern — oder schränke mit 'scope' ein. "
+                + naechster
+            )
+        antwort: dict[str, Any] = {
+            "store": store,
+            "clusters": [
+                {
+                    "id": eintrag.concept.id,
+                    "title": eintrag.concept.title,
+                    "description": eintrag.concept.description,
+                    "member_count": eintrag.member_count,
+                }
+                for eintrag in zusammenfassungen
+            ],
+            "next_step": naechster,
+        }
+        if weiter:
+            antwort["next_cursor"] = weiter
+        return self._deckeln(antwort)
 
     def graph_traverse(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Ein oder mehrere Hops von einem Konzept aus (§18.1)."""
@@ -345,6 +371,11 @@ class Toolbox:
                     }
                     for kante in ergebnis.edges
                 ],
+                # Der 'score' der Knoten ist hier die Formel aus §12.3 und in einer Suche eine
+                # Ähnlichkeit oder ein RRF-Wert. Der Zahl sieht man das nicht an, und ein Agent,
+                # der die Werte zweier Antworten gegeneinander hält, irrt sich.
+                "score_kind": defaults.SCORE_KIND_RANKING,
+                "score_hint": defaults.SCORE_KIND_HINTS[defaults.SCORE_KIND_RANKING],
             }
         )
 
@@ -365,6 +396,7 @@ class Toolbox:
         except (ProviderNotAllowedError, ModelError) as exc:  # pragma: no cover — defensiv
             raise ToolError(f"Die Suche ist nicht möglich: {exc}") from exc
         antwort: dict[str, Any] = {"store": store, **ergebnis.as_dict()}
+        antwort["score_hint"] = defaults.SCORE_KIND_HINTS[ergebnis.score_kind]
         if not antwort.get("hits") and antwort.get("mode") == defaults.SEARCH_MODE_CLUSTER:
             # Eine leere Liste ohne Erklärung ist die schlechteste Antwort: Sie sieht aus wie
             # "dazu gibt es nichts", heißt aber nur "kein Cluster liegt nah genug". Auf der
