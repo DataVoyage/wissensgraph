@@ -266,6 +266,9 @@ bleiben unverändert — die Regeln und die Schreibrechte sind vom Neubau nicht 
 Jede Stufe lässt das System benutzbar zurück; die alte und die neue Welt existieren nie lange
 parallel.
 
+**Stand: U1 bis U5 sind umgesetzt.** Was aus jeder Stufe geworden ist, hält
+[`STATUS.md`](STATUS.md) fest — Stufe für Stufe, mit den Entscheidungen und ihren Gründen.
+
 | Stufe | Inhalt | Fertig, wenn |
 |---|---|---|
 | **U1 — Fundament** | Komponentensatz, App-Gerüst (Rail, Kopfzeile, Inspektor mit Einklappen/Ziehen), die sechs Ansichten unverändert in die drei Bereiche eingehängt | alle heutigen Tests grün, Panel-Verhalten per Test bewacht, kein Funktionsverlust |
@@ -279,12 +282,37 @@ was nur der Browser beweisen kann.
 
 ---
 
-## 8. Risiken und offene Punkte
+## 8. Risiken und offene Punkte — wie sie ausgegangen sind
 
-* **Gestrichelte Kanten in WebGL** (3.3) — Klärung in U2, mit benanntem Rückfallweg.
-* **ForceAtlas2 ergibt andere Bilder als cola/fcose.** Nutzer, die Positionen „kennen", sehen
-  nach U2 einen anders sortierten Graphen. Einmalig, wird im Changelog angesagt.
-* **Rollen sind Ordnung, keine Grenze** (2.), bis `oidc` kommt — das muss im Verwalten-Bereich
-  sichtbar angeschrieben sein, damit niemand die Sichtbarkeit für Absicherung hält.
-* **Bundle-Größe**: sigma + graphology sind zusammen leichter als Cytoscape + cola + fcose;
-  trotzdem in U2 nachmessen, die UI lädt heute schnell und soll es bleiben.
+Die Stufen U1–U5 sind umgesetzt. Was hier als Risiko stand, ist damit entschieden:
+
+* **Gestrichelte Kanten in WebGL** (3.3) — der benannte Rückfallweg wurde gezogen: Sigma
+  bietet kein gestricheltes Kantenprogramm, und ein eigenes wäre mehr Fläche als Aussage.
+  Unbestätigtes steht jetzt **voll deckend** vorn, Geprüftes tritt halbtransparent zurück;
+  die Kantenart wanderte auf die Linienstärke. §17.2, `theme.ts` und die Legende sind
+  gemeinsam auf diese Fassung gehoben — die Kodierung ist geändert, nicht verloren.
+* **ForceAtlas2 ergibt andere Bilder als cola/fcose** — trat wie erwartet ein und ist
+  einmalig. Positionen waren ohnehin nie geteilt (die URL trägt die Frage, nicht die
+  Anordnung).
+* **Rollen sind Ordnung, keine Grenze** — erledigt: Der Verwalten-Bereich schreibt es an,
+  solange `auth_mode` nicht `oidc` ist. Wer dort steht, liest, dass die Sichtbarkeit keine
+  Absicherung ist.
+* **Bundle-Größe** — nachgemessen, und deutlicher als erhofft. Derselbe Build-Befehl, einmal
+  auf dem Stand vor dem Motortausch (U1, Cytoscape + cola + fcose) und einmal heute:
+
+  | | JS-Bündel | gzip |
+  |---|---|---|
+  | vorher (Cytoscape) | 903 kB | 280 kB |
+  | heute (sigma + graphology, **inkl. U3–U5**) | 442 kB | 125 kB |
+
+  Die Hälfte, obwohl vier Ansichten, ein Markdown-Renderer und die globale Suche
+  dazugekommen sind.
+
+**Was bewusst offen bleibt** (jeweils mit Grund, nicht vergessen):
+
+* Die Bestätigungs-/Verwerfungsquote in der Qualitätsansicht braucht einen Endpunkt über das
+  Journal; bis dahin steht dort keine geratene Zahl.
+* `wg export` fehlt in der UI, weil es noch keinen API-Endpunkt dafür gibt; `wg migrate`
+  fehlt absichtlich.
+* Die schlanke Kantenform für die Karte (2,1 MB Nutzlast bei 2.000 Knoten) ist eine
+  API-Aufgabe geblieben — der Motor trägt die Menge inzwischen mühelos.

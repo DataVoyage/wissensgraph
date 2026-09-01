@@ -379,6 +379,33 @@ describe("Verwalten (§17.2 Ansicht 6, U5)", () => {
     );
   });
 
+  it("schreibt an, dass die Bereiche ordnen und nicht sperren (§20.3)", async () => {
+    renderMitQuery(
+      <Diagnose state={{ view: "diagnose", store: "shared" }} onChange={() => undefined} />,
+    );
+
+    // Ohne `oidc` ist die Bereichsgliederung keine Berechtigung — wer hier steht, soll das
+    // lesen, statt die Sichtbarkeit für Absicherung zu halten.
+    await waitFor(() =>
+      expect(screen.getByText(/Die Bereiche ordnen, sie sperren nicht/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/auth_mode: token/)).toBeInTheDocument();
+  });
+
+  it("lässt den Hinweis weg, sobald oidc die Rolle liefert", async () => {
+    api.on("GET", /config\/effective/, () => ({
+      ...KONFIGURATION,
+      api: { auth_mode: "oidc" },
+    }));
+
+    renderMitQuery(
+      <Diagnose state={{ view: "diagnose", store: "shared" }} onChange={() => undefined} />,
+    );
+
+    await waitFor(() => expect(screen.getByText(/Secrets sind maskiert/)).toBeInTheDocument());
+    expect(screen.queryByText(/Die Bereiche ordnen/)).not.toBeInTheDocument();
+  });
+
   it("führt die Diagnose nur auf Anstoß aus und zeigt die Ampel", async () => {
     api.on("GET", /\/api\/v1\/doctor/, () => ({
       healthy: false,

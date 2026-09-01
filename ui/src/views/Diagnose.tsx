@@ -27,10 +27,25 @@ const AMPEL: Record<string, { farbe: string; text: string }> = {
 export function Diagnose(_props: DiagnoseProps): JSX.Element {
   const diagnose = useDoctor();
   const konfiguration = useConfig();
+  // Kein Rückfallwert: Solange die Konfiguration nicht da ist, wird der Modus nicht behauptet
+  // (§17.1). Ein geratenes "token" stünde sonst kurz auf dem Schirm und wäre womöglich falsch.
+  const modus = konfiguration.data?.api.auth_mode;
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl space-y-3">
+        {/* Die Arbeitsbereiche ordnen die Navigation, sie sind keine Rechte (§17.2). Solange
+            das nicht durch `oidc` gedeckt ist, muss es dort stehen, wo jemand sonst die
+            Sichtbarkeit für Absicherung halten könnte — im Verwalten-Bereich. */}
+        {modus !== undefined && modus !== "oidc" && (
+          <p className="wg-panel border-l-4 border-ton-700 text-xs leading-relaxed text-ton-600">
+            <strong className="text-ton-800">Die Bereiche ordnen, sie sperren nicht.</strong>{" "}
+            Diese Installation läuft mit <code>auth_mode: {modus}</code>; wer die Oberfläche
+            öffnet, darf alles, was §17.4 der UI erlaubt — auch das, was hier unter „Verwalten"
+            steht. Erst mit <code>oidc</code> liefert das Token eine Rolle, und aus den
+            Bereichen werden Berechtigungsgrenzen (§20.3).
+          </p>
+        )}
         <section className="wg-panel space-y-2" aria-label="Diagnose">
           <h2 className="wg-panel-titel">Diagnose</h2>
           <div className="flex items-center gap-3">

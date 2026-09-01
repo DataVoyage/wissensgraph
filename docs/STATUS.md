@@ -1642,7 +1642,8 @@ UI-Thread, der Motorwechsel bei 400 Knoten entfällt), ein eigener Komponentensa
 bestehenden Token-Set und zwei neue Ansichten für Analysten (Automatisierung mit Probelauf,
 Qualität). §16 und §17 der Spezifikation sind auf diesen Stand gehoben; neu darin sind
 `GET /doctor` und `dry_run` für alle schreibenden Läufe. Die Umsetzung folgt den Stufen U1–U5
-aus dem Konzept und ist noch nicht begonnen.
+aus dem Konzept; sie sind inzwischen **vollständig umgesetzt** — die Nachträge darunter halten
+Stufe für Stufe fest, was daraus geworden ist.
 
 ### Nachtrag: U1 — Fundament des UI-Neubaus
 
@@ -1782,6 +1783,16 @@ Abfrageintervall. `wg migrate` bleibt, wie im Konzept beschlossen, außerhalb de
 Damit ist die **CLI-Paritätstabelle aus dem Konzept (Abschnitt 2.2) erfüllt** — mit den zwei
 bewussten Ausnahmen (`wg migrate` an der Konsole, `wg export` als Ausbaustufe, die zuerst einen
 API-Endpunkt braucht). Die Stufen U1–U5 des Konzepts sind vollständig umgesetzt.
+
+Zwei Punkte aus der Risikoliste des Konzepts sind zum Abschluss abgearbeitet:
+
+* **„Rollen sind Ordnung, keine Grenze"** steht jetzt im Verwalten-Bereich, solange
+  `auth_mode` nicht `oidc` ist — genau dort, wo jemand die Sichtbarkeit sonst für Absicherung
+  halten könnte (§20.3).
+* **Die Bundle-Größe** ist nachgemessen statt behauptet: derselbe Build-Befehl auf dem Stand
+  vor dem Motortausch und heute. **903 kB → 442 kB** (gzip 280 → 125 kB) — die Hälfte,
+  obwohl seither vier Ansichten, ein Markdown-Renderer und die globale Suche dazugekommen
+  sind. Cytoscape samt `cola` und `fcose` war der schwerste Posten der Oberfläche.
 
 ---
 
