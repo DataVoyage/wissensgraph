@@ -75,7 +75,18 @@ class TestLaden:
             },
         )
 
-        assert [item.name for item in config.sources] == ["confluence-eng", "jira-team"]
+        assert [item.name for item in config.sources] == [
+            "confluence-eng",
+            "jira-team",
+            "sap-btp-doku",
+        ]
+        # Die SAP-Doku ist für den Kern eine gewöhnliche Confluence-Seite — das ist der Zweck
+        # der Quelle (Tests an echten Texten) und zugleich die Probe auf Leitprinzip 12: Der
+        # Typ kommt aus der Konfiguration, nicht aus dem Adapter. Ihr ID-Präfix ist trotzdem
+        # ein eigenes; ein geteiltes hieße geteilter Nummernkreis (§7.5).
+        sap = config.get("sap-btp-doku")
+        assert sap.target.default_type == "Confluence Page"
+        assert sap.id_prefix == "sapdoc"
         # Kein 'mapping' für die Inhaltsfelder — und das ist die eigentliche Zusage dieser
         # Zeile. Die 'mapping'-Sektion schlägt die Vorgaben des Adapters (§8.4); ein Eintrag
         # 'body: $.body.storage.value' ersetzte das fertige Markdown durch das rohe

@@ -19,6 +19,7 @@ from starlette.testclient import TestClient
 from support import quellen
 from support.dummy_adapter import DummyAdapter
 from wissensgraph.infrastructure.adapters import ConfluenceAdapter, FixtureAdapter, JiraAdapter
+from wissensgraph.infrastructure.adapters.sap_docs import SapDocsAdapter
 from wissensgraph.ports.sources import SourceAdapter
 from wissensgraph.testing import AdapterContractTests
 
@@ -175,6 +176,67 @@ class TestFixtureAdapter(AdapterContractTests):
         geaendert = DOKUMENTE[1] | {"updated_at": "2030-01-01T00:00:00+00:00"}
         adapter.configure(fixture_quelle([DOKUMENTE[0], geaendert, DOKUMENTE[2]]))
         return str(geaendert["external_id"])
+
+
+class TestSapDocsAdapter(AdapterContractTests):
+    """Der SAP-docs-Adapter gegen einen kleinen, echten Bestand im Dateisystem.
+
+    Die Dateien werden im Test angelegt und sehen aus wie die echten: Kennungs-Kommentar in der
+    ersten Zeile, Überschrift, relative Verweise über Ordnergrenzen. Ein Bestand aus dem
+    Netz wäre hier fehl am Platz — geprüft wird der Kontrakt, nicht GitHub.
+    """
+
+    @pytest.fixture
+    def adapter(self, tmp_path: Any) -> SourceAdapter:
+        self.wurzel = tmp_path / "docs"
+        (self.wurzel / "10-concepts").mkdir(parents=True)
+        (self.wurzel / "30-development").mkdir(parents=True)
+        _schreiben(
+            self.wurzel / "10-concepts" / "account-model-8ed4a70.md",
+            "8ed4a705efa0431b910056c0acdbf377",
+            "Account Model",
+            "Ein Text mit Verweis auf [Regionen](regions-2f3b1c4.md) und quer auf "
+            "[ABAP](../30-development/abap-development-fa5af4e.md).",
+        )
+        _schreiben(
+            self.wurzel / "10-concepts" / "regions-2f3b1c4.md",
+            "2f3b1c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+            "Regions",
+            "Ein Text ohne Verweise.",
+        )
+        _schreiben(
+            self.wurzel / "30-development" / "abap-development-fa5af4e.md",
+            "fa5af4ecdf90496b8eec54fe0e22150c",
+            "ABAP Development",
+            "Noch ein Text.",
+        )
+        gebaut = SapDocsAdapter()
+        gebaut.configure(_sapdocs_quelle(self.wurzel))
+        return gebaut
+
+    def aendern(self, adapter: SourceAdapter) -> str | None:
+        """Eine Datei anfassen — für eine Quelle im Dateisystem ist das ihre Änderung."""
+        datei = self.wurzel / "10-concepts" / "regions-2f3b1c4.md"
+        datei.touch()
+        adapter.configure(_sapdocs_quelle(self.wurzel))
+        return "2f3b1c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+
+
+def _schreiben(pfad: Any, kennung: str, titel: str, text: str) -> None:
+    """Legt eine Datei im echten SAP-docs-Format an."""
+    pfad.write_text(f"<!-- loio{kennung} -->\n\n# {titel}\n\n\n\n{text}\n", encoding="utf-8")
+
+
+def _sapdocs_quelle(wurzel: Any) -> Any:
+    """Eine SAP-docs-Quelle auf das angegebene Verzeichnis."""
+    return quellen.quelle(
+        "sap-btp-doku",
+        adapter="sap-docs",
+        id_prefix="confluence",
+        default_type="Confluence Page",
+        base_url="https://github.com/SAP-docs/btp-cloud-platform/blob/main",
+        selection={"directory": str(wurzel)},
+    )
 
 
 class TestDummyAdapter(AdapterContractTests):

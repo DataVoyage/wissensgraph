@@ -34,6 +34,7 @@ from wissensgraph.config.sources import SourceConfig, SourcesConfig
 from wissensgraph.infrastructure.adapters.confluence import ConfluenceAdapter
 from wissensgraph.infrastructure.adapters.fixture import FixtureAdapter
 from wissensgraph.infrastructure.adapters.jira import JiraAdapter
+from wissensgraph.infrastructure.adapters.sap_docs import SapDocsAdapter
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.sources import HealthState, HealthStatus, SourceAdapter
 
@@ -48,6 +49,7 @@ BUILTIN_ADAPTERS: dict[str, AdapterFactory] = {
     defaults.ADAPTER_CONFLUENCE: ConfluenceAdapter,
     defaults.ADAPTER_JIRA: JiraAdapter,
     defaults.ADAPTER_FIXTURE: FixtureAdapter,
+    defaults.ADAPTER_SAP_DOCS: SapDocsAdapter,
 }
 
 

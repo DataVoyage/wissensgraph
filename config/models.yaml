@@ -18,7 +18,13 @@ providers:
     # Wie viele Aufrufe gleichzeitig hinausgehen. 1 heißt nacheinander. Der Hebel gegen lange
     # Läufe: Was dabei wartet, ist das Netz, nicht der Rechner. Die Obergrenze ist das Ratenlimit
     # des Anbieters — wer sie überschreitet, tauscht Wartezeit gegen 429er und Wiederholungen.
-    max_concurrency: ${WG_PROVIDER_GEMINI__MAX_CONCURRENCY:-1}
+    #
+    # Die Vorgabe ist 4 und war einmal 1. Der Anlass ist gemessen: Eine Kantenerkennung über
+    # 3.688 Paare brauchte nacheinander knapp fünfzig Minuten und wartete dabei achtundneunzig
+    # Prozent der Zeit auf Antworten. Vier ist bewusst zurückhaltend — es liegt weit unter dem
+    # Ratenlimit jedes Gemini-Kontingents und lässt Luft für die anderen Läufe, die parallel
+    # dasselbe Kontingent benutzen.
+    max_concurrency: ${WG_PROVIDER_GEMINI__MAX_CONCURRENCY:-4}
 
   # Derselbe Modellhersteller über Vertex AI — der Anbieter des Betriebs. Der Umstieg ist genau
   # dieser Block plus ein geänderter 'provider:'-Eintrag weiter unten; die Modellnamen bleiben,

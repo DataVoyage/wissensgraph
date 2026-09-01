@@ -1830,6 +1830,106 @@ Graphen greift, und dass auch die kräftigste Kantenart schlank bleibt. Der ält
 Kantenstärke prüfte gegen einen festen Wert und wurde auf das Verhältnis umgestellt: `member`
 ist kräftiger als semantisch — das ist die Aussage, die absolute Stärke ist Gestaltung.
 
+### Nachtrag: Die Kantenerkennung fragt jetzt nebenläufig
+
+Der erste Lauf gegen echte Daten machte einen Leistungsmangel sichtbar, den die Testkorpora nie
+gezeigt hatten: **3.688 Paare bei 824 ms Antwortzeit ergaben 1,26 Anfragen je Sekunde und knapp
+fünfzig Minuten Laufzeit.** Der Prozess wartete dabei achtundneunzig Prozent der Zeit auf das
+Netz — `RelationService` stellte seine Modellfragen in einer schlichten `for`-Schleife, eine
+nach der anderen.
+
+Das Muster für die Abhilfe stand bereits im Haus: Die Embeddings im `ModelRouterService` laufen
+seit jeher nebenläufig, mit `max_concurrency` des Anbieters als Maß, Threads statt asyncio (der
+ganze Weg darunter ist synchron) und keinem Pool bei `1`. Die Kantenerkennung benutzt jetzt
+dasselbe Muster, statt ein zweites zu erfinden.
+
+Getrennt wird dabei sauber: **Die Fragen laufen gleichzeitig, alles Zustandsändernde der Reihe
+nach.** `_eine_frage` liest nur und ruft das Modell; `_verbuchen` zählt, schreibt Kanten und
+führt den Bericht. Ein Bericht, der aus mehreren Threads hochgezählt wird, wäre ein Wettlauf um
+dieselben Zähler — und der teure Teil ist ohnehin das Warten, nicht das Verbuchen. Der
+Budgetwächter im Router hat seine Sperre schon, weil die Embeddings ihn längst nebenläufig
+benutzen.
+
+Zwei Nebenwirkungen, beide erwünscht: Die Konzepte eines Blocks werden **in einem Zug** geladen
+statt zwei je Paar — vorher waren das bei tausenden Paaren ebenso viele Roundtrips für Daten,
+die sich innerhalb eines Clusters ständig wiederholen. Und `check_pairs`, der Einstieg der
+Waisen-Anbindung (§15.3), benutzt denselben Weg und wird damit ohne eigenes Zutun schneller.
+
+Die Vorgabe `max_concurrency` steht jetzt auf **4** statt auf 1. Sie ist bewusst zurückhaltend:
+weit unter dem Ratenlimit jedes Gemini-Kontingents, mit Luft für die anderen Läufe, die
+dasselbe Kontingent benutzen. Wer nichts konfiguriert, bekommt trotzdem den vierfachen Durchsatz.
+
+Ein Test weist die Nebenläufigkeit **gemessen** nach und nicht nur konfiguriert: Er zählt, wie
+viele Antworten sich zeitlich überschneiden. Ohne diesen Nachweis wäre die Zusicherung eine
+Behauptung über eine Einstellung.
+
+**Nachgezogen: die Waisen-Anbindung fragt an *beiden* Stellen nebenläufig.** Der erste Umbau
+hatte nur die halbe Wirkung, und das fiel erst auf Nachfrage auf: §15.3 stellt zwei Arten von
+Modellfragen. Aufruf B (die Paarprüfung) geht über `check_pairs` und war damit sofort
+mitparallelisiert — Aufruf A dagegen, der Cluster-Vorschlag je losem Knoten, lief weiter in
+einer eigenen sequenziellen Schleife. Bei über tausend Waisen wäre das allein eine
+Viertelstunde Wartezeit gewesen, bevor der parallelisierte Teil überhaupt beginnt.
+
+Beim Nachziehen ist das Muster in ein gemeinsames Modul gewandert
+(`services/nebenlaeufig.py`), statt ein zweites Mal geschrieben zu werden: `bloecke()` teilt
+die Arbeit, `parallel()` führt sie aus, und die Einteilung „gefragt wird nebenläufig, verbucht
+wird der Reihe nach" steht dort einmal begründet. Der Router beantwortet die Frage nach dem
+Maß jetzt **aufgabenbezogen** (`concurrency_for(task)`) statt anbieterbezogen — ein Dienst
+kennt seine Aufgabe, welcher Anbieter sie bedient, entscheidet das Routing (§11.2).
+
+**Gemessen am echten Lauf**, gleicher Bestand, gleiche Anbieter:
+
+| | sequenziell | nebenläufig (`max_concurrency: 4`) |
+|---|---|---|
+| Durchsatz | 1,26 Anfragen/s | **5,99 Anfragen/s** |
+| Latenz je Anfrage | 824 ms | 771 ms |
+
+Faktor 4,75, und die Latenz blieb gleich — der Gewinn kommt wirklich aus der Nebenläufigkeit
+und nicht aus schnelleren Antworten. Zwei Tests weisen es je Aufruf nach, indem sie überlappende
+Antworten zählen; eine Konfigurationsprüfung allein wäre keine Zusicherung.
+
+**Was bewusst offen bleibt:** `relations --dry-run` stellt weiterhin alle Modellfragen und
+kostet damit so viel wie der Ernstfall — für „was entstünde?" ist das richtig, für die Frage
+„wie viele Paare sind das, was kostet mich das?" fehlt eine billige Vorschau, die in Sekunden
+antwortet.
+
+### Nachtrag: Der SAP-docs-Adapter und der erste Lauf gegen echte Texte
+
+Der Adapter (`infrastructure/adapters/sap_docs.py`) liest ein ausgechecktes SAP-docs-Repository
+und liefert dessen Markdown-Dokumente als Quelldokumente. Er ist eine reguläre Quelle nach §8.4
+neben Confluence und Jira, besteht dieselbe Contract-Suite (§22.3) und hat siebzehn eigene
+Tests für das, was nur ihn betrifft.
+
+**Die Doku wird wie Confluence behandelt — als Konfiguration, nicht als Code.** In
+`sources.yaml` steht `default_type: Confluence Page`; damit sind diese Dokumente für den Kern
+gewöhnliche, quellgespiegelte Confluence-Seiten mit gesperrten Inhaltsfeldern (§17.3), im
+selben Scope wie der echte Bestand. Keine Zeile Fachlogik weiß davon — genau das prüft
+Leitprinzip 12.
+
+Das ID-Präfix ist trotzdem ein eigenes (`sapdoc`), und der erste Versuch mit `confluence`
+scheiterte zu Recht am Start: Zwei Quellen mit einem Präfix teilen einen Nummernkreis, und die
+Kennungen der SAP-Doku sind Hashes, die von Confluence Seitennummern. Der Typ sagt, *was* ein
+Dokument ist; das Präfix, *woher* seine ID stammt (§7.5).
+
+Drei Entscheidungen im Adapter, jede mit Grund:
+
+* **Ein Verzeichnis statt eines Netzabrufs.** Das Beschaffen ist ein `git clone` und damit ein
+  Betriebsschritt. Das hält den Adapter offline testbar und passt zu abgeschlossenen
+  Umgebungen (§4.7).
+* **Die stabile SAP-Kennung aus der ersten Zeile** (`<!-- loio… -->`) wird zur externen ID —
+  sie überlebt das Umbenennen einer Datei, der Dateiname nicht (§22.3). Fehlt sie, ist der
+  Pfad der Rückfall: eine schwächere ID ist besser als ein ausgelassenes Dokument.
+* **Ein Zwischenindex nur aus Pfad und Kennung**, damit relative Verweise
+  (`](../30-development/x.md)`) in Kanten übersetzt werden können. Die Texte selbst bleiben
+  ungelesen, bis der Generator sie ausgibt (§8.2 Regel 1).
+
+**Der erste Lauf brachte einen Befund, den nur echte Daten liefern.** Der Trockenlauf meldete
+4.918 Kanten — davon **2.069 aus einer einzigen Datei**: dem generierten `index.md`, das auf
+jedes andere Dokument verweist. Eine solche Nabe verbindet alles mit allem und macht jede
+Aussage über Nähe wertlos; sie beschreibt die Navigation des Handbuchs, nicht seinen Inhalt.
+Der Adapter kennt deshalb `selection.exclude`, und die Quelle schließt `index.md` aus. Danach:
+2.069 Dokumente, 2.849 Kanten — 42 % der ursprünglichen Verweise waren reine Navigation.
+
 ### Nachtrag: Eine Quelle für Tests mit echten Daten — geprüft, nicht vermutet
 
 Für Tests der Fachkonzepte an echten statt synthetischen Daten wurde eine öffentliche Quelle

@@ -75,6 +75,33 @@ edge_kinds:
 
 clustering:
   neighbors_k: 8
+  # Ab welcher Ähnlichkeit zwei Konzepte im k-NN-Graphen überhaupt verbunden werden.
+  #
+  # Der Wert gehört zum *Bestand* und nicht zum Programm — an echten Daten teuer gelernt: Die
+  # frühere Vorgabe 0.55 filterte in einem thematisch homogenen Bestand (2.069 Seiten
+  # SAP-BTP-Dokumentation) gar nichts. Sämtliche k-NN-Kanten lagen darüber, der Median der
+  # nächsten Nachbarn bei 0.87. Der Graph verschmolz zu *einer* Komponente aus allen 2.069
+  # Dokumenten, und die Cluster entstanden anschließend nur noch durch den Notbehelf, der zu
+  # große Komponenten rekursiv zerteilt. Dass dabei brauchbare Themen herauskamen, spricht für
+  # jenen Mechanismus — entworfen ist er dafür nicht.
+  #
+  # 0.80 ist gemessen und nicht geraten. Verglichen wurden echte Läufe über denselben Bestand,
+  # geprüft an den Querverweisen, die die Autoren selbst gesetzt haben — das Embedding sieht
+  # nur Titel und Beschreibung, nie die Links:
+  #
+  #   Schwelle | Abdeckung | Verweise im selben Cluster | ggü. Zufall
+  #   ---------|-----------|----------------------------|------------
+  #   0.55     |   36,2 %  |          54,4 %            |    63x
+  #   0.70     |   33,9 %  |          60,6 %            |    68x
+  #   0.80     |   39,1 %  |          55,4 %            |    67x
+  #
+  # Ein heterogener Bestand — Confluence quer über mehrere Fachbereiche — braucht wieder einen
+  # niedrigeren Wert. Die Automatisierungs-Ansicht (§17.2, Ansicht 7) ist genau dafür da:
+  # Parameter setzen, Probelauf, vergleichen.
+  min_similarity: 0.80
+  # Bewusst 3 und nicht 2: Mit 2 stieg die Abdeckung auf 55,3 %, die Verweistreue fiel aber auf
+  # 37,8 % — ein Paar ist kein Thema, und ein Cluster aus zweien sagt weniger als die Kante
+  # zwischen ihnen.
   min_cluster_size: 3
   max_cluster_size: 25
   stability_runs: 2
@@ -84,11 +111,37 @@ clustering:
 orphans:
   loose_threshold: 1
   proximity_top_n: 30
-  proximity_auto_commit: 0.85
-  proximity_candidate_band: 0.60
+  # Die beiden Grenzen der Nähe-Stufe (§15.2b). Darüber wird ohne Rückfrage geschrieben,
+  # dazwischen entscheidet das Modell, darunter wird verworfen.
+  #
+  # Beide Werte sind an echten Daten neu gesetzt, aus demselben Grund wie beim Clustering: Die
+  # alten (0.85 / 0.60) stammen aus den Testkorpora und passten nicht zu einem thematisch
+  # homogenen Bestand. Gemessen an 2.269 Konzepten mit je 30 Nachbarn liegt der Median einer
+  # Nachbarschaft bei 0.791, das 90. Perzentil bei 0.857:
+  #
+  #   Band  | auto | zum Modell | automatisch geschrieben
+  #   ------|------|------------|------------------------
+  #   0.60  | 0.85 |     59.946 |         8.117
+  #   0.85  | 0.93 |      7.069 |         1.048
+  #
+  # Das alte Band ließ 88 % aller Nachbarpaare ans Modell — es filterte nicht, es reichte durch;
+  # ein Lauf brauchte damit fast eine halbe Stunde. Das neue beginnt beim 90. Perzentil: Nur was
+  # klar überdurchschnittlich ähnlich ist, ist überhaupt eine Frage wert.
+  #
+  # Die obere Grenze steigt mit, und das ist die wichtigere Änderung: Bei 0.85 wurden 8.117 Paare
+  # *ohne jede Prüfung* verbunden — in einem Bestand, in dem 12 % aller Nachbarschaften diesen
+  # Wert erreichen, ist das keine Auszeichnung mehr. 0.93 trifft die eindeutigsten anderthalb
+  # Prozent; alles andere geht den Weg über eine Entscheidung.
+  proximity_auto_commit: 0.93
+  proximity_candidate_band: 0.85
   use_llm: true
   cluster_suggestion_limit: 2
   cluster_preview_members: 15
+  # Wie viele Cluster Aufruf A überhaupt zu sehen bekommt, vorausgewählt über die Nähe zum
+  # Zentroid (§15.3). Ohne diese Grenze ging die vollständige Übersicht in jede Frage: bei 188
+  # Clustern gemessene 18.727 Token je Aufruf — fünfzigmal so viel wie eine Beziehungsfrage,
+  # und das je losem Knoten erneut. Die Kosten wuchsen mit dem Produkt aus Waisen und Clustern.
+  cluster_candidate_top_n: 20
   min_confidence: 0.60
 
 traversal:

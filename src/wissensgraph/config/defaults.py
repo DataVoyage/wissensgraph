@@ -176,6 +176,9 @@ ADAPTER_ENTRY_POINT_GROUP: Final = "wissensgraph.adapters"
 ADAPTER_CONFLUENCE: Final = "confluence"
 ADAPTER_JIRA: Final = "jira"
 ADAPTER_FIXTURE: Final = "fixture-source"
+#: Die von SAP auf GitHub veröffentlichte Dokumentation (CC-BY-4.0) als Quelle — der Weg, die
+#: Fachkonzepte an echten Texten statt an synthetischen Beständen zu prüfen.
+ADAPTER_SAP_DOCS: Final = "sap-docs"
 
 #: Trennzeichen zwischen Modul und Klasse in ``class: "paket.modul:Klasse"`` (§8.3).
 ADAPTER_CLASS_SEPARATOR: Final = ":"
@@ -516,6 +519,11 @@ ORPHANS_PROXIMITY_CANDIDATE_BAND: Final = 0.60
 ORPHANS_USE_LLM: Final = True
 ORPHANS_CLUSTER_SUGGESTION_LIMIT: Final = 2
 ORPHANS_CLUSTER_PREVIEW_MEMBERS: Final = 15
+#: Wie viele Cluster Aufruf A zu sehen bekommt (§15.3). Gemessen an einem echten Bestand: Ohne
+#: Grenze gingen bei 188 Clustern **18.727 Token je Frage** hinaus — fünfzigmal so viel wie eine
+#: Beziehungsfrage —, und zwar für jeden losen Knoten erneut. Die Vorauswahl über die Ähnlichkeit
+#: zum Zentroid hält den Prompt konstant, egal wie groß der Bestand wird.
+ORPHANS_CLUSTER_CANDIDATE_TOP_N: Final = 20
 ORPHANS_MIN_CONFIDENCE: Final = 0.60
 
 # ---------------------------------------------------------------------------

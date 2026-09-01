@@ -18,7 +18,15 @@ from typing import Any
 import pytest
 import yaml
 
-from support.semantik import ISOLIERT, Umgebung, baue, befuellen, konzept, korpus
+from support.semantik import (
+    ISOLIERT,
+    Umgebung,
+    baue,
+    befuellen,
+    konzept,
+    korpus,
+    models_config,
+)
 from wissensgraph.config import defaults
 from wissensgraph.config.errors import ConfigValidationError
 from wissensgraph.config.patterns import load_patterns
@@ -240,6 +248,114 @@ class TestStufeEins:
         assert bericht.proximity_candidates == 0
 
 
+class TestVorauswahl:
+    """Aufruf A sieht nur die nächstliegenden Cluster, nicht alle (§15.3).
+
+    Der Anlass ist gemessen: Ohne Vorauswahl gingen bei 188 Clustern 18.727 Token in *jede*
+    Frage — fünfzigmal so viel wie eine Beziehungsfrage, und das je losem Knoten erneut.
+    """
+
+    def test_der_prompt_zeigt_hoechstens_so_viele_cluster_wie_erlaubt(
+        self, semantik_settings: Settings
+    ) -> None:
+        umgebung = vernetzbar(semantik_settings, chat=skript())
+        # Mehr Cluster als die Grenze, damit die Vorauswahl überhaupt greifen kann.
+        befuellen(
+            umgebung,
+            [
+                konzept(
+                    f"cluster:extra-{n}",
+                    title=f"Thema {n}",
+                    description=f"Sammelt alles rund um Thema {n}.",
+                    concept_type=defaults.CONCEPT_TYPE_CLUSTER,
+                )
+                for n in range(8)
+            ],
+        )
+        umgebung.embeddings.run(scope="engineering")
+
+        umgebung.orphans.run(
+            OrphanRequest(scope="engineering", use_llm=True, cluster_candidate_top_n=2)
+        )
+
+        gezeigt = [
+            len(json.loads(aufruf.user)["clusters"])
+            for aufruf in umgebung.clients.chat_client.calls
+            if "Themengruppe zu" in (aufruf.system or "")
+        ]
+        assert gezeigt, "Aufruf A hat gar nicht stattgefunden."
+        assert max(gezeigt) <= 2
+
+    def test_ohne_grenzueberschreitung_bleibt_die_uebersicht_vollstaendig(
+        self, semantik_settings: Settings
+    ) -> None:
+        """Ein kleiner Bestand braucht keine Vorauswahl — und bekommt keine."""
+        umgebung = vernetzbar(semantik_settings, chat=skript())
+
+        umgebung.orphans.run(
+            OrphanRequest(scope="engineering", use_llm=True, cluster_candidate_top_n=50)
+        )
+
+        gezeigt = [
+            len(json.loads(aufruf.user)["clusters"])
+            for aufruf in umgebung.clients.chat_client.calls
+            if "Themengruppe zu" in (aufruf.system or "")
+        ]
+        cluster = len(umgebung.cluster_ids())
+        assert gezeigt and max(gezeigt) == cluster
+
+
+class TestNebenlaeufigkeit:
+    """Auch Aufruf A fragt nebenläufig (§15.3).
+
+    Die Paarprüfung (Aufruf B) lief schon über ``check_pairs`` nebenläufig; der Cluster-Vorschlag
+    davor tat es nicht — und der ist der teurere Teil: je losem Knoten eine Frage, bei über
+    tausend Waisen eine Frage nach der anderen.
+    """
+
+    def test_die_zuordnungsfragen_laufen_gleichzeitig(self, semantik_settings: Settings) -> None:
+        import threading
+        import time
+
+        offen = 0
+        hoechststand = 0
+        sperre = threading.Lock()
+        vorlage = skript()
+
+        def langsam(prompt: PromptSpec) -> str:
+            nonlocal offen, hoechststand
+            if "Themengruppe zu" not in (prompt.system or ""):
+                return vorlage(prompt)
+            with sperre:
+                offen += 1
+                hoechststand = max(hoechststand, offen)
+            time.sleep(0.05)
+            with sperre:
+                offen -= 1
+            return vorlage(prompt)
+
+        umgebung = vernetzbar(
+            semantik_settings, chat=langsam, models=models_config(max_concurrency=4)
+        )
+        # Mehrere lose Knoten, damit überhaupt mehrere Fragen entstehen können.
+        befuellen(
+            umgebung,
+            [
+                konzept(
+                    f"confluence:6{n:02d}",
+                    title=f"Alleinstehend {n}",
+                    description=f"Text {n}.",
+                )
+                for n in range(6)
+            ],
+        )
+        umgebung.embeddings.run(scope="engineering")
+
+        umgebung.orphans.run(OrphanRequest(scope="engineering", use_llm=True))
+
+        assert hoechststand > 1, "Die Zuordnungsfragen liefen nacheinander statt gleichzeitig."
+
+
 class TestStufeZwei:
     def test_eine_modellkante_ueber_der_schwelle_entsteht(
         self, semantik_settings: Settings
@@ -282,6 +398,29 @@ class TestStufeZwei:
         assert cluster.generated_by is not None
         assert cluster.verified_by is None
         assert umgebung.mitglieder(cluster.id)
+
+    def test_ein_zweiter_lauf_legt_dieselbe_gruppe_nicht_noch_einmal_an(
+        self, semantik_settings: Settings
+    ) -> None:
+        """Der Lauf muss ohne neue Inhalte folgenlos bleiben.
+
+        Er war es nicht, und an echten Daten fiel es auf: 218 Cluster, ein Lauf, danach 222 — und
+        so bei jedem weiteren. Die Ursache ist §7.7: Ein Knoten mit nur einer ``member``-Kante hat
+        weiterhin ``semantic_degree`` null und steht im nächsten Lauf wieder auf der Waisenliste.
+        Das Modell bekam dieselbe Frage, gab dieselbe Antwort, und der Dienst legte dieselbe
+        Gruppe erneut an.
+        """
+        umgebung = vernetzbar(
+            semantik_settings,
+            chat=skript(neues_cluster={"title": "Haustechnik", "description": "Geräte."}),
+        )
+
+        umgebung.orphans.run(OrphanRequest(scope="engineering", use_llm=True))
+        nach_erstem = set(umgebung.cluster_ids())
+        zweiter = umgebung.orphans.run(OrphanRequest(scope="engineering", use_llm=True))
+
+        assert zweiter.clusters_created == 0
+        assert set(umgebung.cluster_ids()) == nach_erstem
 
     def test_ein_leeres_ergebnis_ohne_vorschlag_ist_gueltig(
         self, semantik_settings: Settings

@@ -315,10 +315,14 @@ class TestLoseKnoten:
         with uow("shared") as einheit:
             lose = {item.id for item in einheit.concepts.loose(threshold=1)}
 
-        # confluence:1 hat eine 'references'-Kante und ist damit nicht mehr lose;
-        # das Cluster selbst hat nur eine 'member'-Kante und bleibt es.
+        # confluence:1 hat eine 'references'-Kante und ist damit nicht mehr lose.
         assert "confluence:1" not in lose
-        assert {"cluster:1"} <= lose
+        # Das Cluster hat ebenfalls nur eine 'member'-Kante — und steht trotzdem nicht in der
+        # Liste. Diese Zeile stand einmal umgekehrt hier, und der Fehler zeigte sich erst an
+        # echten Daten: Ein 'link-orphans'-Lauf meldete 34 lose Knoten vorher und 57 nachher,
+        # weil er 23 Cluster angelegt hatte. Ein Cluster besteht aus 'member'-Kanten; zählte es
+        # als lose, machte jede angebundene Gruppe die Kennzahl schlechter (Migration 0004).
+        assert "cluster:1" not in lose
 
     def test_eine_kante_hebt_einen_knoten_aus_der_sicht(self, uow: UnitOfWorkFactory) -> None:
         """Das Abbruchkriterium aus §15: Mit jedem Lauf schrumpft die Menge."""

@@ -67,7 +67,7 @@ Was das System kann, in einer Übersicht — die Einzelheiten in den genannten K
 
 | Bereich | Umfang | Wo |
 |---|---|---|
-| **Quellen anbinden** | Confluence und Jira über eigene Adapter, dazu ein Mock-Server, der beide nachspielt. Inkrementell und cursor-basiert; Rate-Limits und Paginierung inbegriffen. Gespiegelte Inhalte bleiben schreibgeschützt. | 6.1, 15 |
+| **Quellen anbinden** | Confluence und Jira über eigene Adapter, dazu ein Mock-Server, der beide nachspielt, und die SAP-BTP-Dokumentation als Quelle für Tests mit echten Texten. Inkrementell und cursor-basiert; Rate-Limits und Paginierung inbegriffen. Gespiegelte Inhalte bleiben schreibgeschützt. | 6.1, 15, 16 |
 | **Wissen aufbereiten** | Embeddings je Konzept, thematische Cluster mit erzeugten Titeln, semantische Kanten zwischen Konzepten, Vernetzung loser Knoten. Jeder Schritt ein eigener Lauf, jeder Lauf abbrechbar und nachvollziehbar. | 6 |
 | **Graph abfragen** | Traversierung über mehrere Hops und Store-Grenzen hinweg, Kernspace-Ranking aus Nähe, Dichte und Aktualität, zweistufige Suche (erst Themen, dann Dokumente) mit Rückfall auf Volltext, gefilterte Kartenansicht über den Gesamtbestand. | 7.1, 8 |
 | **Kuratieren** | Modellvorschläge bestätigen oder verwerfen, Cluster anlegen, umbenennen, verschmelzen, aufteilen, Mitglieder verschieben, Status und Tags setzen. Jede Änderung im Journal und rücknehmbar. | 7 |

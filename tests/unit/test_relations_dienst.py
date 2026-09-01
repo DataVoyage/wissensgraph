@@ -283,6 +283,75 @@ class TestTrockenlauf:
         assert umgebung.kanten(kind="depends_on") == []
 
 
+class TestNebenlaeufigkeit:
+    """Die Modellfragen laufen gleichzeitig, das Verbuchen der Reihe nach (§14.2).
+
+    Der Anlass ist gemessen: 3.688 Paare bei 824 ms Antwortzeit ergaben sequenziell knapp
+    fünfzig Minuten, in denen der Prozess zu achtundneunzig Prozent auf das Netz wartete.
+    """
+
+    def test_die_fragen_laufen_wirklich_gleichzeitig(self, semantik_settings: Settings) -> None:
+        """Ohne diesen Nachweis wäre die Nebenläufigkeit nur behauptet.
+
+        Jede Antwort wartet kurz. Sequenziell summieren sich die Wartezeiten, gleichzeitig
+        überlappen sie — gezählt wird deshalb, wie viele Aufrufe sich zeitlich überschneiden.
+        """
+        import threading
+        import time
+
+        gleichzeitig = 0
+        hoechststand = 0
+        sperre = threading.Lock()
+
+        def langsam(prompt: PromptSpec) -> str:
+            nonlocal gleichzeitig, hoechststand
+            system = prompt.system or ""
+            if "Beziehung" not in system:
+                return antwortet(None)(prompt)
+            with sperre:
+                gleichzeitig += 1
+                hoechststand = max(hoechststand, gleichzeitig)
+            time.sleep(0.05)
+            with sperre:
+                gleichzeitig -= 1
+            return json.dumps(
+                {
+                    "relationship": None,
+                    "direction": "a_to_b",
+                    "confidence": 0.1,
+                    "reasoning": "Aus dem Testskript.",
+                }
+            )
+
+        umgebung = geclustert(
+            semantik_settings,
+            chat=langsam,
+            models=models_config(max_concurrency=4),
+        )
+
+        umgebung.relations.run(scope="engineering")
+
+        assert hoechststand > 1, "Die Fragen liefen nacheinander statt gleichzeitig."
+
+    def test_ohne_konfiguration_bleibt_es_beim_alten_ablauf(
+        self, semantik_settings: Settings
+    ) -> None:
+        """`max_concurrency: 1` ist die Vorgabe — wer nichts einstellt, ändert nichts."""
+        umgebung = geclustert(semantik_settings, chat=antwortet(None))
+
+        assert umgebung.relations._gleichzeitig() == 1
+
+    def test_das_mass_kommt_aus_der_anbieterkonfiguration(
+        self, semantik_settings: Settings
+    ) -> None:
+        """Kein Literal im Dienst: Das Rate-Limit ist eine Eigenschaft des Anbieters (§6.1)."""
+        umgebung = geclustert(
+            semantik_settings, chat=antwortet(None), models=models_config(max_concurrency=6)
+        )
+
+        assert umgebung.relations._gleichzeitig() == 6
+
+
 class TestGrenzen:
     def test_ein_erschoepftes_budget_endet_mit_teilergebnis(
         self, minimal_config_dict: dict[str, Any]

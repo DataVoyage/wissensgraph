@@ -82,6 +82,54 @@ sources:
       cron: 0 */6 * * *
       enabled: false
 
+  # Echte Texte für die Abnahme der Fachkonzepte: die von SAP auf GitHub veröffentlichte
+  # BTP-Dokumentation (CC-BY-4.0, rund 2.070 Markdown-Dokumente). Sie beantwortet, was ein
+  # synthetischer Bestand nicht kann — ob Clustering brauchbare Themen findet, ob die
+  # Betitelung trifft, ob die Relationserkennung Sinnvolles vorschlägt.
+  #
+  # BEREITSTELLEN (einmalig, ein Betriebsschritt und kein Codepfad):
+  #
+  #   git clone --depth 1 --filter=blob:none --sparse \
+  #       https://github.com/SAP-docs/btp-cloud-platform.git .testdaten/btp-cloud-platform
+  #   cd .testdaten/btp-cloud-platform && git sparse-checkout set docs
+  #
+  # Fehlt das Verzeichnis, meldet sich die Quelle als 'unhealthy' und hält nichts auf (§8.3).
+  #
+  # 'default_type: Confluence Page' ist Absicht und der ganze Trick: Für den Kern sind diese
+  # Dokumente damit gewöhnliche Confluence-Seiten — gespiegelt, mit gesperrten Inhaltsfeldern
+  # (§17.3), im selben Scope wie der echte Bestand. Der Graph behandelt sie wie Confluence,
+  # ohne dass eine einzige Zeile Fachlogik davon weiß; genau das prüft Leitprinzip 12.
+  #
+  # Das ID-Präfix ist trotzdem ein eigenes. Der Typ sagt, *was* ein Dokument ist; das Präfix
+  # sagt, *woher* seine ID stammt (§7.5). Die Kennungen der SAP-Doku sind Hashes und die von
+  # Confluence Seitennummern — ein geteiltes Präfix hieße, beide gehörten zu einem
+  # Nummernkreis, und der Start bräche zu Recht ab.
+  - name: sap-btp-doku
+    adapter: sap-docs
+    enabled: true
+    id_prefix: sapdoc
+    target:
+      store: shared
+      scope: engineering
+      default_type: Confluence Page
+    connection:
+      # Keine API — die Adresse dient nur den Links im erzeugten Text.
+      base_url: https://github.com/SAP-docs/btp-cloud-platform/blob/main
+    selection:
+      directory: ${WG_SOURCE_SAPDOCS__DIR:-/app/.testdaten/btp-cloud-platform/docs}
+      # Ohne Angabe der ganze Bestand. Eine Zahl deckelt ihn — nützlich für einen ersten Lauf,
+      # der Minuten und nicht eine Stunde dauern soll.
+      limit: ${WG_SOURCE_SAPDOCS__LIMIT:-0}
+      # Das generierte Inhaltsverzeichnis fliegt raus. Gemessen: Es verweist auf jedes andere
+      # Dokument und brachte allein 2.069 der 4.918 Kanten mit — eine Nabe, die alles mit allem
+      # verbindet und damit jede Aussage über Nähe wertlos macht. Sie beschreibt die Navigation
+      # des Handbuchs, nicht seinen Inhalt.
+      exclude:
+        - index.md
+    schedule:
+      cron: 0 4 * * *
+      enabled: false
+
 # ---------------------------------------------------------------------------
 # Echte Quellen (§24, Stufe 13)
 # ---------------------------------------------------------------------------

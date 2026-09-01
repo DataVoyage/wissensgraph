@@ -114,12 +114,20 @@ x-app-environment: &app-environment
   WG_SOURCE_CONFLUENCE__TOKEN: ${WG_SOURCE_CONFLUENCE__TOKEN:-}
   WG_SOURCE_JIRA__BASE_URL: ${WG_SOURCE_JIRA__BASE_URL:-http://mock-sources:8090/jira}
   WG_SOURCE_JIRA__TOKEN: ${WG_SOURCE_JIRA__TOKEN:-}
+  # Die SAP-Doku als Quelle für Tests mit echten Daten. Der Pfad zeigt in das gemountete
+  # Verzeichnis; die Grenze deckelt einen ersten Lauf auf eine überschaubare Menge.
+  WG_SOURCE_SAPDOCS__DIR: ${WG_SOURCE_SAPDOCS__DIR:-/app/.testdaten/btp-cloud-platform/docs}
+  WG_SOURCE_SAPDOCS__LIMIT: ${WG_SOURCE_SAPDOCS__LIMIT:-0}
 
 x-app-volumes: &app-volumes
   # Config und Secrets read-only in die Container (§5.3). Ein Prozess soll seine eigene
   # Konfiguration nicht verändern können.
   - ./config:/app/config:ro
   - ./secrets:/app/secrets:ro
+  # Ausgechecktes Quellmaterial für Tests mit echten Daten (SAP-docs, CC-BY-4.0). Read-only und
+  # git-ignoriert: Es wird beschafft, nicht versioniert. Fehlt das Verzeichnis, legt Docker es
+  # leer an und die Quelle meldet sich als 'degraded' — sie hält nichts auf (§8.3).
+  - ./.testdaten:/app/.testdaten:ro
 
 services:
   # -------------------------------------------------------------------------

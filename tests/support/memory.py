@@ -151,10 +151,16 @@ class MemoryConceptRepository:
 
         Die Sicht zählt ``member`` bewusst nicht mit. Ein Konzept, das ausschließlich in einem
         Cluster hängt, ist thematisch weiterhin unvernetzt — und genau darum geht es §15.1.
+
+        Das Cluster selbst ist davon ausgenommen (Migration 0004): Es besteht aus ``member``-Kanten
+        und hätte damit immer den Grad null — jede angebundene Gruppe hätte die Zahl der losen
+        Knoten erhöht statt gesenkt.
         """
         treffer: list[LooseConcept] = []
         for concept in self._state.concepts.values():
             if concept.status is ConceptStatus.TOMBSTONE:
+                continue
+            if concept.type == defaults.CONCEPT_TYPE_CLUSTER:
                 continue
             if scope is not None and concept.scope != scope:
                 continue

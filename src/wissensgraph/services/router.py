@@ -153,6 +153,21 @@ class ModelRouterService:
         """Alle konfigurierten Aufgaben mit ihrem primären Modell — für ``wg models describe``."""
         return tuple(self.describe(name) for name in sorted(self._models.tasks))
 
+    def concurrency_for(self, task: str) -> int:
+        """Wie viele Fragen dieser Aufgabe gleichzeitig laufen dürfen (``max_concurrency``).
+
+        Eine unbekannte Aufgabe oder ein unbekannter Anbieter ergibt ``1``: Die vorsichtige
+        Antwort ist hier die richtige — wer nebenläufig fragen will, soll das an einer
+        konfigurierten Zahl festmachen und nicht an einer Vermutung.
+        """
+        try:
+            route = self.describe(task)
+            return max(1, self._models.provider(route.provider).max_concurrency)
+        except KeyError:
+            # `UnknownTaskError` erbt von `KeyError` — eine unbekannte Aufgabe und ein
+            # unbekannter Anbieter enden beide hier, und beide Male ist 1 die richtige Antwort.
+            return 1
+
     def usage(
         self, *, store: str, run_id: UUID | None = None, limit: int = defaults.MODEL_USAGE_LIMIT
     ) -> tuple[UsageSummary, ...]:

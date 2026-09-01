@@ -173,6 +173,15 @@ class OrphansConfig(FrozenModel):
     use_llm: bool = defaults.ORPHANS_USE_LLM
     cluster_suggestion_limit: int = Field(default=defaults.ORPHANS_CLUSTER_SUGGESTION_LIMIT, ge=0)
     cluster_preview_members: int = Field(default=defaults.ORPHANS_CLUSTER_PREVIEW_MEMBERS, ge=1)
+    cluster_candidate_top_n: int = Field(
+        default=defaults.ORPHANS_CLUSTER_CANDIDATE_TOP_N,
+        ge=1,
+        description=(
+            "Wie viele Cluster Aufruf A überhaupt zu sehen bekommt — vorausgewählt über die "
+            "Ähnlichkeit zum Zentroid (§15.3). Ohne diese Grenze wächst der Prompt mit der Zahl "
+            "der Cluster und die Kosten mit ihrem Produkt aus Waisen und Clustern."
+        ),
+    )
     min_confidence: Probability = defaults.ORPHANS_MIN_CONFIDENCE
     pattern_files: tuple[str, ...] = ()
 

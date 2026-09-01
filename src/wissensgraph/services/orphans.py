@@ -30,6 +30,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -47,6 +48,7 @@ from wissensgraph.domain.policies import ProviderNotAllowedError
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import BudgetExceededError, ModelError, ModelRouter, PromptSpec
 from wissensgraph.ports.repositories import LooseConcept, UnitOfWorkFactory
+from wissensgraph.services.nebenlaeufig import BLOCK_JE_ARBEITER, bloecke, parallel
 from wissensgraph.services.relations import RelationReport, RelationService
 
 _log = get_logger(__name__)
@@ -145,6 +147,7 @@ class OrphanRequest:
     use_llm: bool | None = None
     cluster_suggestion_limit: int | None = None
     cluster_preview_members: int | None = None
+    cluster_candidate_top_n: int | None = None
     min_confidence: float | None = None
     pattern_files: tuple[str, ...] = ()
     dry_run: bool = False
@@ -184,6 +187,9 @@ class OrphanRequest:
             ),
             cluster_preview_members=_oder(
                 self.cluster_preview_members, vorgabe.cluster_preview_members
+            ),
+            cluster_candidate_top_n=_oder(
+                self.cluster_candidate_top_n, vorgabe.cluster_candidate_top_n
             ),
             min_confidence=_oder(self.min_confidence, vorgabe.min_confidence),
             pattern_files=self.pattern_files or vorgabe.pattern_files,
@@ -484,32 +490,48 @@ class OrphanService:
         )
         paare: list[tuple[str, str, float]] = []
 
-        for knoten_id in sorted(weiterhin):
-            vorschlag = self._cluster_vorschlagen(
-                knoten_id=knoten_id,
-                uebersicht=uebersicht,
-                parameter=parameter,
-                store=store,
-                run_id=run_id,
-                bericht=bericht,
+        # Aufruf A nebenläufig: je loser Knoten eine Frage, und die Fragen wissen nichts
+        # voneinander. Bei über tausend Waisen war das der längste Teil des Laufs — sequenziell
+        # eine Frage nach der anderen, jede knapp eine Sekunde Wartezeit auf das Netz. Das
+        # Auswerten bleibt der Reihe nach: Es zählt im Bericht und sammelt die Paare.
+        gleichzeitig = self._router.concurrency_for(defaults.TASK_CLUSTER_MATCHING)
+        for block in bloecke(sorted(weiterhin), gleichzeitig * BLOCK_JE_ARBEITER):
+            antworten = parallel(
+                block,
+                partial(
+                    self._eine_zuordnungsfrage,
+                    uebersicht=uebersicht,
+                    parameter=parameter,
+                    store=store,
+                    run_id=run_id,
+                ),
+                gleichzeitig=gleichzeitig,
             )
-            if vorschlag is not None:
-                paare.extend(
-                    self._vorschlag_verarbeiten(
-                        knoten_id=knoten_id,
-                        vorschlag=vorschlag,
-                        uebersicht=uebersicht,
-                        parameter=parameter,
-                        store=store,
-                        run_id=run_id,
-                        actor=actor,
-                        bericht=bericht,
-                    )
+            for knoten_id, antwort, fehler in antworten:
+                vorschlag = self._zuordnung_auswerten(
+                    knoten_id=knoten_id,
+                    antwort=antwort,
+                    fehler=fehler,
+                    parameter=parameter,
+                    bericht=bericht,
                 )
-            paare.extend(
-                (knoten_id, ziel, aehnlichkeit)
-                for ziel, aehnlichkeit in kandidaten.get(knoten_id, ())
-            )
+                if vorschlag is not None:
+                    paare.extend(
+                        self._vorschlag_verarbeiten(
+                            knoten_id=knoten_id,
+                            vorschlag=vorschlag,
+                            uebersicht=uebersicht,
+                            parameter=parameter,
+                            store=store,
+                            run_id=run_id,
+                            actor=actor,
+                            bericht=bericht,
+                        )
+                    )
+                paare.extend(
+                    (knoten_id, ziel, aehnlichkeit)
+                    for ziel, aehnlichkeit in kandidaten.get(knoten_id, ())
+                )
 
         if not paare:
             return
@@ -549,27 +571,34 @@ class OrphanService:
                 )
         return tuple(uebersicht)
 
-    def _cluster_vorschlagen(
+    def _eine_zuordnungsfrage(
         self,
-        *,
         knoten_id: str,
+        *,
         uebersicht: Sequence[Mapping[str, Any]],
         parameter: OrphanRequest,
         store: str,
         run_id: UUID | None,
-        bericht: OrphanReport,
-    ) -> ClusterSuggestion | None:
-        """Aufruf A aus §15.3 — der lose Knoten plus die Cluster-Übersicht, sonst nichts."""
+    ) -> tuple[str, Any, str | None]:
+        """Aufruf A aus §15.3 — der lose Knoten plus die *nächstliegenden* Cluster.
+
+        Der Teil, der nebenläufig laufen darf: Er liest und fragt, schreibt aber nichts — kein
+        Zähler, kein Bericht, keine Kante. Das Auswerten übernimmt :meth:`_zuordnung_auswerten`
+        der Reihe nach.
+        """
         with self._unit_of_work(store) as uow:
             concept = uow.concepts.get(knoten_id)
-        if concept is None:
-            return None
+            if concept is None:
+                return knoten_id, None, None
+            engere_wahl = self._naechste_cluster(
+                uow, knoten_id=knoten_id, uebersicht=uebersicht, parameter=parameter
+            )
 
         eingabe = {
             "concept": {"title": concept.title, "description": concept.description},
             "clusters": [
                 {key: wert for key, wert in item.items() if not key.startswith("_")}
-                for item in uebersicht
+                for item in engere_wahl
             ],
         }
         try:
@@ -583,9 +612,71 @@ class OrphanService:
                 run_id=run_id,
             )
         except (ProviderNotAllowedError, BudgetExceededError):
+            # Budget und Store-Policy brechen den ganzen Lauf ab — sie sind keine Eigenschaft
+            # dieses einen Knotens und dürfen nicht als dessen Fehler verbucht werden.
             raise
         except ModelError as exc:
-            bericht.errors = (*bericht.errors, f"{knoten_id}: {type(exc).__name__}")
+            return knoten_id, None, type(exc).__name__
+        return knoten_id, antwort, None
+
+    def _naechste_cluster(
+        self,
+        uow: Any,
+        *,
+        knoten_id: str,
+        uebersicht: Sequence[Mapping[str, Any]],
+        parameter: OrphanRequest,
+    ) -> Sequence[Mapping[str, Any]]:
+        """Die dem Knoten nächstliegenden Cluster — die Vorauswahl vor Aufruf A (§15.3).
+
+        **Warum überhaupt eine Vorauswahl.** Ohne sie ging die *vollständige* Cluster-Übersicht
+        in jede einzelne Frage: bei 188 Clustern gemessene 18.727 Token je Aufruf, fünfzigmal so
+        viel wie eine Beziehungsfrage — und das für jeden losen Knoten erneut. Die Kosten wachsen
+        dabei mit dem Produkt aus Waisen und Clustern, also quadratisch mit dem Bestand.
+
+        **Warum per Vektor und nicht per Modell.** §15 ist durchgehend "erst Code, dann Modell"
+        gebaut, und hier fehlte genau dieser Schritt: Welche Themen für ein Dokument überhaupt in
+        Frage kommen, beantwortet die Nähe zum Zentroid — die Zentroide liegen ohnehin schon da
+        (§13.2). Das Modell bekommt danach eine kurze Liste plausibler Kandidaten statt eines
+        Katalogs, in dem das Richtige zwischen 180 Unpassenden steht.
+
+        Fehlt der Vektor — ein Knoten ohne Embedding —, bleibt es bei der vollen Übersicht,
+        gedeckelt: Lieber eine teure Frage als gar keine.
+        """
+        grenze = parameter.cluster_candidate_top_n or defaults.ORPHANS_CLUSTER_CANDIDATE_TOP_N
+        if len(uebersicht) <= grenze:
+            return uebersicht
+
+        route = self._router.describe(defaults.TASK_EMBEDDING)
+        vektor = uow.embeddings.get(concept_id=knoten_id, model_key=route.model_key)
+        if vektor is None:
+            return uebersicht[:grenze]
+
+        treffer = uow.clusters.search_centroids(
+            vector=vektor, model_key=route.model_key, limit=grenze
+        )
+        rang = {hit.concept_id: platz for platz, hit in enumerate(treffer)}
+        nah = [eintrag for eintrag in uebersicht if eintrag["id"] in rang]
+        nah.sort(key=lambda eintrag: rang[eintrag["id"]])
+        # Ohne Treffer keine leere Liste: Eine Frage ohne Auswahl kann das Modell nur mit
+        # "nichts passt" beantworten, und das wäre eine Aussage über unsere Suche statt über
+        # den Knoten.
+        return nah or uebersicht[:grenze]
+
+    def _zuordnung_auswerten(
+        self,
+        *,
+        knoten_id: str,
+        antwort: Any,
+        fehler: str | None,
+        parameter: OrphanRequest,
+        bericht: OrphanReport,
+    ) -> ClusterSuggestion | None:
+        """Wertet eine Antwort aus Aufruf A aus — der Teil, der zählt und deshalb seriell läuft."""
+        if fehler is not None:
+            bericht.errors = (*bericht.errors, f"{knoten_id}: {fehler}")
+            return None
+        if antwort is None:
             return None
 
         bericht.calls += 1
@@ -636,6 +727,14 @@ class OrphanService:
             if ziel != knoten_id
         ]
 
+    def _steht_in_gruppe(self, *, knoten_id: str, store: str) -> bool:
+        """Ob der Knoten bereits Mitglied eines Clusters ist — die Kante zeigt zu ihm hin."""
+        with self._unit_of_work(store) as uow:
+            return any(
+                kante.kind == defaults.EDGE_KIND_MEMBER
+                for kante in uow.edges.list_incoming(knoten_id)
+            )
+
     def _neues_cluster(
         self,
         *,
@@ -653,7 +752,18 @@ class OrphanService:
         Zentroid und ``related``-Kanten und kann bei einer vollständigen Neu-Clusterung mit einem
         inzwischen passenderen Cluster verschmelzen. So organisiert sich die Struktur über die
         Zeit selbst, statt starr zu bleiben.
+
+        Nur für einen Knoten, der noch in keiner Gruppe steht. Die Prüfung sieht überflüssig aus —
+        wer eine Gruppe hat, ist doch versorgt — ist es aber nicht, und der Grund liegt in §7.7:
+        Der ``semantic_degree`` zählt ``member``-Kanten bewusst nicht mit, ein eingruppierter
+        Knoten ohne semantische Kante bleibt also ein loser Knoten. Ohne diese Zeile fragte jeder
+        Lauf dieselben Knoten erneut, bekäme dieselbe Antwort und legte dieselbe Gruppe noch
+        einmal an. An echten Daten nachgemessen: 218 Cluster, ein Lauf ohne neue Inhalte, danach
+        222 — und so bei jedem weiteren.
         """
+        if self._steht_in_gruppe(knoten_id=knoten_id, store=store):
+            return
+
         bericht.clusters_created += 1
         if bericht.dry_run:
             return

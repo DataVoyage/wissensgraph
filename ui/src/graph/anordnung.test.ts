@@ -126,6 +126,33 @@ describe("Abstand und Kantendichte (nachgesehen, nicht überlegt)", () => {
     expect(Number(fa2Einstellungen(PHYSIK_VORGABE, 5000).gravity)).toBeLessThan(0.03);
   });
 
+  it("spreizt dicht vernetzte Bestände stärker als dünne", () => {
+    // An echten Daten gelernt: Ein Bestand mit mittlerem Grad 7,4 ballte sich zum Klumpen,
+    // während dieselbe Einstellung bei Grad 2,5 gut aussah. In FA2 summiert sich die Anziehung
+    // über die Kanten, die Abstoßung über die Knoten — wer die Kanten verdreifacht, zieht
+    // denselben Graphen ohne Ausgleich dreifach zusammen.
+    const duenn = Number(fa2Einstellungen(PHYSIK_VORGABE, 1000, 1250).scalingRatio);
+    const dicht = Number(fa2Einstellungen(PHYSIK_VORGABE, 1000, 3700).scalingRatio);
+
+    expect(dicht).toBeGreaterThan(duenn * 2);
+  });
+
+  it("nimmt Naben nur im dichten Bestand die Anziehung", () => {
+    // In Gephi "Dissuade Hubs". An echten Daten war das der Hebel, der den Klumpen wirklich
+    // löste: Mehr Abstoßung allein spreizte nur den ganzen Ballen, die Gruppen blieben
+    // ineinander. Erst geteilt durch den Grad des Ausgangsknotens traten sie auseinander.
+    // Im dünnen Bestand ist dieselbe Einstellung schädlich — sie erzeugt dort Ballungen.
+    expect(fa2Einstellungen(PHYSIK_VORGABE, 1000, 3700).outboundAttractionDistribution).toBe(true);
+    expect(fa2Einstellungen(PHYSIK_VORGABE, 1000, 1000).outboundAttractionDistribution).toBe(false);
+  });
+
+  it("deckelt den Dichtefaktor — ein Klumpen wird nicht durch Sprengen besser", () => {
+    const extrem = Number(fa2Einstellungen(PHYSIK_VORGABE, 100, 50_000).scalingRatio);
+    const normal = Number(fa2Einstellungen(PHYSIK_VORGABE, 100, 100).scalingRatio);
+
+    expect(extrem).toBeLessThanOrEqual(normal * 6);
+  });
+
   it("lässt Knoten nur bei kleinen Graphen einander ausweichen", () => {
     // `adjustSizes` zusammen mit hoher Abstoßung planiert große Graphen zu einem gleichmäßigen
     // Teppich — jeder Knoten hält zu jedem Abstand, und die Gruppen verschwinden.

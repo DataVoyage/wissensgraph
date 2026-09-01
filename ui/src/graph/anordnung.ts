@@ -98,25 +98,47 @@ export function einschwingzeitMs(anzahl: number): number {
  * Mitte zieht und damit verdichtet) deutlich schwächer, und `outboundAttractionDistribution`
  * aus — es zieht stark verbundene Knoten zusammen und lässt genau die Ballungen entstehen, die
  * hier stören.
+ *
+ * **Die Abstoßung hängt an der Kantendichte, nicht nur an der Knotenzahl.** Das ist an echten
+ * Daten gelernt: Die Werte oben waren an einem synthetischen Bestand mit mittlerem Grad 2,5
+ * eingestellt und sahen dort gut aus. Der erste echte Bestand hatte 7,4 — und ballte sich zu
+ * einem Klumpen, in dem die Beschriftungen übereinanderlagen. Der Grund steckt in FA2 selbst:
+ * Die Anziehung summiert sich über die *Kanten*, die Abstoßung über die *Knoten*. Wer die
+ * Kanten verdreifacht, ohne die Abstoßung anzuheben, zieht denselben Graphen dreifach
+ * zusammen. Der Faktor unten gleicht das aus, damit dieselbe Einstellung für einen dünn und
+ * einen dicht vernetzten Bestand dasselbe Bild ergibt.
  */
 export function fa2Einstellungen(
   physik: PhysikWerte,
   anzahl: number,
+  kanten = 0,
 ): Record<string, number | boolean> {
   const laenge = physik.kantenlaenge / PHYSIK_VORGABE.kantenlaenge;
+  // Mittlerer Grad, gemessen am Ausschnitt. Bezugsgröße ist 2 — ein Baum, also die dünnste
+  // Vernetzung, bei der ein Graph noch zusammenhängt.
+  const grad = anzahl > 0 ? (2 * kanten) / anzahl : 0;
+  const dichte = Math.min(6, Math.max(1, grad / 2));
   return {
     barnesHutOptimize: anzahl > BARNES_HUT_AB,
-    scalingRatio: Math.max(1.5, (physik.abstossung / 1.2) * laenge * laenge),
+    scalingRatio: Math.max(1.5, (physik.abstossung / 1.2) * laenge * laenge * dichte),
     gravity: 0.003 + Math.max(0, Math.min(0.9, physik.schwerkraft)) * 0.03,
     strongGravityMode: false,
     // Größere Graphen werden stärker gedämpft, sonst zappelt das Bild statt zu konvergieren.
-    slowDown: 4 + anzahl / 400,
+    slowDown: 2 + anzahl / 800,
     // Knoten weichen einander aus, ihr Durchmesser zählt mit — aber nur bei kleinen Graphen.
     // Bei einigen tausend Knoten zusammen mit hoher Abstoßung planiert es das Bild zu einem
     // gleichmäßigen Teppich: Jeder Knoten hält zu jedem Abstand, und genau die Gruppen, um die
     // es geht, verschwinden. Nachgesehen, nicht überlegt.
     adjustSizes: anzahl <= BARNES_HUT_AB,
-    outboundAttractionDistribution: false,
+    // In Gephi heißt diese Einstellung "Dissuade Hubs", und das trifft es: Die Anziehung einer
+    // Kante wird durch den Grad ihres Ausgangsknotens geteilt. Ein Dokument, auf das fünfzig
+    // andere verweisen, zieht sie dann nicht mehr alle in seine Mitte.
+    //
+    // Sie war zunächst aus, weil sie an einem *dünnen* Bestand Ballungen erzeugte — dort ist
+    // sie schädlich. Bei dichter Vernetzung ist sie das Gegenteil: der einzige Hebel, der einen
+    // Klumpen wirklich auflöst. Deshalb hängt sie an derselben Dichte wie die Abstoßung, statt
+    // eine feste Entscheidung für alle Bestände zu sein.
+    outboundAttractionDistribution: dichte > 1.5,
     edgeWeightInfluence: 0,
   };
 }

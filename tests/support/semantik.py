@@ -38,9 +38,14 @@ DIM = 512
 JETZT = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 
 
-def models_config(*, dim: int = DIM, local: bool = False) -> ModelsConfig:
+def models_config(*, dim: int = DIM, local: bool = False, max_concurrency: int = 1) -> ModelsConfig:
     """Eine Router-Konfiguration mit einem Anbieter für alle Aufgaben."""
-    provider = {"type": "google_genai", "api_key": "test", "local": local}
+    provider = {
+        "type": "google_genai",
+        "api_key": "test",
+        "local": local,
+        "max_concurrency": max_concurrency,
+    }
 
     def route(**extra: Any) -> dict[str, Any]:
         return {"primary": {"provider": "p", "model": "m", **extra}}

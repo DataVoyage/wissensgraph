@@ -244,7 +244,7 @@ export function GraphCanvas({
     }
     simulation.current?.kill();
     const lauf = new FA2Layout(graph, {
-      settings: fa2Einstellungen(physik, graph.order),
+      settings: fa2Einstellungen(physik, graph.order, graph.size),
     });
     simulation.current = lauf;
     lauf.start();
@@ -282,7 +282,7 @@ export function GraphCanvas({
         void import("graphology-layout-forceatlas2").then((fa2) => {
           fa2.default.assign(graph, {
             iterations: 80,
-            settings: fa2Einstellungen(physik, graph.order),
+            settings: fa2Einstellungen(physik, graph.order, graph.size),
           });
         });
       }

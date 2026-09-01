@@ -23,9 +23,10 @@ Mensch.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import partial
 from itertools import combinations
 from typing import Any, Literal
 from uuid import UUID
@@ -41,8 +42,10 @@ from wissensgraph.domain.policies import ProviderNotAllowedError
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import BudgetExceededError, ModelError, ModelRouter, PromptSpec
 from wissensgraph.ports.repositories import UnitOfWork, UnitOfWorkFactory
+from wissensgraph.services.nebenlaeufig import BLOCK_JE_ARBEITER, bloecke, parallel
 
 _log = get_logger(__name__)
+
 
 #: Der Prompt aus §14.2/§14.3. Der zweite Satz ist der wichtigste der ganzen Datei.
 _BEZIEHUNG_SYSTEM = (
@@ -153,17 +156,9 @@ class RelationService:
 
         paare = self._paare(scope=scope, store=store, model_key=route.model_key, bericht=bericht)
         try:
-            for links, rechts, aehnlichkeit in paare:
-                self._paar_pruefen(
-                    links=links,
-                    rechts=rechts,
-                    similarity=aehnlichkeit,
-                    store=store,
-                    run_id=run_id,
-                    actor=actor,
-                    dry_run=dry_run,
-                    bericht=bericht,
-                )
+            self._paare_pruefen(
+                paare, store=store, run_id=run_id, actor=actor, dry_run=dry_run, bericht=bericht
+            )
         except (BudgetExceededError, ProviderNotAllowedError) as exc:
             bericht.budget_exceeded = isinstance(exc, BudgetExceededError)
             _log.warning("beziehung.abgebrochen", scope=scope, grund=str(exc))
@@ -189,17 +184,9 @@ class RelationService:
         """
         ergebnis = bericht or RelationReport(scope="", store=store)
         try:
-            for links, rechts, aehnlichkeit in paare:
-                self._paar_pruefen(
-                    links=links,
-                    rechts=rechts,
-                    similarity=aehnlichkeit,
-                    store=store,
-                    run_id=run_id,
-                    actor=actor,
-                    dry_run=dry_run,
-                    bericht=ergebnis,
-                )
+            self._paare_pruefen(
+                paare, store=store, run_id=run_id, actor=actor, dry_run=dry_run, bericht=ergebnis
+            )
         except (BudgetExceededError, ProviderNotAllowedError) as exc:
             ergebnis.budget_exceeded = isinstance(exc, BudgetExceededError)
             _log.warning("beziehung.abgebrochen", store=store, grund=str(exc))
@@ -291,46 +278,139 @@ class RelationService:
                 ergebnis.append((links, rechts, aehnlichkeit))
         return tuple(ergebnis)
 
-    # -- Einzelprüfung ----------------------------------------------------------
+    # -- Prüfung ----------------------------------------------------------------
 
-    def _paar_pruefen(
+    def _paare_pruefen(
         self,
+        paare: Sequence[tuple[str, str, float]],
         *,
-        links: str,
-        rechts: str,
-        similarity: float,
         store: str,
         run_id: UUID | None,
         actor: str,
         dry_run: bool,
         bericht: RelationReport,
     ) -> None:
-        """Ein Paar, ein Modellaufruf, höchstens eine Kante (§14.2 Schritte 3 bis 5)."""
-        with self._unit_of_work(store) as uow:
-            konzepte = {c.id: c for c in uow.concepts.get_many((links, rechts))}
-        a, b = konzepte.get(links), konzepte.get(rechts)
-        if a is None or b is None:
-            return
+        """Prüft alle Paare — die Modellfragen nebenläufig, das Verbuchen der Reihe nach.
 
+        **Warum überhaupt nebenläufig.** Gemessen an einem echten Bestand: 3.688 Paare bei
+        824 ms Antwortzeit je Frage ergaben 1,26 Anfragen je Sekunde und knapp fünfzig Minuten
+        Laufzeit — der Prozess wartete dabei achtundneunzig Prozent der Zeit auf das Netz. Die
+        Fragen sind voneinander unabhängig: jede ist eine eigene HTTP-Anfrage, und keine liest,
+        was eine andere schreibt.
+
+        **Warum trotzdem nur die Fragen.** Alles danach ist es nicht: Der Bericht zählt,
+        Kanten werden geschrieben, und beides in mehreren Threads wäre ein Wettlauf um dieselben
+        Zähler. Der teure Teil ist ohnehin das Warten — das Verbuchen kostet Mikrosekunden.
+
+        Dasselbe Muster wie bei den Embeddings (:mod:`services.router`), mit derselben
+        Begründung für Threads statt asyncio und derselben Quelle für das Maß:
+        ``max_concurrency`` des Anbieters. Bei ``1`` entsteht kein Pool und der Ablauf ist der
+        alte — wer nichts konfiguriert, bekommt das bisherige Verhalten.
+        """
+        gleichzeitig = self._gleichzeitig()
+        for block in bloecke(paare, gleichzeitig * BLOCK_JE_ARBEITER):
+            # Die Konzepte des Blocks in einem Zug: Vorher holte jedes Paar seine beiden
+            # Konzepte in einer eigenen Transaktion — bei tausenden Paaren tausende Roundtrips
+            # für Daten, die sich innerhalb eines Clusters ständig wiederholen.
+            ids = {id_ for links, rechts, _ in block for id_ in (links, rechts)}
+            with self._unit_of_work(store) as uow:
+                konzepte = {c.id: c for c in uow.concepts.get_many(tuple(sorted(ids)))}
+
+            aufgaben = [
+                (links, rechts, aehnlich)
+                for links, rechts, aehnlich in block
+                if links in konzepte and rechts in konzepte
+            ]
+            if not aufgaben:
+                continue
+
+            # Die Frage als gebundene Methode und nicht als Closure über die Schleifenvariablen:
+            # Eine Funktion, die `konzepte` aus dem umgebenden Block liest, ist an dieser Stelle
+            # zwar harmlos — sie wird innerhalb derselben Iteration vollständig eingesammelt —,
+            # aber sie wäre eine Falle für den nächsten, der die Schleife anfasst.
+            ergebnisse = parallel(
+                aufgaben,
+                partial(self._eine_frage, konzepte=konzepte, store=store, run_id=run_id),
+                gleichzeitig=gleichzeitig,
+            )
+
+            for (links, rechts, aehnlich), antwort, fehler in ergebnisse:
+                self._verbuchen(
+                    links=links,
+                    rechts=rechts,
+                    similarity=aehnlich,
+                    antwort=antwort,
+                    fehler=fehler,
+                    store=store,
+                    run_id=run_id,
+                    actor=actor,
+                    dry_run=dry_run,
+                    bericht=bericht,
+                )
+
+    def _eine_frage(
+        self,
+        auftrag: tuple[str, str, float],
+        *,
+        konzepte: Mapping[str, Concept],
+        store: str,
+        run_id: UUID | None,
+    ) -> tuple[tuple[str, str, float], object | None, str | None]:
+        """Stellt die Modellfrage zu einem Paar — der Teil, der nebenläufig laufen darf.
+
+        Er liest nur und schreibt nichts: keine Kante, kein Zähler, kein Bericht. Alles, was
+        einen Zustand ändert, passiert danach in :meth:`_verbuchen`, der Reihe nach.
+        """
+        links, rechts, _ = auftrag
         try:
             antwort = self._router.complete(
                 defaults.TASK_RELATION_EXTRACTION,
-                prompt=PromptSpec(system=_BEZIEHUNG_SYSTEM, user=_eingabe(a, b, self._settings)),
+                prompt=PromptSpec(
+                    system=_BEZIEHUNG_SYSTEM,
+                    user=_eingabe(konzepte[links], konzepte[rechts], self._settings),
+                ),
                 schema=RelationAnswer,
                 store=store,
                 run_id=run_id,
             )
         except (ProviderNotAllowedError, BudgetExceededError):
+            # Budget und Store-Policy brechen den ganzen Lauf ab — sie sind keine Eigenschaft
+            # dieses einen Paares und dürfen nicht als dessen Fehler verbucht werden.
             raise
         except ModelError as exc:
-            bericht.errors = (*bericht.errors, f"{links}|{rechts}: {type(exc).__name__}")
+            return auftrag, None, type(exc).__name__
+        return auftrag, antwort, None
+
+    def _gleichzeitig(self) -> int:
+        """Wie viele Modellfragen gleichzeitig laufen dürfen — aus der Anbieterkonfiguration."""
+        return self._router.concurrency_for(defaults.TASK_RELATION_EXTRACTION)
+
+    def _verbuchen(
+        self,
+        *,
+        links: str,
+        rechts: str,
+        similarity: float,
+        antwort: object | None,
+        fehler: str | None,
+        store: str,
+        run_id: UUID | None,
+        actor: str,
+        dry_run: bool,
+        bericht: RelationReport,
+    ) -> None:
+        """Wertet eine Antwort aus und schreibt höchstens eine Kante (§14.2 Schritte 4 und 5)."""
+        if fehler is not None:
+            bericht.errors = (*bericht.errors, f"{links}|{rechts}: {fehler}")
+            return
+        if antwort is None:  # pragma: no cover — ohne Fehler gibt es immer eine Antwort
             return
 
         bericht.calls += 1
-        if antwort.cached:
+        if getattr(antwort, "cached", False):
             bericht.cached += 1
 
-        geparst = antwort.parsed
+        geparst = getattr(antwort, "parsed", None)
         if not isinstance(geparst, RelationAnswer) or geparst.relationship is None:
             bericht.no_relation += 1
             return

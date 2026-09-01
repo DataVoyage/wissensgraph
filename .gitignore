@@ -54,3 +54,7 @@ Thumbs.db
 # COPY im Dockerfile immer existiert.
 docker/ca-certificates/*
 !docker/ca-certificates/README.md
+
+# Ausgechecktes Quellmaterial für Tests mit echten Daten (SAP-docs, CC-BY-4.0).
+# Es wird beschafft, nicht versioniert — siehe config/sources.yaml.
+.testdaten/

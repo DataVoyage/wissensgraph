@@ -385,3 +385,15 @@ class ModelRouter(Protocol):
 
     def describe(self, task: str) -> ResolvedRoute:
         """Welches Modell für diese Aufgabe greifen würde — ohne es aufzurufen."""
+
+    def concurrency_for(self, task: str) -> int:
+        """Wie viele Fragen dieser Aufgabe gleichzeitig laufen dürfen (``max_concurrency``, §11.2).
+
+        Im Kontrakt, weil ein Dienst, der seine Modellfragen nebenläufig stellt, das Maß dafür
+        nicht selbst festlegen darf: Es ist eine Eigenschaft des Anbieters — sein Rate-Limit,
+        sein Kontingent — und steht in dessen Konfiguration. Ein Dienst mit eigener Zahl wäre
+        genau das Literal, das §6.1 Regel 1 ausschließt.
+
+        Nach *Aufgabe* und nicht nach Anbieter, weil der Dienst nur seine Aufgabe kennt: Welcher
+        Anbieter sie bedient, entscheidet das Routing (§11.2) und kann sich ändern.
+        """
