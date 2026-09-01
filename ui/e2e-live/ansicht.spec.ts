@@ -30,7 +30,8 @@ test("Der laufende Stand in Bildern", async ({ page }) => {
   console.log("\n== ERKUNDEN ==");
   await page.goto("/?view=graph&store=shared");
   await expect(page.getByTestId("graph-canvas")).toBeVisible({ timeout: 60_000 });
-  await page.waitForTimeout(9000); // die Physik einschwingen lassen
+  // Die Sternenkarte rechnet die Zentren kraftbasiert; beim Vollbestand dauert das.
+  await page.waitForTimeout(20_000);
   await bild(page, "graph-karte", "Karte über den echten Bestand");
 
   await page.goto("/?view=browser&store=shared");

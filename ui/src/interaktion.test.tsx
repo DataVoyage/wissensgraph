@@ -67,7 +67,7 @@ function imRahmen(element: JSX.Element): JSX.Element {
 
 describe("Zeichenfläche (§17.2)", () => {
   it("meldet eine Auswahl nach oben — mit einem echten Klick auf den Knoten", async () => {
-    const gewaehlt: string[] = [];
+    const gewaehlt: (string | null)[] = [];
     renderMitQuery(
       imRahmen(
         <GraphCanvas
@@ -93,6 +93,74 @@ describe("Zeichenfläche (§17.2)", () => {
     fireEvent.click(ziel, { clientX: x, clientY: y });
 
     await waitFor(() => expect(gewaehlt).toEqual(["a"]));
+  });
+
+  it("lässt eine gerechnete Anordnung durch das Anfassen eines Knotens unberührt", async () => {
+    // Der Fehler, der das sichtbar machte: `downNode` warf die freie Simulation an — und die
+    // feuert schon beim Mausdruck, nicht erst beim Ziehen. Ein einzelner Klick genügte also,
+    // damit ForceAtlas2 die gerechnete Anordnung überschrieb; der Graph fiel bei jeder
+    // Berührung ein Stück weiter in sich zusammen, bis nur noch ein Ballen übrig war.
+    renderMitQuery(
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a", { gewicht: 1 }), knoten("b"), knoten("c")] as never}
+          edges={[]}
+          layout="concentric"
+          physik={PHYSIK_VORGABE}
+          onSelect={() => undefined}
+        />,
+      ),
+    );
+
+    const flaeche = screen.getByTestId("graph-canvas");
+    await waitFor(() => expect(flaeche.querySelector("canvas")).not.toBeNull());
+    await new Promise((weiter) => window.setTimeout(weiter, 200));
+
+    const bild = (): string => (flaeche.querySelector("canvas") as HTMLCanvasElement).toDataURL();
+    const vorher = bild();
+    const masse = flaeche.getBoundingClientRect();
+    const x = masse.left + masse.width / 2;
+    const y = masse.top + masse.height / 2;
+    const ziel = document.elementFromPoint(x, y) ?? flaeche;
+    fireEvent.mouseDown(ziel, { clientX: x, clientY: y, buttons: 1 });
+    fireEvent.mouseUp(ziel, { clientX: x, clientY: y });
+    // Lange genug, dass eine angeworfene Simulation das Bild sichtbar verändert hätte.
+    await new Promise((weiter) => window.setTimeout(weiter, 600));
+
+    expect(bild()).toBe(vorher);
+  });
+
+  it("hebt die Auswahl auf, wenn jemand daneben klickt", async () => {
+    // Ohne diesen Weg gab es kein Zurück: Die Auswahl blendet alles ab, was nicht
+    // Nachbarschaft ist, und wer einmal etwas angeklickt hatte, konnte nur noch zu einem
+    // anderen Knoten wechseln — nie zur ganzen Karte.
+    const gewaehlt: (string | null)[] = [];
+    renderMitQuery(
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a", { gewicht: 1 })] as never}
+          edges={[]}
+          layout="concentric"
+          physik={PHYSIK_VORGABE}
+          selected="a"
+          onSelect={(id) => gewaehlt.push(id)}
+        />,
+      ),
+    );
+
+    const flaeche = screen.getByTestId("graph-canvas");
+    await waitFor(() => expect(flaeche.querySelector("canvas")).not.toBeNull());
+    await new Promise((weiter) => window.setTimeout(weiter, 150));
+    const masse = flaeche.getBoundingClientRect();
+    // Weit weg vom einzelnen Knoten, der im konzentrischen Layout in der Mitte steht.
+    const x = masse.left + 12;
+    const y = masse.top + 12;
+    const ziel = document.elementFromPoint(x, y) ?? flaeche;
+    fireEvent.mouseDown(ziel, { clientX: x, clientY: y, buttons: 1 });
+    fireEvent.mouseUp(ziel, { clientX: x, clientY: y });
+    fireEvent.click(ziel, { clientX: x, clientY: y });
+
+    await waitFor(() => expect(gewaehlt).toEqual([null]));
   });
 
   it("lässt Kanten weg, deren Gegenstück außerhalb des Ausschnitts liegt (§17.3)", () => {
@@ -475,7 +543,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
     await userEvent.click(screen.getByRole("button", { name: "mehr laden" }));
 
     await waitFor(() =>
-      expect(api.calls.some((eintrag) => eintrag.url.includes("limit=600"))).toBe(true),
+      expect(api.calls.some((eintrag) => eintrag.url.includes("limit=10000"))).toBe(true),
     );
   });
 });

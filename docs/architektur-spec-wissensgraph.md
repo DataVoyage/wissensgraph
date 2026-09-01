@@ -1477,7 +1477,7 @@ genau einmal und wird aus allen Bereichen heraus geöffnet.
 
 **1. Graph-Explorer** (Hauptansicht)
 
-- Zwei Betriebsarten: **Karte** (gefilterte Übersicht über den Bestand via `/graph/map`, cursor-basiert nachladbar und gedeckelt) und **Traversierung** (inkrementelles Aufklappen Hop für Hop über `/graph/neighbors` von einem Startpunkt aus; kein Vorabladen des Gesamtgraphen).
+- Zwei Betriebsarten: **Karte** (Übersicht über den Bestand via `/graph/map`; ohne Filter zeigt sie den **vollständigen Bestand**, denn Struktur ist eine Eigenschaft des Ganzen — ein Ausschnitt nach ID zerreißt die Cluster-Sterne und zeigt zwangsläufig Klumpen statt Gruppen; gedeckelt wird erst oberhalb der vermessenen Engine-Grenze von 5.000 Knoten, darüber „mehr laden") und **Traversierung** (inkrementelles Aufklappen Hop für Hop über `/graph/neighbors` von einem Startpunkt aus; kein Vorabladen).
 - Startpunkt der Traversierung: Kernspace-Übersicht (Cluster des `personal`-Stores) oder ein gewählter Knoten.
 - Visuelle Kodierung: Store über Knotenform (Kreis für `shared`, Raute für `personal`), `type` über Farbe, Score bzw. Grad über Größe, Kantenart über Linienstärke (strukturell kräftig, semantisch fein), Provenienz über Linienfarbe (manuell / Code / Modell). Unbestätigtes steht voll deckend vorn, Geprüftes tritt halbtransparent zurück — die Strichelung der Cytoscape-Fassung ist mit dem Motortausch entfallen (WebGL kennt keine gestrichelten Linien; die Deckkraft trägt dieselbe Botschaft von Leitprinzip 6).
 - Filterleiste: Scope, Typ, Kantenarten, nur unbestätigte, nur lose Knoten, Tombstones ein/aus.

@@ -126,7 +126,13 @@ def graph_map(
     unverified: Annotated[bool | None, Query()] = None,
     include_tombstones: Annotated[bool, Query()] = False,
     kinds: Annotated[list[str] | None, Query()] = None,
-    limit: Annotated[int | None, Query(ge=1, le=2000)] = None,
+    # Die Obergrenze trägt den ganzen Bestand: Die Kartenansicht zeigt ohne gewähltes Cluster
+    # den vollständigen Graphen, weil erst der Vollbestand die Struktur zeigt — ein Ausschnitt
+    # nach ID zerreißt die Sterne (die Mitglieder fehlen, die member-Kanten fallen weg) und
+    # zeigt zwangsläufig einen Klumpen aus Clustern und einen Ring beziehungsloser Knoten.
+    # Die 5.000 der Kartenansicht sind die vermessene Engine-Grenze; darüber hinaus fragt nur,
+    # wer in der Oberfläche ausdrücklich "mehr laden" wählt (§17.3).
+    limit: Annotated[int | None, Query(ge=1, le=20000)] = None,
     cursor: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     """Knoten und Kanten für die Kartenansicht (§17.2 Ansicht 1).

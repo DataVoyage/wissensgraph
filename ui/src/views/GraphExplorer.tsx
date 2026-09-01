@@ -55,9 +55,25 @@ interface Ausschnitt {
 
 const LEER: Ausschnitt = { nodes: new Map(), edges: new Map() };
 
-/** Wie viele Knoten die Karte zunächst zeigt. Mehr holt "mehr laden" (§17.3). */
-const KARTE_SCHRITT = 300;
-const KARTE_MAX = 2000;
+/**
+ * Die Karte lädt im Default den **ganzen Bestand**, nicht einen Ausschnitt.
+ *
+ * Das war anders — 300 Knoten, dann "mehr laden" — und das Ergebnis war an echten Daten
+ * beweisbar strukturlos: Die Seite schneidet nach ID, `cluster:` sortiert vor `sapdoc:`, also
+ * bestand der erste Ausschnitt aus sämtlichen Clustern und einer Handvoll zufälliger Dokumente.
+ * Eine Kante erscheint nur, wenn beide Enden sichtbar sind — von 818 Mitgliedschaften überlebten
+ * fast keine, vom Cluster-Geflecht alle. Was die Physik dann zeigte (ein Knäuel aus Clustern,
+ * ein Ring beziehungsloser Knoten), war kein Physikfehler, sondern die korrekte Darstellung
+ * eines zerrissenen Graphen. Struktur ist eine Eigenschaft des Ganzen; sie übersteht kein
+ * zufälliges Vierzehntel.
+ *
+ * Der Start deckelt trotzdem: 5.000 ist die vermessene Engine-Grenze — so viele Knoten
+ * zeichnet sigma mit laufender Physik flüssig. Wächst ein Bestand darüber, holt "mehr laden"
+ * den Rest in Verdopplungsschritten (§17.3); das ist dann eine bewusste Entscheidung dessen,
+ * der klickt, keine Vorgabe.
+ */
+const KARTE_SCHRITT = 5000;
+const KARTE_MAX = 20000;
 
 export function GraphExplorer({
   state,
@@ -456,7 +472,7 @@ export function GraphExplorer({
             labels={labels}
             einpassen={einpassen}
             typen={alleTypen}
-            onSelect={(id, store) => onChange({ id, store })}
+            onSelect={(id, store) => onChange(id === null ? { id: undefined } : { id, store })}
             onExpand={(id, store) => void aufklappen(id, store)}
           />
         )}

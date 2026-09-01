@@ -34,9 +34,12 @@ import {
   hierarchisch,
   konzentrisch,
   spiegeln,
+  sterne,
+  TYP_CLUSTER,
   type CanvasNode,
   type LayoutName,
   type PhysikWerte,
+  type Positionen,
 } from "../graph/anordnung";
 import { NodeRautenProgram } from "../graph/rauten";
 import { SIGNAL, TON } from "../theme";
@@ -61,7 +64,8 @@ export interface GraphCanvasProps {
   /** Die Konzepttypen dieser Installation in konfigurierter Reihenfolge — sie entscheidet
    *  über die Typfarben (§17.1). */
   typen?: readonly string[];
-  onSelect: (id: string, store: string) => void;
+  /** Auswahl setzen — `null` hebt sie auf (Klick auf die freie Fläche). */
+  onSelect: (id: string | null, store: string) => void;
   /** Doppelklick klappt einen weiteren Hop auf (§17.2: "Inkrementelles Aufklappen"). */
   onExpand?: (id: string, store: string) => void;
 }
@@ -96,6 +100,12 @@ export function GraphCanvas({
   const simulation = useRef<FA2Layout | null>(null);
   const anhalten = useRef<number | null>(null);
   const gezogen = useRef<string | null>(null);
+  /**
+   * Ob die aktuelle Anordnung *gerechnet* ist (Sternenkarte, konzentrisch, hierarchisch) statt
+   * erlaufen. Dann darf keine freie Simulation anlaufen: Sie kennt die Regeln nicht, nach denen
+   * die Anordnung entstanden ist, und würde sie nicht fortschreiben, sondern ersetzen.
+   */
+  const gerechnet = useRef(false);
   // Rückrufe und Auswahl wandern über Referenzen in die Ereignisbehandlung und die Reducer —
   // sonst müsste die Instanz neu angelegt werden, sobald die Ansicht eine neue Funktion
   // erzeugt, und genau das soll sie nicht.
@@ -140,7 +150,9 @@ export function GraphCanvas({
       // dass da noch mehr ist.
       nodeReducer: (id, daten) => {
         const { selected: wahl, labels: mitLabel } = zustand.current;
-        const angepasst: Record<string, unknown> = { ...daten };
+        // `size` im Modell ist der Layout-Radius für ForceAtlas2 (Kollision in
+        // Layout-Koordinaten); gezeichnet wird die Pixelgröße daneben. Siehe `anordnung.ts`.
+        const angepasst: Record<string, unknown> = { ...daten, size: daten.zeichenGroesse };
         if (!mitLabel) {
           angepasst.label = null;
         }
@@ -182,6 +194,13 @@ export function GraphCanvas({
       const store = String(graph.getNodeAttribute(node, "store"));
       zustand.current.onSelect(node, store);
     });
+    // Klick auf die freie Fläche hebt die Auswahl auf. Ohne das gab es keinen Weg zurück:
+    // Die Auswahl blendet alles ab, was nicht Nachbarschaft ist, und wer einmal etwas
+    // angeklickt hatte, blieb in dieser Verengung gefangen — er konnte nur noch zu einem
+    // anderen Knoten wechseln, nie zur ganzen Karte zurück.
+    sigma.on("clickStage", () => {
+      zustand.current.onSelect(null, "");
+    });
     sigma.on("doubleClickNode", (ereignis) => {
       ereignis.preventSigmaDefault();
       const store = String(graph.getNodeAttribute(ereignis.node, "store"));
@@ -192,11 +211,20 @@ export function GraphCanvas({
     // Wer einen Knoten anfasst, will sehen, was daran hängt — die Simulation läuft mit und
     // verformt den Graphen unter der Hand. Der Worker macht das auch bei tausenden Knoten
     // bezahlbar; die alte 400er-Grenze fürs Ziehen ist entfallen.
+    //
+    // **Nicht in der Sternenkarte.** Dort ist die Anordnung gerechnet und nicht erlaufen, und
+    // die freie Simulation würde sie zerstören, statt sie fortzuschreiben: Sie kennt die
+    // Zugehörigkeiten nicht und zieht den Graphen nach denselben Massenregeln zusammen, deretwegen
+    // es die Sternenkarte überhaupt gibt. Weil `downNode` schon beim Mausdruck feuert, genügte
+    // ein einzelner Klick — der Graph fiel bei jeder Berührung ein Stück weiter in sich zusammen.
+    // Der angefasste Knoten folgt trotzdem der Maus; nur die anderen bleiben, wo sie hingehören.
     sigma.on("downNode", (ereignis) => {
       ereignis.preventSigmaDefault();
       gezogen.current = ereignis.node;
       graph.setNodeAttribute(ereignis.node, "highlighted", true);
-      simulationAnwerfen();
+      if (!gerechnet.current) {
+        simulationAnwerfen();
+      }
     });
     sigma.getMouseCaptor().on("mousemovebody", (ereignis) => {
       const id = gezogen.current;
@@ -214,7 +242,9 @@ export function GraphCanvas({
       if (gezogen.current !== null) {
         graph.removeNodeAttribute(gezogen.current, "highlighted");
         gezogen.current = null;
-        simulationAusklingen();
+        if (!gerechnet.current) {
+          simulationAusklingen();
+        }
       }
     };
     sigma.getMouseCaptor().on("mouseup", loslassen);
@@ -273,39 +303,60 @@ export function GraphCanvas({
     }
 
     if (layout === "physik") {
-      if (bewegt) {
-        simulationAnwerfen();
-        simulationAusklingen(einschwingzeitMs(graph.order));
-      } else {
-        // "Weniger Bewegung": ein Schub im Worker wäre auch Bewegung — stattdessen rechnet
-        // FA2 synchron wenige Iterationen und stellt das Ergebnis.
-        void import("graphology-layout-forceatlas2").then((fa2) => {
-          fa2.default.assign(graph, {
-            iterations: 80,
-            settings: fa2Einstellungen(physik, graph.order, graph.size),
-          });
-        });
-      }
+      // Gibt es Cluster im Bild, zeichnet die Sternenkarte: Zentren kraftbasiert, Mitglieder
+      // als Ring darum, Unverbundenes außen. Der Grund steht ausführlich in `anordnung.ts` —
+      // kurz: In ForceAtlas2 ist die Masse eines Knotens die Summe seiner Kantengewichte, und
+      // damit wird ein Cluster durch seine eigenen Mitglieder nach außen gedrängt, während die
+      // kantenlosen Dokumente in die Mitte fallen. Der Stern kommt dort verkehrt herum heraus.
+      //
+      // Ohne Cluster — eine frisch synchronisierte Sammlung, ein enger Filter — bleibt es bei
+      // der freien Simulation: Ohne Zentren gibt es keine Sterne zu zeichnen.
+      void import("graphology-layout-forceatlas2").then((fa2) => {
+        const zentren = graph.filterNodes((_id, daten) => daten.typ === TYP_CLUSTER);
+        gerechnet.current = zentren.length > 0;
+        if (zentren.length === 0) {
+          if (bewegt) {
+            simulationAnwerfen();
+            simulationAusklingen(einschwingzeitMs(graph.order));
+          } else {
+            fa2.default.assign(graph, {
+              iterations: 80,
+              settings: fa2Einstellungen(physik, graph.order, graph.size),
+            });
+          }
+          return;
+        }
+        simulation.current?.stop();
+        const lagen = sterne(graph, physik, (ziel, optionen) =>
+          fa2.default.assign(ziel, optionen as never),
+        );
+        stellen(graph, lagen);
+      });
       return;
     }
 
     simulation.current?.stop();
+    gerechnet.current = true;
     const abstand = physik.kantenlaenge * 0.9;
-    const positionen = layout === "concentric" ? konzentrisch(graph, abstand) : hierarchisch(graph, abstand);
-    const ziel: Record<string, { x: number; y: number }> = {};
-    for (const [id, punkt] of positionen) {
-      ziel[id] = punkt;
-    }
-    if (bewegt) {
-      animateNodes(graph, ziel, { duration: 420 });
-    } else {
-      for (const [id, punkt] of positionen) {
-        graph.setNodeAttribute(id, "x", punkt.x);
-        graph.setNodeAttribute(id, "y", punkt.y);
-      }
-    }
+    stellen(graph, layout === "concentric" ? konzentrisch(graph, abstand) : hierarchisch(graph, abstand));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, typen, layout, physik, bewegt]);
+
+  /** Setzt gerechnete Positionen — gleitend, wenn das jemand sehen will (§17.2). */
+  function stellen(graph: Graph, positionen: Positionen): void {
+    if (bewegt) {
+      const ziel: Record<string, { x: number; y: number }> = {};
+      for (const [id, punkt] of positionen) {
+        ziel[id] = punkt;
+      }
+      animateNodes(graph, ziel, { duration: 420 });
+      return;
+    }
+    for (const [id, punkt] of positionen) {
+      graph.setNodeAttribute(id, "x", punkt.x);
+      graph.setNodeAttribute(id, "y", punkt.y);
+    }
+  }
 
   // -- Auswahl, Beschriftungen -----------------------------------------------
   useEffect(() => {
