@@ -308,6 +308,57 @@ Die Stufen U1–U5 sind umgesetzt. Was hier als Risiko stand, ist damit entschie
   Die Hälfte, obwohl vier Ansichten, ein Markdown-Renderer und die globale Suche
   dazugekommen sind.
 
+**Vorhaben: die SAP-BTP-Dokumentation als Quelle für Tests mit echten Daten.**
+
+Alles, was bisher in großer Menge geprüft wurde, ist synthetisch — und synthetische Bestände
+sind, selbst wenn man sie absichtlich ungleichmäßig baut, immer noch *ausgedacht*. Ein
+zusätzlicher Adapter gegen echte technische Dokumentation würde das ändern und genau die
+Fachkonzepte prüfbar machen, die an synthetischen Daten nichts beweisen: ob das Clustering
+brauchbare Themen findet, ob die Betitelung trifft, ob die Relationserkennung Sinnvolles
+vorschlägt, ob die zweistufige Suche greift.
+
+Gewählt ist **[`SAP-docs/btp-cloud-platform`](https://github.com/SAP-docs/btp-cloud-platform)**,
+die SAP von sich aus auf GitHub veröffentlicht. Die Eckdaten passen bemerkenswert genau:
+
+| | |
+|---|---|
+| Umfang | **2.070** Markdown-Dokumente unter `docs/`, 8,5 MB, im Mittel 4,3 kB je Dokument |
+| Lizenz | **CC-BY-4.0** — Weiterverwendung mit Namensnennung ausdrücklich erlaubt |
+| Zugang | `git clone`, kein Crawling, keine Grauzone |
+| Gliederung | sieben Themenordner von 54 bis 1.066 Dokumenten — von Natur aus ungleichmäßig |
+
+Zwei Eigenschaften machen sie für diesen Zweck besser als ein enzyklopädischer Bestand. Jedes
+Dokument trägt eine stabile SAP-Kennung (`<!-- loiofa5af4ecdf90496b8eec54fe0e22150c -->`), die
+sich unmittelbar als `external_id` verwenden lässt — genau das, was §10.1 für inkrementelles
+Syncen braucht. Und die Dokumente verweisen mit relativen Links aufeinander, auch über
+Ordnergrenzen hinweg. Das ist eine **von Menschen gepflegte Verweisstruktur** und damit ein
+Prüfmaßstab, den kein synthetischer Bestand liefert: Man kann messen, ob das Clustering
+Dokumente zusammenlegt, die auch tatsächlich aufeinander verweisen, und ob die
+Relationserkennung Verbindungen findet, die die Autoren selbst gezogen haben. Dazu ist es
+echte technische Unternehmensdokumentation — dieselbe Textsorte wie die Confluence-Seiten im
+Betrieb.
+
+Der Adapter wäre eine reguläre Quelle nach §8.4 neben Confluence und Jira, kein Sonderweg.
+
+**Geprüft und verworfen — damit es niemand ein zweites Mal prüft:**
+
+* **help.sap.com und api.sap.com direkt.** Beide `robots.txt` beginnen mit `User-agent: *` →
+  `Disallow: /`; erlaubt sind nur namentlich benannte Suchmaschinen. Die SAP-Nutzungsbedingungen
+  untersagen automatisiertes Abgreifen ausdrücklich **einschließlich Text- und Data-Mining**.
+  Technisch möglich, rechtlich ausgeschlossen.
+* **ERP- und EWM-Dokumentation.** Auf dem offenen Weg schlicht nicht vorhanden: Unter
+  `SAP-docs` liegen 39 Repositories (37 davon CC-BY-4.0), aber ausschließlich BTP, SAPUI5,
+  Datasphere und ABAP-Umgebung. Eine gezielte Suche nach offener EWM-Dokumentation fand
+  86 Repositories, darunter keine einzige Dokumentation — nur Code. Wer SAP-EWM-Inhalte
+  braucht, muss das über die Unternehmenslizenz und in einer internen Umgebung klären; in ein
+  öffentliches Repository gehören sie nicht.
+* **`SAP-samples`** (312 Repositories, 306 davon Apache-2.0): Code- und Workshop-Material,
+  keine Fachdokumentation.
+* **Open-Source-ERP** als Alternative für die Fachdomäne Lager/Produktion/Beschaffung —
+  Odoo (CC-BY-SA-4.0, aktiv) und Apache OFBiz (Apache-2.0) wären brauchbar und bleiben als
+  Rückfall notiert. Für den ersten Anlauf gibt SAP-BTP den Vorzug, weil es SAP-Fachsprache
+  ist und die Verweisstruktur mitbringt.
+
 **Was bewusst offen bleibt** (jeweils mit Grund, nicht vergessen):
 
 * Die Bestätigungs-/Verwerfungsquote in der Qualitätsansicht braucht einen Endpunkt über das

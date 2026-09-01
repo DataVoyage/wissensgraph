@@ -86,6 +86,18 @@ export function einschwingzeitMs(anzahl: number): number {
  * deshalb die Abstoßung quadratisch mit — dieselbe Wirkung über einen anderen Hebel. Oberhalb
  * von `BARNES_HUT_AB` rechnet die Näherung: n·log n statt n², und genau das trägt die
  * Zielmarke von 5.000 Knoten mit laufender Physik.
+ *
+ * **Die Vorgabe ist bewusst weit.** Der Graph beantwortet am Anfang eine strukturelle Frage —
+ * *wie viele Gruppen gibt es, was hängt zusammen, was liegt allein* —, und dafür braucht das
+ * Auge Zwischenraum. Eine dichte Anordnung sieht nach viel Inhalt aus und zeigt nichts: Bei
+ * einigen tausend Knoten verschmelzen die Kanten zu einem Gewebe, und die Gruppen, um die es
+ * geht, verschwinden darin. Ins Einzelne geht man danach über Zoom und Filter, nicht dadurch,
+ * dass von Anfang an alles eng beieinandersteht.
+ *
+ * Konkret gegenüber der ersten Fassung: die Abstoßung dreifach, die Schwerkraft (die alles zur
+ * Mitte zieht und damit verdichtet) deutlich schwächer, und `outboundAttractionDistribution`
+ * aus — es zieht stark verbundene Knoten zusammen und lässt genau die Ballungen entstehen, die
+ * hier stören.
  */
 export function fa2Einstellungen(
   physik: PhysikWerte,
@@ -94,13 +106,17 @@ export function fa2Einstellungen(
   const laenge = physik.kantenlaenge / PHYSIK_VORGABE.kantenlaenge;
   return {
     barnesHutOptimize: anzahl > BARNES_HUT_AB,
-    scalingRatio: Math.max(0.5, (physik.abstossung / 4) * laenge * laenge),
-    gravity: 0.01 + Math.max(0, Math.min(0.9, physik.schwerkraft)) * 0.12,
+    scalingRatio: Math.max(1.5, (physik.abstossung / 1.2) * laenge * laenge),
+    gravity: 0.003 + Math.max(0, Math.min(0.9, physik.schwerkraft)) * 0.03,
     strongGravityMode: false,
     // Größere Graphen werden stärker gedämpft, sonst zappelt das Bild statt zu konvergieren.
     slowDown: 4 + anzahl / 400,
-    adjustSizes: false,
-    outboundAttractionDistribution: true,
+    // Knoten weichen einander aus, ihr Durchmesser zählt mit — aber nur bei kleinen Graphen.
+    // Bei einigen tausend Knoten zusammen mit hoher Abstoßung planiert es das Bild zu einem
+    // gleichmäßigen Teppich: Jeder Knoten hält zu jedem Abstand, und genau die Gruppen, um die
+    // es geht, verschwinden. Nachgesehen, nicht überlegt.
+    adjustSizes: anzahl <= BARNES_HUT_AB,
+    outboundAttractionDistribution: false,
     edgeWeightInfluence: 0,
   };
 }
@@ -143,8 +159,13 @@ function kantenAttribute(kante: Edge): Record<string, unknown> {
     unbestaetigt: wartet,
     // Kantenart über die Stärke: `member` trägt die Struktur und ist kräftig, alles
     // Semantische ist fein. Provenienz über die Farbe; Unbestätigtes voll deckend.
-    size: (kante.kind === "member" ? 2.4 : 1.2) + (wartet ? 0.6 : 0),
-    color: mitDeckkraft(farbeFuerKante(kante.generated_by), wartet ? 0.95 : 0.4),
+    //
+    // Die Stärken sind gegenüber der ersten Fassung halbiert. Sie waren für ein Dutzend Kanten
+    // gewählt und wurden bei einigen tausend zum Problem: Nebeneinanderlaufende Kanten
+    // verschmolzen zu Bändern, und das Bild zeigte Fläche statt Struktur. Eine Kante muss
+    // sichtbar sein, wenn man sie sucht — sie muss nicht auffallen, wenn man die Gruppen sucht.
+    size: (kante.kind === "member" ? 1.2 : 0.6) + (wartet ? 0.3 : 0),
+    color: mitDeckkraft(farbeFuerKante(kante.generated_by), wartet ? 0.9 : 0.28),
   };
 }
 

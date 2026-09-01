@@ -1794,6 +1794,63 @@ Zwei Punkte aus der Risikoliste des Konzepts sind zum Abschluss abgearbeitet:
   obwohl seither vier Ansichten, ein Markdown-Renderer und die globale Suche dazugekommen
   sind. Cytoscape samt `cola` und `fcose` war der schwerste Posten der Oberfläche.
 
+### Nachtrag: Der Graph zeigt wieder Struktur
+
+Beim Zusehen fielen zwei Dinge auf, die kein Test gefunden hätte: Der Graph stand zu eng, und
+die Kanten verschmolzen zu Bändern. Beides ist behoben, und der zweite Befund war der
+interessantere.
+
+**Die Bänder waren eine sigma-Vorgabe.** `minEdgeThickness` steht dort auf **1,7 Pixel** —
+Kanten werden beim Herauszoomen nie dünner gezeichnet. Die Knoten rücken zusammen, die Kanten
+nicht, und bei einigen tausend ergibt das zwangsläufig ein Gewebe. Jetzt steht der Wert auf
+0,6; zusätzlich sind die Kantenstärken halbiert (`member` von 2,4 auf 1,2, semantisch von 1,2
+auf 0,6) und bestätigte Kanten treten weiter zurück. Eine Kante muss sichtbar sein, wenn man
+sie sucht — sie muss nicht auffallen, wenn man die Gruppen sucht.
+
+**Beim Abstand war der erste Anlauf falsch.** Abstoßung verdreifacht, `adjustSizes` überall
+an — das Ergebnis war ein gleichmäßiger Teppich, in dem jeder Knoten zu jedem Abstand hielt
+und die Themen vollständig verschwanden. Zu viel Abstand zerstört die Struktur genauso wie zu
+wenig. Der jetzige Stand liegt dazwischen: Abstoßung gut verdoppelt, Schwerkraft (die alles
+zur Mitte zieht und damit verdichtet) deutlich schwächer,
+`outboundAttractionDistribution` aus — es zog stark verbundene Knoten zusammen und erzeugte
+genau die Ballungen, um die es ging —, und `adjustSizes` nur noch unterhalb der
+Barnes-Hut-Schwelle. Dazu 60 statt 30 Pixel Rand.
+
+Die Testdaten des Durchlaufs sind gleichzeitig **ungleichmäßig** geworden, weil an einem
+gleichförmigen Bestand kein Layout etwas beweist: Themen von drei bis über zweihundert
+Mitgliedern, stark schwankende Dichte innerhalb der Gruppen, rund ein Sechstel völlig lose
+Knoten, kleine Inseln aus zwei bis fünf Knoten — und ein paar Naben. Von denen zuerst sechs
+mit je bis zu hundert Querkanten, was den halben Graphen in die Mitte zog; drei sparsamere
+sind glaubwürdiger und lassen die Themen atmen. Der Zufallsgenerator ist gesetzt, damit zwei
+Läufe dasselbe Bild ergeben.
+
+Vier neue Tests halten die Werte fest — bewusst als Aussagen, nicht als Pixelzahlen: dass weit
+genug gespreizt wird, dass die Schwerkraft schwach bleibt, dass `adjustSizes` nur bei kleinen
+Graphen greift, und dass auch die kräftigste Kantenart schlank bleibt. Der ältere Test zur
+Kantenstärke prüfte gegen einen festen Wert und wurde auf das Verhältnis umgestellt: `member`
+ist kräftiger als semantisch — das ist die Aussage, die absolute Stärke ist Gestaltung.
+
+### Nachtrag: Eine Quelle für Tests mit echten Daten — geprüft, nicht vermutet
+
+Für Tests der Fachkonzepte an echten statt synthetischen Daten wurde eine öffentliche Quelle
+gesucht. Ergebnis: **[`SAP-docs/btp-cloud-platform`](https://github.com/SAP-docs/btp-cloud-platform)**,
+2.070 Markdown-Dokumente unter CC-BY-4.0, per `git clone`. Einzelheiten und Begründung in
+[`konzept-ui.md`](konzept-ui.md), Abschnitt 8.
+
+Der Weg dorthin ist festgehalten, weil die naheliegende Variante nicht geht: **help.sap.com und
+api.sap.com sind für uns gesperrt.** Beide `robots.txt` beginnen mit `User-agent: *` →
+`Disallow: /` und erlauben nur namentlich benannte Suchmaschinen; die SAP-Nutzungsbedingungen
+untersagen automatisiertes Abgreifen ausdrücklich einschließlich Text- und Data-Mining.
+Technisch wäre es möglich, rechtlich ist es ausgeschlossen — und in einem öffentlichen
+Repository wäre das Ergebnis ohnehin nicht haltbar.
+
+Ebenfalls geprüft und verworfen: **ERP- und EWM-Dokumentation ist auf dem offenen Weg nicht
+verfügbar** (unter `SAP-docs` liegen nur BTP, SAPUI5, Datasphere, ABAP-Umgebung; eine Suche
+nach offener EWM-Doku fand 86 Repositories, darunter keine Dokumentation), und `SAP-samples`
+(312 Repositories, 306 davon Apache-2.0) enthält Code und Workshop-Material statt Fachtexten.
+Als Rückfall für die Domäne Lager/Produktion/Beschaffung sind Odoo (CC-BY-SA-4.0) und Apache
+OFBiz (Apache-2.0) notiert.
+
 ### Nachtrag: Die Architekturskizze stimmt wieder — und ein Wächter hält sie dabei
 
 Die Skizze nannte für den `mcp`-Dienst seit jeher **Port 8081**, während der Stack auf **8800**

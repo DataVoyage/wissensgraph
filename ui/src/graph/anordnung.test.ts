@@ -11,8 +11,10 @@ import { describe, expect, it } from "vitest";
 import type { Edge } from "../api/types";
 import {
   einschwingzeitMs,
+  fa2Einstellungen,
   hierarchisch,
   konzentrisch,
+  PHYSIK_VORGABE,
   spiegeln,
   type CanvasNode,
 } from "./anordnung";
@@ -102,8 +104,46 @@ describe("spiegeln", () => {
     const bestaetigt = String(graph.getEdgeAttribute("k2", "color"));
     // 8-stellige Hex-Farbe: die letzten zwei Stellen sind die Deckkraft.
     expect(parseInt(unbestaetigt.slice(7), 16)).toBeGreaterThan(parseInt(bestaetigt.slice(7), 16));
-    // Kantenart über die Stärke: member trägt die Struktur.
-    expect(Number(graph.getEdgeAttribute("k2", "size"))).toBeGreaterThan(1.5);
+    // Kantenart über die Stärke: `member` trägt die Struktur und ist kräftiger als eine
+    // semantische Kante. Bewusst relativ geprüft und nicht gegen eine feste Pixelzahl — die
+    // absoluten Stärken sind eine Gestaltungsfrage und wurden schon einmal halbiert, weil
+    // tausende Kanten sonst zu Bändern verschmelzen. Die *Aussage* ist das Verhältnis.
+    expect(Number(graph.getEdgeAttribute("k2", "size"))).toBeGreaterThan(
+      Number(graph.getEdgeAttribute("k1", "size")),
+    );
+  });
+});
+
+describe("Abstand und Kantendichte (nachgesehen, nicht überlegt)", () => {
+  it("spreizt weit genug, dass Gruppen auseinandertreten", () => {
+    // Die erste Fassung stand bei 7 und zeichnete einen Knäuel: Die Themen klebten aneinander,
+    // und die Kanten dazwischen waren ein Gewebe. Der Graph beantwortet aber zuerst eine
+    // strukturelle Frage, und die braucht Zwischenraum.
+    expect(Number(fa2Einstellungen(PHYSIK_VORGABE, 5000).scalingRatio)).toBeGreaterThan(15);
+  });
+
+  it("zieht nur schwach zur Mitte — Schwerkraft verdichtet", () => {
+    expect(Number(fa2Einstellungen(PHYSIK_VORGABE, 5000).gravity)).toBeLessThan(0.03);
+  });
+
+  it("lässt Knoten nur bei kleinen Graphen einander ausweichen", () => {
+    // `adjustSizes` zusammen mit hoher Abstoßung planiert große Graphen zu einem gleichmäßigen
+    // Teppich — jeder Knoten hält zu jedem Abstand, und die Gruppen verschwinden.
+    expect(fa2Einstellungen(PHYSIK_VORGABE, 100).adjustSizes).toBe(true);
+    expect(fa2Einstellungen(PHYSIK_VORGABE, 5000).adjustSizes).toBe(false);
+  });
+
+  it("hält Kanten fein genug, dass sie nicht zu Bändern verschmelzen", () => {
+    const graph = new Graph({ multi: true, type: "directed" });
+    spiegeln(
+      graph,
+      [knoten("a"), knoten("b")],
+      [kante("m", "a", "b", "member"), kante("r", "b", "a")],
+      [],
+    );
+    // Auch die kräftigste Kantenart bleibt schlank; den Rest besorgt `minEdgeThickness` in
+    // der Zeichenfläche, das sigma sonst bei 1,7 Pixeln festhält.
+    expect(Number(graph.getEdgeAttribute("m", "size"))).toBeLessThanOrEqual(1.5);
   });
 });
 

@@ -125,6 +125,16 @@ export function GraphCanvas({
       labelWeight: "500",
       labelColor: { color: TON.text },
       zoomingRatio: 1.4,
+      // Die zweitwichtigste Einstellung, und eine, die man nur durch Hinsehen findet: sigma
+      // zeichnet Kanten von Haus aus nie dünner als 1,7 Pixel (`minEdgeThickness`). Beim
+      // Herauszoomen rücken die Knoten zusammen, die Kanten aber nicht — bei einigen tausend
+      // verschmelzen sie zu Bändern, und das Bild zeigt Fläche statt Struktur. Mit 0,6 dürfen
+      // sie wirklich fein werden; wer eine einzelne Kante braucht, zoomt hinein oder wählt
+      // ihren Knoten aus, dann tritt sie ohnehin hervor.
+      minEdgeThickness: 0.6,
+      // Mehr Luft zum Rand. Der Graph beantwortet zuerst eine strukturelle Frage, und die
+      // braucht Zwischenraum — auch nach außen.
+      stagePadding: 60,
       // Auswahl über Reducer: Die Nachbarschaft bleibt hell, der Rest tritt zurück, ohne dass
       // die Daten angefasst werden. `hidden`/Löschen ließe den Graphen zerfallen; blass zeigt,
       // dass da noch mehr ist.
