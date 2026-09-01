@@ -31,6 +31,15 @@ test("Erkunden: Suche offen, Persönlich mit Inspektor", async ({ page }) => {
   await page.screenshot({ path: "test-results/schaufenster-erkunden.png", fullPage: false });
 });
 
+test("Analysieren: Automatisierung und Qualität", async ({ page }) => {
+  await page.goto("/?view=automatisierung&store=shared");
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: "test-results/schaufenster-automatisierung.png" });
+  await page.goto("/?view=qualitaet&store=shared");
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: "test-results/schaufenster-qualitaet.png" });
+});
+
 test("Gerüst: Dokumente, Inspektor eingeklappt, Rail schmal", async ({ page }) => {
   await page.goto("/?view=browser&store=shared");
   await page.getByRole("button", { name: "Inspektor einklappen" }).click();

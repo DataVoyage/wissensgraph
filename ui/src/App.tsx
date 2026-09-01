@@ -24,7 +24,9 @@ import { GlobaleSuche } from "./components/GlobaleSuche";
 import { NavRail } from "./components/NavRail";
 import { useUiState } from "./state";
 import { useWerkbank } from "./werkbank";
+import { Automation } from "./views/Automation";
 import { ClusterWorkbench } from "./views/ClusterWorkbench";
+import { Quality } from "./views/Quality";
 import { CurationList } from "./views/CurationList";
 import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
@@ -183,6 +185,10 @@ export function App(): JSX.Element {
           )}
           {zustand.view === "cluster" && <ClusterWorkbench state={zustand} onChange={aendern} />}
           {zustand.view === "kuration" && <CurationList state={zustand} />}
+          {zustand.view === "automatisierung" && (
+            <Automation state={zustand} onChange={aendern} />
+          )}
+          {zustand.view === "qualitaet" && <Quality state={zustand} onChange={aendern} />}
           {zustand.view === "persoenlich" && (
             <PersonalArea
               state={zustand}

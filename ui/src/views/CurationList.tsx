@@ -32,6 +32,12 @@ export function CurationList({ state }: CurationListProps): JSX.Element {
 
   useEffect(() => {
     function beiTaste(ereignis: KeyboardEvent): void {
+      // Wer tippt, kuratiert nicht: Seit die Kopfzeile ein Suchfeld trägt (U3), wäre ein "x"
+      // im Suchbegriff sonst ein verworfener Vorschlag.
+      const ziel = ereignis.target as HTMLElement | null;
+      if (ziel !== null && (ziel.tagName === "INPUT" || ziel.tagName === "TEXTAREA")) {
+        return;
+      }
       if (aktuell?.edge == null) {
         return;
       }

@@ -91,6 +91,34 @@ class TestClusterBildung:
         assert cluster.title == "Testgruppe"
         assert cluster.generated_by is not None
 
+    def test_probelauf_zaehlt_und_schreibt_nichts(self, semantik_settings: Settings) -> None:
+        """§16.2/§19: ``dry_run`` sagt, was entstünde — und hinterlässt keinen Bestand."""
+        umgebung = vorbereitet(semantik_settings)
+
+        bericht = umgebung.clusters.run(scope="engineering", dry_run=True)
+
+        assert bericht.components == 3
+        assert bericht.clusters_created == 3
+        assert bericht.members_added > 0
+        # Nichts geschrieben: keine Cluster, keine Mitgliedschaften, kein Journal.
+        assert not umgebung.cluster_ids()
+        assert not [
+            eintrag
+            for eintrag in umgebung.state().changes
+            if eintrag.change_type is ChangeType.CLUSTER_ASSIGNED
+        ]
+
+    def test_probelauf_erkennt_bestehende_cluster_wieder(self, semantik_settings: Settings) -> None:
+        """Nach einem echten Lauf meldet der Probelauf Wiedererkennung statt Neuanlage."""
+        umgebung = vorbereitet(semantik_settings)
+        umgebung.clusters.run(scope="engineering")
+        umgebung.embeddings.run(scope="engineering")
+
+        bericht = umgebung.clusters.run(scope="engineering", dry_run=True)
+
+        assert bericht.clusters_created == 0
+        assert bericht.clusters_matched == 3
+
     def test_ohne_embeddings_passiert_nichts(self, semantik_settings: Settings) -> None:
         """Die semantische Schicht ist eine Voraussetzung, kein Versprechen (§11.5)."""
         umgebung = baue(semantik_settings)

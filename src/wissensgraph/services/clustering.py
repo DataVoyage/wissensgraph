@@ -163,8 +163,18 @@ class ClusterService:
         scope: str,
         run_id: UUID | None = None,
         actor: str = defaults.ACTOR_CLUSTER,
+        dry_run: bool = False,
     ) -> ClusterReport:
         """Führt einen Clustering-Lauf über einen Scope aus (§13.2).
+
+        Args:
+            scope: Der zu bearbeitende Scope.
+            run_id: Der Lauf, zu dem die Schritte gehören.
+            actor: Wer die entstehenden Strukturen verantwortet.
+            dry_run: Gruppieren und zuordnen, nichts schreiben. Der Bericht zählt, was
+                *entstünde* — Komponenten, neue und wiedererkannte Cluster, Mitglieder.
+                Betitelung, Verwandtschaft und Verfall entfallen: Sie beschreiben Cluster,
+                die es in diesem Fall nicht gibt.
 
         Returns:
             Den Bericht. Ein Lauf ohne Embeddings ist erfolgreich und tut nichts — die
@@ -189,6 +199,13 @@ class ClusterService:
             for komponente in komponenten:
                 cluster_id = self._zuordnen(komponente, bestehende, vergeben)
                 vergeben.add(cluster_id)
+                if dry_run:
+                    if cluster_id in bestehende:
+                        bericht.clusters_matched += 1
+                    else:
+                        bericht.clusters_created += 1
+                    bericht.members_added += len(komponente.members)
+                    continue
                 self._cluster_schreiben(
                     komponente=komponente,
                     cluster_id=cluster_id,
@@ -203,6 +220,10 @@ class ClusterService:
         except BudgetExceededError as exc:
             bericht.budget_exceeded = True
             _log.warning("cluster.budget_erschoepft", scope=scope, grund=str(exc))
+
+        if dry_run:
+            _log.info("cluster.probelauf", **bericht.as_dict())
+            return bericht
 
         self._verwandte_cluster(
             store=store, model_key=route.model_key, run_id=lauf, actor=actor, bericht=bericht

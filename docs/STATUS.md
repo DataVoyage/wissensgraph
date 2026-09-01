@@ -1731,6 +1731,38 @@ gibt es den Knopf nicht — die Sperre kommt weiter aus `locked_fields`, nicht a
 der Oberfläche. Der Persönliche Bereich ist auf den Komponentensatz umgezogen und dreispaltig:
 Anlegen und eigene Konzepte links, Brücken in der Mitte, der Inspektor rechts.
 
+### Nachtrag: U4 — Analysieren
+
+Der Analyst hat jetzt seinen Ort: zwei neue Ansichten im Analysieren-Bereich.
+
+**Automatisierung** überträgt das `--dry-run`-Prinzip der CLI (§19) in die Oberfläche, und
+zwar als Regel statt als Option: Der scharfe Knopf **existiert erst**, wenn ein Probelauf
+durchgelaufen ist, und er schickt exakt dieselben Parameter. Je Aufbaulauf ein Formular; die
+Waisen-Parameter sind aus der aufgelösten Konfiguration vorbelegt, Abweichungen stehen
+angeschrieben („abweichend — Konfiguration: 0.85"). Einzige Ausnahme sind die Embeddings:
+Ableitung, kein kuratierbarer Inhalt — ein Probelauf, der nichts berechnet, wüsste nichts zu
+berichten. Der Live-Fortschritt (`Fortschritt`) ist dafür aus der Betriebsansicht in eine
+eigene Komponente gewandert und meldet das Laufende jetzt auch zurück.
+
+Dafür kann das Backend, was bisher nur `relations`, `link-orphans` und `sync` konnten:
+**`dry_run` für das Clustering** — durchgezogen vom Dienst (`ClusterService.run` gruppiert und
+zählt, schreibt aber nichts; Betitelung, Verwandtschaft und Verfall entfallen, weil sie Cluster
+beschreiben, die es dann nicht gibt) über Runtime und Worker bis zu `POST /runs/cluster` und
+`wg cluster --dry-run`. Das `ScopeRun`-Schema trug das Feld längst; der Router hatte es beim
+Clustering schlicht weggeworfen. Zwei Diensttests sichern beides: Der Probelauf hinterlässt
+keinen Bestand und kein Journal, und nach einem echten Lauf meldet er Wiedererkennung statt
+Neuanlage.
+
+**Qualität** verdichtet, was vorhandene Endpunkte hergeben — erste Ausbaustufe wie im Konzept
+(Abschnitt 6): Anteil loser Knoten je Store (über 20 % in Rot — das wartet auf einen Menschen),
+Größe und ältester Eintrag der Kurationswarteschlange, Cluster ohne kuratierten Titel mit
+Absprung in den Arbeitsplatz. Die Bestätigungs-/Verwerfungsquote aus dem Journal braucht einen
+eigenen Endpunkt und steht bewusst noch nicht da — lieber keine Zahl als eine geratene.
+
+Ein Nebenbefund mit Fix: Seit die Kopfzeile ein Suchfeld trägt (U3), hätte ein „x" im
+Suchbegriff in der Kurationsansicht einen Vorschlag verworfen — die Tastaturkuration ignoriert
+jetzt Eingaben, die in einem Feld landen. Ein Test hält das fest.
+
 ---
 
 ## Entwicklung

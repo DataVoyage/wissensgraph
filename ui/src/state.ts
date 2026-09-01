@@ -9,12 +9,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-/** Die sechs Ansichten aus §17.2. */
+/** Die Ansichten aus §17.2 — seit U4 acht: Automatisierung und Qualität kamen dazu. */
 export type ViewName =
   | "graph"
   | "browser"
   | "cluster"
   | "kuration"
+  | "automatisierung"
+  | "qualitaet"
   | "persoenlich"
   | "betrieb";
 

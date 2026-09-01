@@ -787,6 +787,9 @@ def cluster(
     dotenv_file: DotenvFileOption = None,
     models_file: ModelsFileOption = None,
     scope: ScopeOption = "",
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Gruppieren und zählen, nichts schreiben.")
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Bildet Cluster aus den Embeddings eines Scopes (§13.2, §19).
@@ -801,7 +804,7 @@ def cluster(
         _maschinenlesbar() if as_json else nullcontext(),
         Runtime(settings, models_file=models_file) as runtime,
     ):
-        run = runtime.run_cluster(_scope_pruefen(settings, scope))
+        run = runtime.run_cluster(_scope_pruefen(settings, scope), dry_run=dry_run)
     _lauf_ausgeben(run, as_json=as_json)
 
 

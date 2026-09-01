@@ -224,13 +224,16 @@ class Runtime:
             run_id=run_id,
         )
 
-    def run_cluster(self, scope: str, *, run_id: UUID | None = None) -> Run:
+    def run_cluster(self, scope: str, *, dry_run: bool = False, run_id: UUID | None = None) -> Run:
         """Führt einen Clustering-Lauf aus und verbucht ihn (§13.2)."""
         return self._verbuchter_lauf(
             kind=RunKind.CLUSTER,
             scope=scope,
-            params={"scope": scope},
-            arbeit=lambda lauf: self.clusters.run(scope=scope, run_id=lauf).as_dict(),
+            params={"scope": scope, "dry_run": dry_run},
+            arbeit=lambda lauf: self.clusters.run(
+                scope=scope, run_id=lauf, dry_run=dry_run
+            ).as_dict(),
+            fluechtig=dry_run,
             run_id=run_id,
         )
 
@@ -404,7 +407,11 @@ class Runtime:
                 run_id=job.run_id,
             )
         if job.kind is RunKind.CLUSTER:
-            return self.run_cluster(str(job.params["scope"]), run_id=job.run_id)
+            return self.run_cluster(
+                str(job.params["scope"]),
+                dry_run=bool(job.params.get("dry_run", False)),
+                run_id=job.run_id,
+            )
         if job.kind is RunKind.RELATIONS:
             return self.run_relations(
                 str(job.params["scope"]),

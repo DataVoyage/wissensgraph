@@ -223,7 +223,11 @@ def start_cluster(
     """Stößt einen Clustering-Lauf an (§13.2, §16.3)."""
     del actor
     store_of_scope(settings, payload.scope)
-    lauf = runtime.submit(RunKind.CLUSTER, scope=payload.scope, params={"scope": payload.scope})
+    lauf = runtime.submit(
+        RunKind.CLUSTER,
+        scope=payload.scope,
+        params={"scope": payload.scope, "dry_run": payload.dry_run},
+    )
     return _angenommen(lauf, response)
 
 

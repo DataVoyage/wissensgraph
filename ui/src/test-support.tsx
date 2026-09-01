@@ -97,7 +97,14 @@ export const KONFIGURATION = {
   ],
   edge_kinds: { structural: ["member", "related"], semantic: ["references", "depends_on"] },
   stores: { shared: {}, personal: {} },
-  orphans: { loose_threshold: 1 },
+  orphans: {
+    loose_threshold: 1,
+    proximity_top_n: 30,
+    proximity_auto_commit: 0.85,
+    proximity_candidate_band: 0.6,
+    use_llm: true,
+    min_confidence: 0.6,
+  },
   api: { auth_mode: "token" },
 };
 

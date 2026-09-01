@@ -572,6 +572,8 @@ kein HTML); eigene Notizen tragen dort ein „bearbeiten".
 | **Dokumente** | Filtern und Blättern über alle Konzepte, mit Detailansicht, Provenienz, Kanten und Journal. |
 | **Cluster** | Cluster anlegen, umbenennen, verschmelzen, aufteilen; Mitglieder hinzufügen und entfernen. |
 | **Kuration** | Die offenen Aufgaben nach Confidence sortiert: bestätigen, löschen, verwerfen. Vollständig über die Tastatur bedienbar (`j`/`k`/`⏎`/`x`/`s`). |
+| **Automatisierung** | Jeder Aufbaulauf (Embeddings, Clustering, Relationen, Waisen-Anbindung) als geführtes Formular, vorbelegt aus der Konfiguration, Abweichungen angeschrieben. **Probelauf zuerst**: Der scharfe Knopf existiert erst nach der Vorschau und schickt dieselben Parameter (§19). |
+| **Qualität** | Arbeitet die Automatisierung gut? Anteil loser Knoten je Store, Alter und Größe der Kurationswarteschlange, Cluster ohne kuratierten Titel — mit Absprung zu Kuration und Arbeitsplatz. |
 | **Persönlich** | Notizen und Projekte im `personal`-Store, inklusive Brücken in den `shared`-Store. |
 | **Betrieb** | Läufe starten und live verfolgen (Server-Sent Events), Quellen-Health, Modellverbrauch, Bestandszahlen. |
 
@@ -859,7 +861,7 @@ Das Kommando heißt `wg`. Auf dem Host `uv run wg …`, im Container `docker com
 | `wg sources list [--json]` | Quellen mit Health und letztem Lauf. |
 | `wg sync [--source N \| --all] [--full] [--dry-run] [--json]` | Siehe 6.1. |
 | `wg embed --scope S [--rebuild] [--json]` | Siehe 6.2. |
-| `wg cluster --scope S [--json]` | Siehe 6.3. |
+| `wg cluster --scope S [--dry-run] [--json]` | Siehe 6.3. `--dry-run` gruppiert und zählt, schreibt aber nichts. |
 | `wg relations --scope S [--dry-run] [--json]` | Siehe 6.4. |
 | `wg link-orphans --scope S [viele Flags] [--dry-run] [--json]` | Siehe 6.5. |
 | `wg runs list [--store S] [--limit N] [--json]` | Lauf-Historie. |

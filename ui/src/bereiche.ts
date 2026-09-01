@@ -38,6 +38,8 @@ export const BEREICHE: readonly Bereich[] = [
     ansichten: [
       { name: "kuration", label: "Kuration" },
       { name: "cluster", label: "Cluster" },
+      { name: "automatisierung", label: "Automatisierung" },
+      { name: "qualitaet", label: "Qualität" },
     ],
   },
   {
