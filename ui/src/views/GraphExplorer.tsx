@@ -1,28 +1,46 @@
 /**
- * Ansicht 1 — Graph-Explorer (§17.2).
+ * Ansicht 1 — die Graph-Zentrale (§17.2).
  *
- * Der Einstieg ist die Kernspace-Übersicht und keine Suche: §18.2 begründet das für den Agenten,
- * und für den Menschen gilt dasselbe — wer eine Sammlung nicht kennt, kann sie nicht durchsuchen.
+ * Der Graph kommt in zwei Ausprägungen, und beide sind dieselbe Ansicht:
  *
- * Aufgeklappt wird Hop für Hop über `/graph/neighbors` (§17.2: "kein Vorabladen des
- * Gesamtgraphen"). Der aufgeklappte Ausschnitt wächst dabei, statt ersetzt zu werden — sonst
- * verlöre ein Klick den Weg, über den man gekommen ist.
+ * - **Karte** — der gefilterte Bestand ohne Ausgangspunkt, über `/graph/map`. Der Überblick:
+ *   "Was liegt hier überhaupt, wenn ich es so einschränke?"
+ * - **Reise** — inkrementelles Aufklappen Hop für Hop über `/graph/neighbors`. Die Erkundung:
+ *   "Woran hängt *das* hier?"
+ *
+ * §17.2 verlangt für die Erkundung ausdrücklich "kein Vorabladen des Gesamtgraphen", und daran
+ * ändert die Karte nichts: Sie lädt keinen Gesamtgraphen, sondern eine gedeckelte, gefilterte
+ * Seite, deren Rest sichtbar als Rest ausgewiesen wird. Der Unterschied zwischen beiden Modi ist
+ * nicht die Datenmenge, sondern die Frage — und wer eine Sammlung noch nicht kennt, hat keinen
+ * Startknoten, den er nennen könnte.
+ *
+ * Der aufgeklappte Ausschnitt der Reise *wächst*, statt ersetzt zu werden — sonst verlöre ein
+ * Klick den Weg, über den man gekommen ist.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { get } from "../api/client";
-import { useClusters, useConcept, useSearch } from "../api/hooks";
+import { useClusters, useConcept, useGraphMap, useSearch } from "../api/hooks";
 import type { Edge, GraphNode, Traversal } from "../api/types";
 import { ConceptPanel } from "../components/ConceptPanel";
-import { GraphCanvas, type LayoutName } from "../components/GraphCanvas";
-import type { UiState } from "../state";
+import {
+  GraphCanvas,
+  PHYSIK_VORGABE,
+  type CanvasNode,
+  type LayoutName,
+  type PhysikWerte,
+} from "../components/GraphCanvas";
+import { GraphControls } from "../components/GraphControls";
+import { GraphLegend } from "../components/GraphLegend";
+import type { EffectiveConfig } from "../api/types";
+import type { GraphMode, UiState } from "../state";
 
 export interface GraphExplorerProps {
   state: UiState;
   onChange: (aenderung: Partial<UiState>) => void;
-  /** Die Kantenarten aus der Konfiguration — die Oberfläche kennt keine eigenen (§17.1). */
-  edgeKinds: string[];
+  /** Die Fachregeln kommen aus der Konfiguration; die Oberfläche kennt keine eigenen (§17.1). */
+  config: EffectiveConfig;
 }
 
 interface Ausschnitt {
@@ -32,16 +50,53 @@ interface Ausschnitt {
 
 const LEER: Ausschnitt = { nodes: new Map(), edges: new Map() };
 
-export function GraphExplorer({ state, onChange, edgeKinds }: GraphExplorerProps): JSX.Element {
+/** Wie viele Knoten die Karte zunächst zeigt. Mehr holt "mehr laden" (§17.3). */
+const KARTE_SCHRITT = 300;
+const KARTE_MAX = 2000;
+
+export function GraphExplorer({ state, onChange, config }: GraphExplorerProps): JSX.Element {
+  const modus: GraphMode = state.mode ?? "karte";
+  const kantenarten = useMemo(
+    () => [...config.edge_kinds.structural, ...config.edge_kinds.semantic],
+    [config],
+  );
+  const alleTypen = useMemo(
+    () => config.concept_types.map((eintrag) => eintrag.name),
+    [config],
+  );
+  const gewaehlteArten = useMemo(
+    () => (state.kinds ? state.kinds.split(",").filter(Boolean) : []),
+    [state.kinds],
+  );
+
   const [ausschnitt, setzeAusschnitt] = useState<Ausschnitt>(LEER);
-  const [layout, setzeLayout] = useState<LayoutName>("cose");
-  const [arten, setzeArten] = useState<Set<string>>(new Set());
-  const [nurUnbestaetigt, setzeNurUnbestaetigt] = useState(false);
+  const [layout, setzeLayout] = useState<LayoutName>("physik");
+  const [physik, setzePhysik] = useState<PhysikWerte>(PHYSIK_VORGABE);
+  const [labels, setzeLabels] = useState(true);
+  const [einpassen, setzeEinpassen] = useState(0);
+  const [grenze, setzeGrenze] = useState(KARTE_SCHRITT);
   const [fehler, setzeFehler] = useState<string | null>(null);
 
   const cluster = useClusters(state.store, state.scope);
   const detail = useConcept(state.id ?? null, state.store);
   const suchen = useSearch();
+
+  const karte = useGraphMap(
+    {
+      store: state.store,
+      scope: state.scope,
+      type: state.type,
+      status: state.status,
+      q: state.q,
+      cluster_id: state.cluster,
+      orphan: state.orphan,
+      unverified: state.unverified,
+      include_tombstones: state.tombstones,
+      kinds: gewaehlteArten.length > 0 ? gewaehlteArten : undefined,
+      limit: grenze,
+    },
+    modus === "karte",
+  );
 
   const aufnehmen = useCallback((ergebnis: Traversal) => {
     setzeAusschnitt((vorher) => {
@@ -60,9 +115,7 @@ export function GraphExplorer({ state, onChange, edgeKinds }: GraphExplorerProps
   const aufklappen = useCallback(
     async (id: string, store: string) => {
       try {
-        aufnehmen(
-          await get<Traversal>(`/api/v1/graph/neighbors/${encodeURI(id)}`, { store }),
-        );
+        aufnehmen(await get<Traversal>(`/api/v1/graph/neighbors/${encodeURI(id)}`, { store }));
         setzeFehler(null);
       } catch (ausnahme) {
         setzeFehler(ausnahme instanceof Error ? ausnahme.message : String(ausnahme));
@@ -74,163 +127,358 @@ export function GraphExplorer({ state, onChange, edgeKinds }: GraphExplorerProps
   // Ein Knoten aus der URL wird beim Öffnen aufgeklappt: Ein geteilter Link soll denselben
   // Ausschnitt zeigen und nicht eine leere Fläche mit einem markierten Punkt.
   useEffect(() => {
-    if (state.id !== undefined) {
+    if (modus === "reise" && state.id !== undefined) {
       void aufklappen(state.id, state.store);
     }
-  }, [state.id, state.store, aufklappen]);
+  }, [modus, state.id, state.store, aufklappen]);
 
-  const sichtbar = useMemo(() => {
-    const kanten = [...ausschnitt.edges.values()].filter((kante) => {
-      if (arten.size > 0 && !arten.has(kante.kind)) {
-        return false;
+  /**
+   * Was gezeichnet wird — je Modus aus einer anderen Quelle, aber in derselben Form.
+   *
+   * Das Gewicht ist der einzige Unterschied, der bis zur Zeichenfläche durchschlägt: In der Reise
+   * ist es der Score der Traversierung (§12.3), in der Karte der Grad im Ausschnitt. Beides auf
+   * 0…1 normiert, weil die Fläche nur "wie groß" versteht und nicht "wie wichtig warum".
+   */
+  const bild = useMemo((): { knoten: CanvasNode[]; kanten: Edge[]; gedeckelt: boolean } => {
+    if (modus === "karte") {
+      const daten = karte.data;
+      if (daten === undefined) {
+        return { knoten: [], kanten: [], gedeckelt: false };
       }
-      if (!nurUnbestaetigt) {
-        return true;
-      }
-      return kante.generated_by !== null && !kante.curated && kante.verified_at === null;
-    });
-    return { knoten: [...ausschnitt.nodes.values()], kanten };
-  }, [ausschnitt, arten, nurUnbestaetigt]);
+      const hoechster = Math.max(1, ...daten.nodes.map((knoten) => knoten.degree));
+      return {
+        knoten: daten.nodes.map((knoten) => ({
+          id: knoten.id,
+          store: knoten.store,
+          type: knoten.type,
+          title: knoten.title,
+          status: knoten.status,
+          gewicht: knoten.degree / hoechster,
+        })),
+        kanten: daten.edges,
+        gedeckelt: daten.truncated,
+      };
+    }
+    const kanten = [...ausschnitt.edges.values()].filter(
+      (kante) => gewaehlteArten.length === 0 || gewaehlteArten.includes(kante.kind),
+    );
+    return {
+      knoten: [...ausschnitt.nodes.values()]
+        .filter((knoten) => state.tombstones === true || knoten.status !== "tombstone")
+        .map((knoten) => ({
+          id: knoten.id,
+          store: knoten.store,
+          type: knoten.type,
+          title: knoten.title,
+          status: knoten.status,
+          gewicht: knoten.score,
+        })),
+      kanten,
+      gedeckelt: false,
+    };
+  }, [modus, karte.data, ausschnitt, gewaehlteArten, state.tombstones]);
+
+  const typenImBild = useMemo(
+    () => [...new Set(bild.knoten.map((knoten) => knoten.type))].sort(),
+    [bild.knoten],
+  );
+
+  const umschalten = (art: string): void => {
+    const neu = gewaehlteArten.includes(art)
+      ? gewaehlteArten.filter((eintrag) => eintrag !== art)
+      : [...gewaehlteArten, art];
+    onChange({ kinds: neu.join(",") });
+  };
+
+  const suchfeld = (formular: HTMLFormElement): void => {
+    const query = String(new FormData(formular).get("q") ?? "");
+    if (modus === "karte") {
+      // In der Karte ist die Suche eine Facette wie jede andere: Sie schneidet den Bestand,
+      // statt Treffer in einen bestehenden Ausschnitt zu streuen.
+      onChange({ q: query || undefined });
+      return;
+    }
+    suchen.mutate(
+      { query, store: state.store, granularity: "auto" },
+      {
+        onSuccess: (ergebnis) => {
+          aufnehmen({
+            start: [],
+            nodes: ergebnis.hits,
+            edges: [],
+            hops: 0,
+            truncated: false,
+            queries: 0,
+          });
+          onChange({ q: query || undefined });
+        },
+      },
+    );
+  };
 
   return (
-    <div className="grid h-full grid-cols-[220px_1fr_320px] gap-3">
-      <div className="wg-panel space-y-3 overflow-y-auto">
+    <div className="grid h-full grid-cols-[248px_1fr_340px] gap-3">
+      {/* -- Steuerspalte ---------------------------------------------------- */}
+      <div className="wg-panel flex flex-col gap-4 overflow-y-auto">
         <section>
-          <h2 className="text-sm font-semibold">Kernspace-Übersicht</h2>
-          <p className="text-xs text-slate-500">Der Einstieg — kein Suchfeld (§17.2).</p>
-          <ul className="mt-2 space-y-1 text-sm">
-            {(cluster.data?.items ?? []).map((eintrag) => (
-              <li key={eintrag.id}>
-                <button
-                  type="button"
-                  className="text-left underline"
-                  onClick={() => onChange({ id: eintrag.id })}
-                >
-                  {eintrag.title ?? eintrag.id}{" "}
-                  <span className="text-xs text-slate-500">({eintrag.member_count})</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <h2 className="wg-panel-titel">Ansicht</h2>
+          <div className="wg-segment w-full" role="group" aria-label="Graph-Modus">
+            <button
+              type="button"
+              className="flex-1"
+              aria-pressed={modus === "karte"}
+              onClick={() => onChange({ mode: "karte" })}
+            >
+              Karte
+            </button>
+            <button
+              type="button"
+              className="flex-1"
+              aria-pressed={modus === "reise"}
+              onClick={() => onChange({ mode: "reise" })}
+            >
+              Traversierung
+            </button>
+          </div>
+          <p className="wg-hinweis mt-1.5">
+            {modus === "karte"
+              ? "Der gefilterte Bestand auf einen Blick."
+              : "Hop für Hop aufklappen — Doppelklick auf einen Knoten."}
+          </p>
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold">Suche</h2>
-          <p className="text-xs text-slate-500">Der Weg, wenn die Übersicht nicht hilft (§12.4).</p>
+          <h2 className="wg-panel-titel">Suche</h2>
           <form
-            className="mt-1 space-y-1"
+            className="flex gap-1.5"
             onSubmit={(ereignis) => {
               ereignis.preventDefault();
-              const query = String(new FormData(ereignis.currentTarget).get("q") ?? "");
-              suchen.mutate(
-                { query, store: state.store, granularity: "auto" },
-                {
-                  onSuccess: (ergebnis) => {
-                    aufnehmen({
-                      start: [],
-                      nodes: ergebnis.hits,
-                      edges: [],
-                      hops: 0,
-                      truncated: false,
-                      queries: 0,
-                    });
-                    onChange({ q: query });
-                  },
-                },
-              );
+              suchfeld(ereignis.currentTarget);
             }}
           >
-            <input className="wg-input" name="q" aria-label="Suchbegriff" defaultValue={state.q} />
-            <button type="submit" className="wg-button">
-              Suchen
+            <input
+              className="wg-input"
+              name="q"
+              aria-label="Suchbegriff"
+              placeholder="Begriff …"
+              defaultValue={state.q}
+            />
+            <button type="submit" className="wg-button wg-button-primaer shrink-0">
+              Los
             </button>
           </form>
-          {suchen.data && (
-            <p className="mt-1 text-xs text-slate-500">
-              Modus: <strong>{suchen.data.mode}</strong>
+          {modus === "reise" && suchen.data && (
+            <p className="wg-hinweis mt-1">
+              Modus: <strong className="text-ton-700">{suchen.data.mode}</strong>
             </p>
           )}
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold">Filter</h2>
-          <fieldset className="space-y-1 text-sm">
-            <legend className="sr-only">Kantenarten</legend>
-            {edgeKinds.map((art) => (
-              <label key={art} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={arten.has(art)}
-                  onChange={(ereignis) =>
-                    setzeArten((vorher) => {
-                      const neu = new Set(vorher);
-                      if (ereignis.target.checked) {
-                        neu.add(art);
-                      } else {
-                        neu.delete(art);
-                      }
-                      return neu;
-                    })
-                  }
-                />
-                {art}
-              </label>
-            ))}
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={nurUnbestaetigt}
-                onChange={(ereignis) => setzeNurUnbestaetigt(ereignis.target.checked)}
-              />
-              nur unbestätigte
-            </label>
-          </fieldset>
+          <h2 className="wg-panel-titel">Kernspace-Übersicht</h2>
+          <p className="wg-hinweis mb-1.5">
+            {modus === "karte"
+              ? "Ein Cluster schneidet die Karte auf seine Mitglieder."
+              : "Der Einstieg — kein Suchfeld (§17.2)."}
+          </p>
+          <ul className="-mx-1 max-h-56 space-y-0.5 overflow-y-auto">
+            {(cluster.data?.items ?? []).map((eintrag) => {
+              const aktiv = modus === "karte" ? state.cluster === eintrag.id : state.id === eintrag.id;
+              return (
+                <li key={eintrag.id}>
+                  <button
+                    type="button"
+                    className={`wg-eintrag flex items-baseline justify-between gap-2 ${
+                      aktiv ? "wg-eintrag-aktiv" : ""
+                    }`}
+                    onClick={() =>
+                      modus === "karte"
+                        ? onChange({ cluster: aktiv ? undefined : eintrag.id })
+                        : onChange({ id: eintrag.id })
+                    }
+                  >
+                    <span className="truncate">{eintrag.title ?? eintrag.id}</span>
+                    <span className="shrink-0 text-2xs tabular-nums opacity-60">
+                      {eintrag.member_count}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold">Layout</h2>
-          <select
-            className="wg-input"
-            aria-label="Layout"
-            value={layout}
-            onChange={(ereignis) => setzeLayout(ereignis.target.value as LayoutName)}
-          >
-            <option value="cose">kraftbasiert</option>
-            <option value="concentric">konzentrisch (Hop-Distanz)</option>
-            <option value="breadthfirst">hierarchisch (member)</option>
-          </select>
+          <h2 className="wg-panel-titel">Filter</h2>
+          <div className="space-y-2">
+            <label className="block">
+              <span className="wg-label">Scope</span>
+              <select
+                className="wg-input"
+                aria-label="Scope"
+                value={state.scope ?? ""}
+                onChange={(ereignis) => onChange({ scope: ereignis.target.value || undefined })}
+              >
+                <option value="">alle</option>
+                {config.scopes
+                  .filter((eintrag) => eintrag.store === state.store)
+                  .map((eintrag) => (
+                    <option key={eintrag.name} value={eintrag.name}>
+                      {eintrag.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="wg-label">Typ</span>
+              <select
+                className="wg-input"
+                aria-label="Typ"
+                value={state.type ?? ""}
+                onChange={(ereignis) => onChange({ type: ereignis.target.value || undefined })}
+              >
+                <option value="">alle</option>
+                {config.concept_types
+                  .filter((eintrag) => eintrag.stores.includes(state.store))
+                  .map((eintrag) => (
+                    <option key={eintrag.name} value={eintrag.name}>
+                      {eintrag.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <fieldset>
+              <legend className="wg-label">Kantenarten</legend>
+              <div className="-mx-1 max-h-40 overflow-y-auto">
+                {kantenarten.map((art) => (
+                  <label key={art} className="wg-check">
+                    <input
+                      type="checkbox"
+                      checked={gewaehlteArten.includes(art)}
+                      onChange={() => umschalten(art)}
+                    />
+                    <span className="truncate font-mono text-xs">{art}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="wg-hinweis">Nichts angehakt heißt: alle.</p>
+            </fieldset>
+
+            <fieldset className="-mx-1">
+              <legend className="wg-label mx-1">Nur zeigen</legend>
+              <label className="wg-check">
+                <input
+                  type="checkbox"
+                  checked={state.unverified === true}
+                  onChange={(ereignis) =>
+                    onChange({ unverified: ereignis.target.checked || undefined })
+                  }
+                />
+                nur unbestätigte
+              </label>
+              <label className="wg-check">
+                <input
+                  type="checkbox"
+                  checked={state.orphan === true}
+                  onChange={(ereignis) => onChange({ orphan: ereignis.target.checked || undefined })}
+                />
+                nur lose
+              </label>
+              <label className="wg-check">
+                <input
+                  type="checkbox"
+                  checked={state.tombstones === true}
+                  onChange={(ereignis) =>
+                    onChange({ tombstones: ereignis.target.checked || undefined })
+                  }
+                />
+                Grabsteine zeigen
+              </label>
+            </fieldset>
+          </div>
         </section>
+
+        <GraphLegend typen={typenImBild} alleTypen={alleTypen} />
       </div>
 
-      <div className="wg-panel relative h-full p-0">
-        {sichtbar.knoten.length === 0 ? (
-          <p className="p-4 text-sm text-slate-500">
-            Ein Cluster links auswählen — oder suchen, wenn die Übersicht nicht weiterhilft.
-          </p>
+      {/* -- Zeichenfläche ---------------------------------------------------- */}
+      <div className="wg-panel-blank relative h-full">
+        <GraphControls
+          layout={layout}
+          onLayout={setzeLayout}
+          physik={physik}
+          onPhysik={setzePhysik}
+          labels={labels}
+          onLabels={setzeLabels}
+          onEinpassen={() => setzeEinpassen((vorher) => vorher + 1)}
+          knoten={bild.knoten.length}
+          kanten={bild.kanten.length}
+          gedeckelt={bild.gedeckelt}
+        />
+
+        {bild.knoten.length === 0 ? (
+          <div className="wg-leer">
+            {karte.isFetching ? (
+              <p role="status" className="text-sm text-ton-500">
+                Der Ausschnitt wird geladen …
+              </p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-ton-700">Nichts zu zeichnen.</p>
+                <p className="wg-hinweis max-w-xs">
+                  {modus === "karte"
+                    ? "Kein Konzept passt auf diese Filter. Ein Häkchen weniger, und der Bestand kommt zurück."
+                    : "Ein Cluster links auswählen — oder suchen, wenn die Übersicht nicht weiterhilft."}
+                </p>
+              </>
+            )}
+          </div>
         ) : (
           <GraphCanvas
-            nodes={sichtbar.knoten}
-            edges={sichtbar.kanten}
+            nodes={bild.knoten}
+            edges={bild.kanten}
             selected={state.id}
             layout={layout}
+            physik={physik}
+            labels={labels}
+            einpassen={einpassen}
+            typen={alleTypen}
             onSelect={(id, store) => onChange({ id, store })}
             onExpand={(id, store) => void aufklappen(id, store)}
           />
         )}
-        {fehler !== null && (
-          <p role="alert" className="absolute bottom-2 left-2 text-xs text-red-700">
-            {fehler}
+
+        {/* §17.3: "Große Nachbarschaften werden gedeckelt und mit 'mehr laden' erweitert." */}
+        {bild.gedeckelt && grenze < KARTE_MAX && (
+          <button
+            type="button"
+            className="wg-button absolute bottom-3 left-1/2 z-10 -translate-x-1/2 shadow-schwebend"
+            onClick={() => setzeGrenze((vorher) => Math.min(KARTE_MAX, vorher * 2))}
+          >
+            mehr laden
+          </button>
+        )}
+
+        {(fehler !== null || karte.isError) && (
+          <p role="alert" className="wg-fehler absolute bottom-3 left-3 z-10">
+            {fehler ?? karte.error?.message}
           </p>
         )}
       </div>
 
+      {/* -- Detailspalte ----------------------------------------------------- */}
       {detail.data ? (
-        <ConceptPanel
-          detail={detail.data}
-          onOpen={(id, store) => onChange({ id, store })}
-        />
+        <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
       ) : (
-        <div className="wg-panel text-sm text-slate-500">Kein Knoten ausgewählt.</div>
+        <div className="wg-panel wg-leer">
+          <p className="text-sm font-medium text-ton-700">Kein Knoten ausgewählt.</p>
+          <p className="wg-hinweis max-w-[15rem]">
+            Ein Klick in den Graphen hebt die Nachbarschaft hervor und zeigt hier Felder,
+            Provenienz und Journal.
+          </p>
+        </div>
       )}
     </div>
   );

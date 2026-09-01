@@ -49,13 +49,14 @@ export function DocumentBrowser({
 
   return (
     <div className="grid h-full grid-cols-[1fr_340px] gap-3">
-      <div className="wg-panel flex h-full flex-col gap-2 overflow-hidden">
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="text-sm">
-            Suche
+      <div className="wg-panel-blank flex h-full flex-col overflow-hidden">
+        <div className="flex flex-wrap items-end gap-3 border-b border-ton-200 bg-ton-50 p-3">
+          <label className="min-w-[12rem] flex-1">
+            <span className="wg-label">Suche</span>
             <input
               className="wg-input"
               aria-label="Suche"
+              placeholder="Titel oder Inhalt …"
               defaultValue={state.q}
               onBlur={(ereignis) => {
                 setzeCursor(undefined);
@@ -63,8 +64,8 @@ export function DocumentBrowser({
               }}
             />
           </label>
-          <label className="text-sm">
-            Scope
+          <label className="w-40">
+            <span className="wg-label">Scope</span>
             <select
               className="wg-input"
               aria-label="Scope"
@@ -84,8 +85,8 @@ export function DocumentBrowser({
                 ))}
             </select>
           </label>
-          <label className="text-sm">
-            Typ
+          <label className="w-44">
+            <span className="wg-label">Typ</span>
             <select
               className="wg-input"
               aria-label="Typ"
@@ -103,8 +104,8 @@ export function DocumentBrowser({
               ))}
             </select>
           </label>
-          <label className="text-sm">
-            Status
+          <label className="w-32">
+            <span className="wg-label">Status</span>
             <input
               className="wg-input"
               aria-label="Status-Filter"
@@ -115,68 +116,71 @@ export function DocumentBrowser({
               }}
             />
           </label>
-          <label className="flex items-center gap-1 text-sm">
-            <input
-              type="checkbox"
-              checked={nurLose}
-              onChange={(ereignis) => {
-                setzeCursor(undefined);
-                setzeNurLose(ereignis.target.checked);
-              }}
-            />
-            nur lose
-          </label>
-          <label className="flex items-center gap-1 text-sm">
-            <input
-              type="checkbox"
-              checked={nurKuratiert}
-              onChange={(ereignis) => {
-                setzeCursor(undefined);
-                setzeNurKuratiert(ereignis.target.checked);
-              }}
-            />
-            nur kuratiert
-          </label>
+          <div className="flex gap-1 pb-0.5">
+            <label className="wg-check">
+              <input
+                type="checkbox"
+                checked={nurLose}
+                onChange={(ereignis) => {
+                  setzeCursor(undefined);
+                  setzeNurLose(ereignis.target.checked);
+                }}
+              />
+              nur lose
+            </label>
+            <label className="wg-check">
+              <input
+                type="checkbox"
+                checked={nurKuratiert}
+                onChange={(ereignis) => {
+                  setzeCursor(undefined);
+                  setzeNurKuratiert(ereignis.target.checked);
+                }}
+              />
+              nur kuratiert
+            </label>
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-white text-left text-xs uppercase text-slate-500">
+          <table className="wg-tabelle">
+            <thead>
               <tr>
-                <th className="p-1">Titel</th>
-                <th className="p-1">Typ</th>
-                <th className="p-1">Scope</th>
-                <th className="p-1">Status</th>
-                <th className="p-1">Quelle</th>
+                <th>Titel</th>
+                <th>Typ</th>
+                <th>Scope</th>
+                <th>Status</th>
+                <th>Quelle</th>
               </tr>
             </thead>
             <tbody>
               {(seite.data?.items ?? []).map((eintrag) => (
                 <tr
                   key={eintrag.id}
-                  className={`cursor-pointer border-t hover:bg-slate-50 ${
-                    state.id === eintrag.id ? "bg-slate-100" : ""
-                  }`}
+                  className="cursor-pointer"
+                  aria-selected={state.id === eintrag.id}
                   onClick={() => onChange({ id: eintrag.id })}
                 >
-                  <td className="p-1">{eintrag.title ?? eintrag.id}</td>
-                  <td className="p-1">{eintrag.type}</td>
-                  <td className="p-1">{eintrag.scope}</td>
-                  <td className="p-1">{eintrag.status}</td>
-                  <td className="p-1">{eintrag.source_name ?? "lokal"}</td>
+                  <td className="font-medium text-ton-800">{eintrag.title ?? eintrag.id}</td>
+                  <td className="text-ton-600">{eintrag.type}</td>
+                  <td className="text-ton-600">{eintrag.scope}</td>
+                  <td>
+                    <span className="wg-chip">{eintrag.status}</span>
+                  </td>
+                  <td className="text-ton-500">{eintrag.source_name ?? "lokal"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {seite.data?.items.length === 0 && (
-            <p className="p-2 text-sm text-slate-500">Kein Treffer.</p>
+            <p className="p-4 text-sm text-ton-500">Kein Treffer.</p>
           )}
         </div>
 
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 border-t border-ton-200 bg-ton-50 p-2">
           <button
             type="button"
-            className="wg-button"
+            className="wg-button wg-button-klein"
             disabled={cursor === undefined}
             onClick={() => setzeCursor(undefined)}
           >
@@ -184,19 +188,27 @@ export function DocumentBrowser({
           </button>
           <button
             type="button"
-            className="wg-button"
+            className="wg-button wg-button-klein"
             disabled={!seite.data?.next_cursor}
             onClick={() => setzeCursor(seite.data?.next_cursor ?? undefined)}
           >
             Weiter
           </button>
+          <span className="ml-auto text-2xs tabular-nums text-ton-500">
+            {seite.data?.items.length ?? 0} Zeilen
+          </span>
         </div>
       </div>
 
       {detail.data ? (
         <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
       ) : (
-        <div className="wg-panel text-sm text-slate-500">Zeile auswählen.</div>
+        <div className="wg-panel wg-leer">
+          <p className="text-sm font-medium text-ton-700">Zeile auswählen.</p>
+          <p className="wg-hinweis max-w-[15rem]">
+            Die Detailspalte zeigt Felder, Provenienz, Kanten und das Änderungsjournal.
+          </p>
+        </div>
       )}
     </div>
   );

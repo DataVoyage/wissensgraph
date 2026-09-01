@@ -71,14 +71,24 @@ async function auswerten<T>(antwort: Response): Promise<T> {
   return nutzlast as T;
 }
 
-/** Eine GET-Anfrage; `params` werden als Query angehängt, `undefined` entfällt. */
+/**
+ * Eine GET-Anfrage; `params` werden als Query angehängt, `undefined` entfällt.
+ *
+ * Eine Liste wird zu mehreren gleichnamigen Parametern (`kinds=member&kinds=references`) und
+ * nicht zu einer kommagetrennten Zeichenkette. So erwartet FastAPI eine `list[str]`, und eine
+ * Kantenart mit Komma im Namen — die Konfiguration verbietet sie nicht — bliebe heil.
+ */
 export async function get<T>(
   pfad: string,
-  params: Record<string, string | number | boolean | null | undefined> = {},
+  params: Record<string, string | number | boolean | string[] | null | undefined> = {},
 ): Promise<T> {
   const suche = new URLSearchParams();
   for (const [name, wert] of Object.entries(params)) {
-    if (wert !== undefined && wert !== null && wert !== "") {
+    if (Array.isArray(wert)) {
+      for (const eintrag of wert) {
+        suche.append(name, eintrag);
+      }
+    } else if (wert !== undefined && wert !== null && wert !== "") {
       suche.set(name, String(wert));
     }
   }

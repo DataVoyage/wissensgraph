@@ -90,6 +90,38 @@ export const KONFIGURATION = {
   api: { auth_mode: "token" },
 };
 
+/**
+ * Ein Kartenausschnitt in der Form, die `/graph/map` liefert (§17.2 Ansicht 1).
+ *
+ * Die Karte ist der Vorgabemodus der Graph-Ansicht; ohne eine Antwort darauf liefe jeder Test
+ * dieser Ansicht in einen 404 und prüfte anschließend die Fehleranzeige statt der Sache.
+ */
+export function karte(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    store: "shared",
+    nodes: [],
+    edges: [],
+    edge_count: 0,
+    next_cursor: null,
+    truncated: false,
+    ...overrides,
+  };
+}
+
+/** Ein Kartenknoten — mit `degree` statt `score`, weil eine Karte keinen Startpunkt hat. */
+export function kartenknoten(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "confluence:1",
+    store: "shared",
+    scope: "engineering",
+    type: "Confluence Page",
+    title: "Eine Seite",
+    status: "stable",
+    degree: 1,
+    ...overrides,
+  };
+}
+
 /** Ein Konzept in der Form, die die API liefert. */
 export function konzept(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

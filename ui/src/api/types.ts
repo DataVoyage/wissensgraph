@@ -109,6 +109,34 @@ export interface Traversal {
 }
 
 /**
+ * Ein Knoten der Übersichtskarte (§17.2 Ansicht 1, "Karte").
+ *
+ * Er trägt bewusst weder `hop` noch `score`: Beides entsteht relativ zu einem Startknoten, und
+ * eine Karte hat keinen. Was sie stattdessen weiß, ist der Grad **im gezeigten Ausschnitt** — die
+ * Zahl der Kanten, die man sieht, nicht die, die es gibt.
+ */
+export interface MapNode {
+  id: string;
+  store: string;
+  scope: string;
+  type: string;
+  title: string | null;
+  status: string;
+  degree: number;
+}
+
+/** Ein gefilterter Ausschnitt des gesamten Bestands (§16.2, `/graph/map`). */
+export interface GraphMap {
+  store: string;
+  nodes: MapNode[];
+  edges: Edge[];
+  edge_count: number;
+  next_cursor: string | null;
+  /** Ob der Bestand größer ist als das Gezeigte — die Karte sagt es, statt es zu verschweigen. */
+  truncated: boolean;
+}
+
+/**
  * Das Ergebnis einer Suche; `mode` sagt, wie gesucht wurde (§12.4).
  *
  * Das Feld heißt `hits` und nicht `nodes`: Ein Treffer ist etwas anderes als ein Knoten einer

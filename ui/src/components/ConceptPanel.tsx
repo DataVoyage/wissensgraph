@@ -11,6 +11,7 @@
 import { useState } from "react";
 
 import { useEdgeAction, useHistory, usePatchConcept, useUndo } from "../api/hooks";
+import { farbeFuerKante, istModellvorschlag, istUnbestaetigt } from "../theme";
 import type { ChangeEntry, ConceptDetail, Edge } from "../api/types";
 
 export interface ConceptPanelProps {
@@ -25,11 +26,15 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
   const gesperrt = new Set(detail.locked_fields);
 
   return (
-    <aside className="wg-panel flex h-full flex-col gap-3 overflow-y-auto" aria-label="Details">
-      <header>
-        <h2 className="text-base font-semibold">{detail.title ?? detail.id}</h2>
-        <p className="text-xs text-slate-500">
-          {detail.id} · {detail.type} · {detail.scope}
+    <aside className="wg-panel flex h-full flex-col gap-4 overflow-y-auto" aria-label="Details">
+      <header className="-m-3 mb-0 border-b border-ton-200 bg-ton-50 p-3">
+        <h2 className="text-base font-semibold leading-tight text-ton-900">
+          {detail.title ?? detail.id}
+        </h2>
+        <p className="mt-1 flex flex-wrap items-center gap-1">
+          <span className="wg-chip">{detail.id}</span>
+          <span className="wg-chip">{detail.type}</span>
+          <span className="wg-chip">{detail.scope}</span>
         </p>
         <StoreMarke store={detail.store} />
       </header>
@@ -45,7 +50,7 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
       )}
 
       <section>
-        <h3 className="text-sm font-medium">Status</h3>
+        <h3 className="wg-panel-titel">Status</h3>
         <div className="flex gap-2">
           <input
             className="wg-input"
@@ -55,7 +60,7 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
           />
           <button
             type="button"
-            className="wg-button"
+            className="wg-button wg-button-primaer shrink-0"
             disabled={status === detail.status || patchen.isPending}
             onClick={() =>
               patchen.mutate({ id: detail.id, store: detail.store, patch: { status } })
@@ -64,7 +69,7 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
             Setzen
           </button>
         </div>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="wg-hinweis mt-1.5">
           Status und Tags gehören dem Menschen — auch an gespiegelten Inhalten (§17.4).
         </p>
       </section>
@@ -75,8 +80,8 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
 
       {detail.clusters.length > 0 && (
         <section>
-          <h3 className="text-sm font-medium">Cluster</h3>
-          <ul className="text-sm">
+          <h3 className="wg-panel-titel">Cluster</h3>
+          <ul className="space-y-0.5 text-sm text-ton-700">
             {detail.clusters.map((cluster) => (
               <li key={cluster.id}>{cluster.title ?? cluster.id}</li>
             ))}
@@ -95,9 +100,8 @@ function StoreMarke({ store }: { store: string }): JSX.Element {
   const persoenlich = store === "personal";
   return (
     <span
-      className={`mt-1 inline-block rounded px-2 py-0.5 text-xs text-white ${
-        persoenlich ? "bg-personal" : "bg-shared"
-      }`}
+      className={`mt-2 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-2xs font-medium
+        text-ton-0 ${persoenlich ? "bg-personal" : "bg-shared"}`}
     >
       {persoenlich ? "persönlich — verlässt diesen Rechner nicht" : "geteilt"}
     </span>
@@ -115,19 +119,23 @@ function Feld({
 }): JSX.Element {
   return (
     <section>
-      <h3 className="flex items-center gap-2 text-sm font-medium">
+      <h3 className="wg-panel-titel">
         {label}
         {gesperrt && (
           <span
             data-testid={`gesperrt-${label}`}
             title="Dieses Feld stammt aus der Quelle und ist gesperrt (§17.4)."
-            className="rounded bg-slate-200 px-1 text-xs text-slate-600"
+            className="wg-chip normal-case tracking-normal"
           >
             🔒 aus der Quelle
           </span>
         )}
       </h3>
-      <div className={`text-sm ${gesperrt ? "wg-locked rounded border px-2 py-1" : ""}`}>
+      <div
+        className={`text-sm leading-relaxed text-ton-700 ${
+          gesperrt ? "wg-locked rounded border px-2 py-1" : ""
+        }`}
+      >
         {children}
       </div>
     </section>
@@ -137,16 +145,16 @@ function Feld({
 function Provenienz({ detail }: { detail: ConceptDetail }): JSX.Element {
   return (
     <section>
-      <h3 className="text-sm font-medium">Provenienz</h3>
-      <dl className="grid grid-cols-2 gap-x-2 text-xs">
-        <dt>Quelle</dt>
-        <dd>{detail.source_name ?? "lokal angelegt"}</dd>
-        <dt>Erzeugt von</dt>
-        <dd>{detail.generated_by ?? "—"}</dd>
-        <dt>Bestätigt von</dt>
-        <dd>{detail.verified_by ?? "—"}</dd>
-        <dt>Kuratiert</dt>
-        <dd>{detail.curated ? "ja" : "nein"}</dd>
+      <h3 className="wg-panel-titel">Provenienz</h3>
+      <dl className="grid grid-cols-[7rem_1fr] gap-x-2 gap-y-1 text-xs">
+        <dt className="text-ton-500">Quelle</dt>
+        <dd className="truncate text-ton-700">{detail.source_name ?? "lokal angelegt"}</dd>
+        <dt className="text-ton-500">Erzeugt von</dt>
+        <dd className="truncate text-ton-700">{detail.generated_by ?? "—"}</dd>
+        <dt className="text-ton-500">Bestätigt von</dt>
+        <dd className="truncate text-ton-700">{detail.verified_by ?? "—"}</dd>
+        <dt className="text-ton-500">Kuratiert</dt>
+        <dd className="text-ton-700">{detail.curated ? "ja" : "nein"}</dd>
       </dl>
     </section>
   );
@@ -169,31 +177,45 @@ function Kantenliste({
   }
   return (
     <section>
-      <h3 className="text-sm font-medium">{titel}</h3>
-      <ul className="space-y-1 text-sm">
+      <h3 className="wg-panel-titel">
+        {titel}
+        <span className="ml-auto font-normal tabular-nums">{kanten.length}</span>
+      </h3>
+      <ul className="space-y-0.5 text-sm">
         {kanten.map((kante) => {
           const ziel = kante[feld];
           const zielStore = feld === "to_id" ? kante.to_store : kante.from_store;
-          const unbestaetigt =
-            kante.generated_by !== null && !kante.curated && kante.verified_at === null;
+          const offen = istUnbestaetigt(kante);
           return (
-            <li key={kante.id} className="flex items-center gap-2">
-              <span className="rounded bg-slate-100 px-1 text-xs">{kante.kind}</span>
+            <li
+              key={kante.id}
+              className={`flex items-center gap-1.5 rounded px-1 py-1 ${
+                istModellvorschlag(kante) ? "bg-signal-50" : ""
+              }`}
+            >
+              {/* Die Herkunft steht als Strich davor — dieselbe Farbe wie im Graphen, damit die
+                  Liste und das Bild dieselbe Sprache sprechen (§17.2). */}
+              <span
+                aria-hidden="true"
+                title={offen ? "Modellvorschlag, unbestätigt" : "Herkunft dieser Kante"}
+                className="h-4 w-0.5 shrink-0 rounded"
+                style={{ backgroundColor: farbeFuerKante(kante.generated_by) }}
+              />
+              <span className="wg-chip shrink-0">{kante.kind}</span>
               <button
                 type="button"
-                className="flex-1 truncate text-left underline"
+                className="flex-1 truncate text-left text-ton-700 hover:text-signal-600 hover:underline"
                 onClick={() => onOpen(ziel, zielStore)}
               >
                 {ziel}
               </button>
-              {unbestaetigt && (
+              {offen && (
                 <>
-                  <span className="text-xs text-modell" title="Vorschlag eines Modells">
-                    unbestätigt
-                  </span>
+                  <span className="sr-only">unbestätigt</span>
                   <button
                     type="button"
-                    className="wg-button"
+                    className="wg-button wg-button-klein"
+                    title="Bestätigen"
                     onClick={() =>
                       aktion.mutate({ id: kante.id, action: "verify", store: kante.from_store })
                     }
@@ -202,7 +224,8 @@ function Kantenliste({
                   </button>
                   <button
                     type="button"
-                    className="wg-button"
+                    className="wg-button wg-button-klein wg-button-gefahr"
+                    title="Verwerfen"
                     onClick={() =>
                       aktion.mutate({ id: kante.id, action: "reject", store: kante.from_store })
                     }
@@ -229,19 +252,22 @@ function Historie({
   const rueckgaengig = useUndo();
   return (
     <section>
-      <h3 className="text-sm font-medium">Änderungsjournal</h3>
+      <h3 className="wg-panel-titel">Änderungsjournal</h3>
       {eintraege.length === 0 ? (
-        <p className="text-xs text-slate-500">Noch keine Änderung.</p>
+        <p className="wg-hinweis">Noch keine Änderung.</p>
       ) : (
-        <ul className="space-y-1 text-xs">
+        <ul className="space-y-0.5 text-xs">
           {eintraege.slice(0, 12).map((eintrag) => (
-            <li key={eintrag.id ?? `${eintrag.changed_at}`} className="flex items-center gap-2">
-              <span className="rounded bg-slate-100 px-1">{eintrag.change_type}</span>
-              <span className="flex-1 truncate">{eintrag.actor}</span>
+            <li
+              key={eintrag.id ?? `${eintrag.changed_at}`}
+              className="flex items-center gap-1.5 rounded px-1 py-1 hover:bg-ton-50"
+            >
+              <span className="wg-chip shrink-0">{eintrag.change_type}</span>
+              <span className="flex-1 truncate text-ton-600">{eintrag.actor}</span>
               {eintrag.undoable && eintrag.id !== null && (
                 <button
                   type="button"
-                  className="wg-button"
+                  className="wg-button wg-button-klein wg-button-still"
                   onClick={() => rueckgaengig.mutate({ entry_id: eintrag.id as number, store })}
                 >
                   rückgängig
@@ -252,7 +278,7 @@ function Historie({
         </ul>
       )}
       {rueckgaengig.isError && (
-        <p role="alert" className="mt-1 text-xs text-red-700">
+        <p role="alert" className="wg-fehler mt-1.5">
           {rueckgaengig.error.message}
         </p>
       )}

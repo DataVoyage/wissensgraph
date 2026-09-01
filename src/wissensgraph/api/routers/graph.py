@@ -110,6 +110,59 @@ def overview(
     }
 
 
+@router.get("/map", summary="Gefilterter Ausschnitt des gesamten Bestands")
+def graph_map(
+    runtime: RuntimeDep,
+    settings: SettingsDep,
+    actor: ActorDep,
+    store: Annotated[str | None, Query()] = None,
+    scope: Annotated[str | None, Query()] = None,
+    type: Annotated[str | None, Query(alias="type")] = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    q: Annotated[str | None, Query()] = None,
+    cluster_id: Annotated[str | None, Query()] = None,
+    orphan: Annotated[bool | None, Query()] = None,
+    curated: Annotated[bool | None, Query()] = None,
+    unverified: Annotated[bool | None, Query()] = None,
+    include_tombstones: Annotated[bool, Query()] = False,
+    kinds: Annotated[list[str] | None, Query()] = None,
+    limit: Annotated[int | None, Query(ge=1, le=2000)] = None,
+    cursor: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Knoten und Kanten für die Kartenansicht (§17.2 Ansicht 1).
+
+    Der Gegenpol zu ``/neighbors``. §17.2 verlangt "kein Vorabladen des Gesamtgraphen", und das
+    gilt weiter — dieser Endpunkt lädt keinen Gesamtgraphen, sondern eine *gedeckelte, gefilterte
+    Seite*, deren Größe der Aufrufer bestimmt und deren Fortsetzung im ``next_cursor`` steht. Der
+    Unterschied zum Aufklappen ist nicht die Menge, sondern die Frage: Wer eine Sammlung noch
+    nicht kennt, hat keinen Startknoten, den er ``/neighbors`` übergeben könnte.
+
+    Die Facetten sind absichtlich dieselben wie bei ``/concepts``: Ein Filter soll in der Karte
+    dasselbe bedeuten wie im Dokumentenbrowser, sonst zeigten zwei Ansichten derselben Einstellung
+    verschiedene Bestände.
+    """
+    del actor
+    gewaehlt = resolve_store(settings, store)
+    ergebnis = runtime.graph.map(
+        store=gewaehlt,
+        filter=ConceptFilter(
+            scope=scope,
+            concept_type=type,
+            status=status_filter,
+            query=q,
+            cluster_id=cluster_id,
+            orphan=orphan,
+            curated=curated,
+            unverified=unverified,
+            include_tombstones=include_tombstones,
+        ),
+        limit=limit,
+        cursor=cursor,
+        kinds=kinds,
+    )
+    return ergebnis.as_dict()
+
+
 @router.get("/neighbors/{concept_id:path}", summary="Ein Hop — für inkrementelles Aufklappen")
 def neighbors(
     concept_id: str,

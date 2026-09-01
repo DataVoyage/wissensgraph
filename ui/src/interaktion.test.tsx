@@ -10,13 +10,21 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GraphCanvas } from "./components/GraphCanvas";
+import { GraphCanvas, PHYSIK_VORGABE } from "./components/GraphCanvas";
 import { CurationList } from "./views/CurationList";
 import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
 import { Operations } from "./views/Operations";
 import { PersonalArea } from "./views/PersonalArea";
-import { FakeApi, KONFIGURATION, kante, konzept, renderMitQuery } from "./test-support";
+import {
+  FakeApi,
+  KONFIGURATION,
+  kante,
+  karte,
+  kartenknoten,
+  konzept,
+  renderMitQuery,
+} from "./test-support";
 
 let api: FakeApi;
 
@@ -39,6 +47,7 @@ beforeEach(() => {
   window.history.pushState({}, "", "/");
   api = new FakeApi();
   api.on("GET", /config\/effective/, () => KONFIGURATION);
+  api.on("GET", /graph\/map/, () => karte());
   api.on("GET", /\/api\/v1\/clusters\?/, () => ({ store: "shared", items: [], next_cursor: null }));
   api.on("GET", /\/api\/v1\/concepts\?/, () => ({ store: "shared", items: [], next_cursor: null }));
   api.install();
@@ -56,6 +65,7 @@ describe("Zeichenfläche (§17.2)", () => {
         nodes={[knoten("a"), knoten("b", { store: "personal" })] as never}
         edges={[kante({ from_id: "a", to_id: "b", to_store: "personal" })] as never}
         layout="concentric"
+        physik={PHYSIK_VORGABE}
         onSelect={(id) => gewaehlt.push(id)}
       />,
     );
@@ -71,6 +81,7 @@ describe("Zeichenfläche (§17.2)", () => {
         nodes={[knoten("a")] as never}
         edges={[kante({ from_id: "a", to_id: "ausserhalb" })] as never}
         layout="breadthfirst"
+        physik={PHYSIK_VORGABE}
         onSelect={() => undefined}
       />,
     );
@@ -85,6 +96,7 @@ describe("Zeichenfläche (§17.2)", () => {
         edges={[]}
         selected="b"
         layout="cose"
+        physik={PHYSIK_VORGABE}
         onSelect={() => undefined}
       />,
     );
@@ -98,6 +110,7 @@ describe("Zeichenfläche (§17.2)", () => {
         nodes={[knoten("a", { status: "tombstone" })] as never}
         edges={[]}
         layout="cose"
+        physik={PHYSIK_VORGABE}
         onSelect={() => undefined}
       />,
     );
@@ -243,20 +256,40 @@ describe("Dokumentenbrowser — Filter", () => {
 });
 
 describe("Graph-Explorer — Filter und Layout", () => {
-  it("filtert Kanten nach Art und blendet Bestätigtes aus", async () => {
+  it("meldet jeden Filter nach oben, damit er in der URL landet (§17.1)", async () => {
+    // Die Filter der Graph-Ansicht sind Zustand der *Adresse*, nicht der Komponente. Das ist der
+    // Punkt von §17.1 ("damit Ansichten teilbar sind"): Wer einen Ausschnitt bespricht, schickt
+    // einen Link — nicht eine Klickanleitung.
+    const gemerkt: unknown[] = [];
     renderMitQuery(
       <GraphExplorer
         state={{ view: "graph", store: "shared" }}
-        onChange={() => undefined}
-        edgeKinds={["member", "references"]}
+        onChange={(aenderung) => gemerkt.push(aenderung)}
+        config={KONFIGURATION as never}
       />,
     );
 
     await userEvent.click(screen.getByLabelText("member"));
     await userEvent.click(screen.getByLabelText("nur unbestätigte"));
+
+    expect(gemerkt).toContainEqual({ kinds: "member" });
+    expect(gemerkt).toContainEqual({ unverified: true });
+  });
+
+  it("nimmt eine Kantenart wieder aus der Auswahl", async () => {
+    const gemerkt: unknown[] = [];
+    renderMitQuery(
+      <GraphExplorer
+        state={{ view: "graph", store: "shared", kinds: "member,references" }}
+        onChange={(aenderung) => gemerkt.push(aenderung)}
+        config={KONFIGURATION as never}
+      />,
+    );
+
+    expect(screen.getByLabelText("member")).toBeChecked();
     await userEvent.click(screen.getByLabelText("member"));
 
-    expect(screen.getByLabelText("nur unbestätigte")).toBeChecked();
+    expect(gemerkt).toContainEqual({ kinds: "references" });
   });
 
   it("wechselt das Layout", async () => {
@@ -264,21 +297,45 @@ describe("Graph-Explorer — Filter und Layout", () => {
       <GraphExplorer
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
-        edgeKinds={[]}
+        config={KONFIGURATION as never}
       />,
     );
 
-    await userEvent.selectOptions(screen.getByLabelText("Layout"), "breadthfirst");
+    await userEvent.click(screen.getByRole("button", { name: "hierarchisch" }));
 
-    expect(screen.getByLabelText("Layout")).toHaveValue("breadthfirst");
+    expect(screen.getByRole("button", { name: "hierarchisch" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Physik" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("stellt die Physik-Regler erst zur Live-Simulation frei", async () => {
+    // Ein Regler, der nichts bewirkt, ist eine Lüge über das Bedienelement: Abstoßung,
+    // Kantenlänge und Zusammenhalt wirken nur auf `cola` und nicht auf ein Einmal-Layout.
+    renderMitQuery(
+      <GraphExplorer
+        state={{ view: "graph", store: "shared" }}
+        onChange={() => undefined}
+        config={KONFIGURATION as never}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Regler" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "konzentrisch" }));
+
+    expect(screen.getByRole("button", { name: "Regler" })).toBeDisabled();
   });
 
   it("meldet einen gescheiterten Aufklapp-Versuch sichtbar", async () => {
     renderMitQuery(
       <GraphExplorer
-        state={{ view: "graph", store: "shared", id: "confluence:0" }}
+        state={{ view: "graph", store: "shared", mode: "reise", id: "confluence:0" }}
         onChange={() => undefined}
-        edgeKinds={[]}
+        config={KONFIGURATION as never}
       />,
     );
 
@@ -295,15 +352,85 @@ describe("Graph-Explorer — Filter und Layout", () => {
 
     renderMitQuery(
       <GraphExplorer
-        state={{ view: "graph", store: "shared" }}
+        state={{ view: "graph", store: "shared", mode: "reise" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
-        edgeKinds={[]}
+        config={KONFIGURATION as never}
       />,
     );
     await waitFor(() => expect(screen.getByText(/Warehouse/)).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
 
     expect(gemerkt).toContainEqual({ id: "cluster:a" });
+  });
+
+  it("schneidet in der Karte auf das Cluster, statt es aufzuklappen", async () => {
+    // Dieselbe Liste, zwei Bedeutungen — je nach Modus. In der Karte ist ein Cluster eine
+    // Facette; in der Traversierung ist es ein Ausgangspunkt.
+    const gemerkt: unknown[] = [];
+    api.on("GET", /\/api\/v1\/clusters\?/, () => ({
+      store: "shared",
+      items: [{ ...konzept({ id: "cluster:a", title: "Warehouse" }), member_count: 2 }],
+      next_cursor: null,
+    }));
+
+    renderMitQuery(
+      <GraphExplorer
+        state={{ view: "graph", store: "shared" }}
+        onChange={(aenderung) => gemerkt.push(aenderung)}
+        config={KONFIGURATION as never}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText(/Warehouse/)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
+
+    expect(gemerkt).toContainEqual({ cluster: "cluster:a" });
+  });
+
+  it("gibt die Facetten der Karte an die API weiter", async () => {
+    renderMitQuery(
+      <GraphExplorer
+        state={{
+          view: "graph",
+          store: "shared",
+          type: "Confluence Page",
+          unverified: true,
+          kinds: "member,references",
+        }}
+        onChange={() => undefined}
+        config={KONFIGURATION as never}
+      />,
+    );
+
+    await waitFor(() => {
+      const aufruf = api.calls.find((eintrag) => eintrag.url.includes("/graph/map"));
+      expect(aufruf?.url).toContain("type=Confluence+Page");
+      expect(aufruf?.url).toContain("unverified=true");
+      // Eine Liste wird zu mehreren gleichnamigen Parametern, nicht zu einer Zeichenkette.
+      expect(aufruf?.url).toContain("kinds=member&kinds=references");
+    });
+  });
+
+  it("bietet mehr zu laden an, wenn der Ausschnitt gedeckelt ist (§17.3)", async () => {
+    api.on("GET", /graph\/map/, () =>
+      karte({ nodes: [kartenknoten()], truncated: true, next_cursor: "confluence:1" }),
+    );
+
+    renderMitQuery(
+      <GraphExplorer
+        state={{ view: "graph", store: "shared" }}
+        onChange={() => undefined}
+        config={KONFIGURATION as never}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "mehr laden" })).toBeInTheDocument(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "mehr laden" }));
+
+    await waitFor(() =>
+      expect(api.calls.some((eintrag) => eintrag.url.includes("limit=600"))).toBe(true),
+    );
   });
 });
 

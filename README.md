@@ -499,14 +499,104 @@ Bearer-Token wird beim ersten Aufruf abgefragt.
 
 | Ansicht | Was sie tut |
 |---|---|
-| **Graph** | Cluster-Übersicht als Einstieg, dann inkrementelles Aufklappen. Die visuelle Kodierung ist die Kernaussage: `kind` bestimmt den Linienstil, `generated_by` die Farbe, und unbestätigt-automatisch erzeugte Kanten sind **gestrichelt** (Leitprinzip 6). |
+| **Graph** | Die Zentrale, in zwei Modi (siehe unten): **Karte** über den gefilterten Bestand und **Traversierung** Hop für Hop. Mit Live-Physik, Filterleiste und Legende. |
 | **Dokumente** | Filtern und Blättern über alle Konzepte, mit Detailansicht, Provenienz, Kanten und Journal. |
 | **Cluster** | Cluster anlegen, umbenennen, verschmelzen, aufteilen; Mitglieder hinzufügen und entfernen. |
-| **Kuration** | Die offenen Aufgaben nach Confidence sortiert: bestätigen, löschen, verwerfen. |
+| **Kuration** | Die offenen Aufgaben nach Confidence sortiert: bestätigen, löschen, verwerfen. Vollständig über die Tastatur bedienbar (`j`/`k`/`⏎`/`x`/`s`). |
 | **Persönlich** | Notizen und Projekte im `personal`-Store, inklusive Brücken in den `shared`-Store. |
 | **Betrieb** | Läufe starten und live verfolgen (Server-Sent Events), Quellen-Health, Modellverbrauch, Bestandszahlen. |
 
-Drei Eigenschaften, die im Betrieb spürbar sind:
+### 7.1 Die zwei Graph-Modi
+
+Beides ist Ansicht 1 und keine zwei Ansichten — derselbe Graph, einmal aus der Vogelperspektive
+und einmal zu Fuß. Der Modus steht als `mode` in der URL.
+
+| Modus | Endpunkt | Die Frage dahinter |
+|---|---|---|
+| **Karte** (Vorgabe) | `GET /graph/map` | „Was liegt hier überhaupt, wenn ich es so einschränke?" Der gefilterte Bestand ohne Ausgangspunkt. Knotengröße = Grad **im Ausschnitt**. |
+| **Traversierung** | `GET /graph/neighbors/{id}` | „Woran hängt *das* hier?" Doppelklick klappt einen Hop auf, der Ausschnitt wächst. Knotengröße = Score aus §12.3. |
+
+Die Karte lädt **keinen** Gesamtgraphen: Sie holt eine gedeckelte, gefilterte Seite und weist den
+Rest als Rest aus — steht `truncated`, erscheint ein „mehr laden" und die Kopfzeile schreibt
+`(Ausschnitt)` neben die Knotenzahl. Der Unterschied zum Aufklappen ist nicht die Datenmenge,
+sondern die Frage: Wer eine Sammlung noch nicht kennt, hat keinen Startknoten, den er nennen
+könnte.
+
+### 7.2 Physik und Steuerung
+
+Das Vorgabe-Layout ist **Physik**: Der Graph sortiert sich sichtbar ein, und wer einen Knoten
+anfasst und zieht, verformt ihn, statt einen Punkt zu verschieben. Die Simulation läuft dabei
+**nicht dauerhaft** — sie kommt zur Ruhe und startet wieder, wenn jemand einen Knoten anfasst.
+Der Grund steht in §7.5.
+
+Über die Leiste am oberen Rand:
+
+* **Layout** — `Physik` (live), `kraftbasiert`, `konzentrisch` (Hop-Distanz), `hierarchisch`
+  (entlang `member`). Die drei letzten laufen animiert ein statt zu springen.
+* **Regler** — Abstoßung, Kantenlänge, Zusammenhalt. Sie wirken nur auf die Live-Simulation und
+  sind bei den Einmal-Layouts sichtbar gesperrt; ein Regler ohne Wirkung wäre eine Lüge über das
+  Bedienelement.
+* **Titel** — Beschriftungen ein und aus. Unabhängig davon erscheinen sie ohnehin erst, wenn die
+  Zoomstufe sie lesbar macht: Zweihundert Titel über einem herausgezoomten Graphen sind kein Text,
+  sondern Rauschen.
+* **Alles zeigen** — den ganzen Ausschnitt ins Bild rücken.
+
+Ein Klick auf einen Knoten hebt seine Nachbarschaft hervor und blendet den Rest ab — nicht aus:
+Ein ausgeblendeter Knoten ließe den Graphen zerfallen, ein blasser zeigt, dass da noch mehr ist.
+Wer „weniger Bewegung" im Betriebssystem eingestellt hat, bekommt dieselbe Anordnung ohne
+Animation.
+
+### 7.5 Wie viel der Graph verträgt
+
+Gemessen im laufenden Container an 5.000 synthetischen Knoten mit 15.351 Kanten (Bildrate im
+Browser, Antwortzeit des Mausrads):
+
+| Menge im Bild | API-Antwort | Nutzlast | Bildrate | Mausrad |
+|---|---|---|---|---|
+| 300 Knoten / 685 Kanten | 34 ms | 320 kB | 22 fps beim Einschwingen, danach 60 | 27 ms |
+| 600 / 1.301 | 53 ms | 502 kB | 142 fps | 41 ms |
+| 1.200 / 2.712 | 100 ms | 998 kB | 144 fps | 83 ms |
+| 2.000 / 4.774 | 234 ms | 2,1 MB | 140 fps | 105 ms |
+
+**Die Grenze liegt nicht im Zeichnen und nicht in der API, sondern im Layout.** Cytoscape stellt
+2.000 Knoten mit 144 fps dar, und `/graph/map` skaliert linear. Eine dauerhaft laufende
+`cola`-Simulation dagegen kostete bei 2.000 Knoten die gesamte Bildrate — 1 fps, und das Mausrad
+antwortete nach 7,9 Sekunden. Deshalb:
+
+* Bis **400 Knoten** rechnet `cytoscape-cola`: Man sieht dem Graphen beim Sortieren zu, und ein
+  Zug am Knoten wirft die Simulation wieder an.
+* Darüber übernimmt `cytoscape-fcose` — spektrale Vorplatzierung statt Simulation je Bild. Kein
+  Zusehen, aber in einer Sekunde eine Anordnung, die etwas aussagt, und volle Bildrate danach.
+* Der Zug am Knoten löst oberhalb der Grenze keine Physik mehr aus. Er verschiebt ihn, statt
+  jemanden sieben Sekunden auf eine Rückmeldung warten zu lassen.
+
+Die Karte selbst zeigt zunächst 300 Knoten und wächst über „mehr laden" bis 2.000 — die
+Obergrenze von `/graph/map`. Wer mehr als 2.000 Knoten gleichzeitig sehen will, sieht in Wahrheit
+nichts mehr; der Weg dorthin ist der Filter, nicht die Menge.
+
+### 7.3 Die visuelle Kodierung
+
+Sie ist die Kernaussage der Ansicht und keine Geschmacksfrage (§17.2); die Legende in der linken
+Spalte schreibt sie aus.
+
+| Merkmal | Kodierung |
+|---|---|
+| Store | Knotenform — Kreis für `shared`, Raute für `personal` |
+| Typ | Knotenfarbe, vergeben entlang der konfigurierten Taxonomie |
+| Gewicht | Knotengröße (Grad in der Karte, Score in der Traversierung) |
+| Cluster | schwarz mit hellem Ring — Behälter, nicht Inhalt |
+| Kantenart | Linienstil |
+| Provenienz | Linienfarbe: von Hand fast schwarz, aus der Quelle grau, **Modellvorschlag rot** |
+| unbestätigt erzeugt | gestrichelt (Leitprinzip 6) |
+
+**Die Farben sind Grau, Weiß und Rot** — das Kaufland-CI. Rot ist dabei knapp bemessen und
+deshalb aussagekräftig: Es steht für die Marke, für genau eine Hauptaktion je Fläche und für
+alles, was auf einen Menschen wartet. Konzepttypen bekommen deshalb nie Rot, und eine
+`member`-Kante aus dem Clustering wird nicht rot hinterlegt, obwohl sie unbestätigt ist — ein
+großes Cluster brächte sonst zwanzig rote Zeilen ins Detailpanel, und danach hieße Rot dort
+nichts mehr.
+
+### 7.4 Eigenschaften, die im Betrieb spürbar sind
 
 * **Die UI enthält keine Geschäftslogik.** Scopes, Konzepttypen, Kantenarten und die Storeliste
   kommen aus `/api/v1/config/effective`, gesperrte Felder aus dem `locked_fields` des jeweiligen
@@ -520,8 +610,10 @@ Drei Eigenschaften, die im Betrieb spürbar sind:
   mit `409`: Das Journal hält Feldnamen fest, keine Werte — es *kann* einen alten Text nicht
   wiederherstellen und sagt das offen, statt die Hälfte wiederherzustellen.
 
-Der lokale Zustand (Ansicht, Store, ausgewählter Knoten) steht in der URL, Ansichten sind damit
-teilbar.
+Der lokale Zustand steht in der URL, Ansichten sind damit teilbar — und zwar **einschließlich
+der Filter**: Ansicht, Modus, Store, Scope, Typ, Kantenarten, „nur unbestätigte", „nur lose",
+Grabsteine und der ausgewählte Knoten. Wer einen Ausschnitt bespricht, schickt einen Link und
+keine Klickanleitung.
 
 ---
 
@@ -541,6 +633,7 @@ GET  /api/v1/concepts/{id}/similar             Vektor-Nachbarn
 GET  /api/v1/graph/overview                    Cluster-Übersicht — der Einstiegspunkt
 POST /api/v1/graph/traverse                    Knoten + Kanten + Scores über mehrere Hops
 GET  /api/v1/graph/neighbors/{id}              Ein Hop, für inkrementelles Aufklappen
+GET  /api/v1/graph/map                         Gefilterter Ausschnitt des Bestands (Kartenansicht)
 POST /api/v1/graph/search                      Zweistufig: erst Cluster, dann Dokumente
 GET  /api/v1/graph/loose                       Lose Knoten eines Stores
 GET  /api/v1/clusters, /api/v1/clusters/{id}

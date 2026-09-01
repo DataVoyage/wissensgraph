@@ -1415,6 +1415,141 @@ Der `mcp`-Container hat damit wieder einen Healthcheck. Er prüft, dass der Port
 mehr: Ein MCP-Aufruf verlangt eine ausgehandelte Sitzung, und die bei jedem Durchlauf zu eröffnen
 hieße, im Minutentakt Agentensitzungen zu beginnen.
 
+### Nachtrag: die Oberfläche wird zur Graph-Zentrale
+
+Die Ansichten aus §17.2 waren inhaltlich vollständig und als Bedienoberfläche schwach: Der Graph
+war ein Standbild ohne Physik, es gab nur einen Einstieg (den Startknoten), die Filterleiste aus
+§17.2 war halb umgesetzt, und optisch stand überall die Tailwind-Vorgabe. Da die Oberfläche das
+einzige ist, was ein Mensch vom Graphen überhaupt zu sehen bekommt, wurde sie durchgehend
+überarbeitet. Die sechs Reiter bleiben; der Graph-Reiter wird zur Zentrale.
+
+**Zwei Modi statt eines.** Ansicht 1 hat jetzt eine **Karte** (Vorgabe) neben der
+**Traversierung**. Die Karte beantwortet „was liegt hier überhaupt", die Traversierung „woran
+hängt das hier". Dafür kam ein Endpunkt dazu:
+
+| | Karte | Traversierung |
+|---|---|---|
+| Endpunkt | `GET /graph/map` | `GET /graph/neighbors/{id}` |
+| Ausgangspunkt | keiner | ein Knoten |
+| Knotengewicht | Grad **im Ausschnitt** | Score nach §12.3 |
+| Wächst über | Facetten | Aufklappen Hop für Hop |
+
+`GraphService.map()` seitet die Konzepte über `ConceptFilter` — dieselben Facetten wie
+`/concepts`, damit ein Filter in beiden Ansichten denselben Bestand meint — und holt die Kanten
+dazwischen über `EdgeRepository.neighbourhood()`. Gezeigt werden **nur Kanten zwischen zwei
+sichtbaren Knoten**: Ein Strich zu einem Knoten, den die Karte ausgefiltert hat, wäre eine
+Falschaussage und kein Hinweis. Aus demselben Grund löst die Karte nicht über Store-Grenzen auf —
+ein Ausschnitt eines Stores ist eine klare Aussage, ein halb geladener Ausschnitt zweier Stores
+wäre keine.
+
+`MapNode` trägt bewusst weder `hops` noch `score`. Beides entsteht *relativ zu einem
+Ausgangspunkt*; eine Karte hat keinen, und ein `hops: 0` an jedem Knoten wäre eine erfundene
+Zahl. Der `next_cursor` steht in der Antwort, damit die Oberfläche „das ist alles" von „das ist
+der Anfang" unterscheiden *kann* — eine Karte, die stillschweigend bei 300 Knoten aufhört,
+behauptet einen Überblick, den sie nicht hat (§17.3).
+
+**Physik.** Das Vorgabe-Layout ist `cytoscape-cola` im Dauerbetrieb (`infinite`) statt einer
+einmaligen Berechnung. Damit ist ein Zug an einem Knoten eine Verformung und kein Verschieben —
+das beantwortet Fragen, die kein Standbild beantwortet. Drei Regler (Abstoßung, Kantenlänge,
+Zusammenhalt) sind bei den Einmal-Layouts sichtbar gesperrt; ein Regler ohne Wirkung wäre eine
+Lüge über das Bedienelement. Zwei Dinge daran waren nicht offensichtlich:
+
+* **Die Cytoscape-Instanz überlebt eine Datenänderung.** Vorher legte jede Änderung eine neue an,
+  und ein aufgeklappter Nachbar ließ den ganzen Graphen von vorn beginnen — alle Knoten sprangen,
+  und der Blick verlor den Weg, über den er gekommen war. Jetzt wird abgeglichen statt neu
+  gebaut; vorhandene Knoten behalten ihre Position.
+* **Die Spielfläche hängt an der Knotenzahl, nicht am Fenster.** Zweihundert Knoten in einen
+  Bildschirmausschnitt gezwängt, findet `cola` unter `avoidOverlap` die einzige Anordnung, die
+  noch passt: ein Gitter. Das sah aus wie eine Tabelle mit Strichen, obwohl die Physik korrekt
+  gerechnet hatte. Die Fläche wächst deshalb mit der Wurzel der Knotenzahl — die Dichte bleibt
+  gleich, hinein passt der Graph über den Zoom.
+
+**Farben: Grau, Weiß, Rot** (Kaufland-CI). Rot ist knapp bemessen und dadurch aussagekräftig: die
+Marke, genau eine Hauptaktion je Fläche, und alles, was auf einen Menschen wartet. Daraus folgen
+zwei Entscheidungen, die im Bild sichtbar wurden und beide erst im zweiten Anlauf stimmten:
+
+* **Typfarben kommen aus der Taxonomie, nicht aus einem Hash.** Der erste Entwurf berechnete den
+  Ton aus dem Namen. Das war stabil und trotzdem falsch: `Confluence Page` und `Jira Issue`
+  fielen auf denselben Ton, und die Karte zeigte zwei verschiedene Dinge in einer Farbe. Jetzt
+  entscheidet der Platz in `concept_types` aus `/config/effective`; der Hash bleibt als Rückfall
+  für Typen, die dort nicht stehen. Ebenso musste der dunkelste Ton aus der Reihe: Er war der
+  Cluster-Farbe zum Verwechseln ähnlich — ausgerechnet an der Unterscheidung, auf die es in einer
+  Karte zuerst ankommt.
+* **Erzeugt ist nicht geraten.** `istUnbestaetigt` gilt weiter für alles Generierte (§17.3), aber
+  nur ein *Modellvorschlag* wird rot hinterlegt. Ein Cluster mit zwanzig `member`-Kanten aus dem
+  Clustering brachte sonst zwanzig rote Zeilen ins Detailpanel, und danach hieß Rot dort nichts
+  mehr.
+
+**Weiteres.** Beschriftungen erscheinen erst ab einer lesbaren Zoomstufe
+(`min-zoomed-font-size`) — zweihundert Titel über einem herausgezoomten Graphen verdecken genau
+die Struktur, wegen der man herausgezoomt hat. Ein Klick blendet alles außerhalb der Nachbarschaft
+ab statt es auszublenden; ausgeblendet zerfiele der Graph, blass zeigt, dass da noch mehr ist. Die
+Filter der Graph-Ansicht liegen jetzt in der URL statt im Komponentenzustand (§17.1: „damit
+Ansichten teilbar sind"). Eine Legende schreibt die Kodierung aus, und die Warteschlange der
+Kuration steht als Zahl am Reiter — eine Warteschlange, die man erst sieht, wenn man hinsieht,
+wächst unbemerkt.
+
+Wer im Betriebssystem „weniger Bewegung" eingestellt hat, bekommt dieselbe Anordnung ohne
+Animation. Dieselbe Abfrage schaltet die Dauerschleife in jsdom ab, wo sie nichts zeichnen würde.
+
+Die UI-Suite steht bei 128 Tests und 95,9 % Abdeckung; `theme.test.tsx` hält die Regeln fest, die
+sonst nur Kommentare wären — dass kein Typ jemals das Signalrot bekommt, dass eine
+Clustering-Kante kein Modellvorschlag ist und ab welcher Größe welcher Layout-Motor rechnet.
+
+### Nachtrag: der Lasttest, und was er umgeworfen hat
+
+Der Bestand der Entwicklungsumgebung hat 219 Konzepte. Im Produkt werden es Hunderte bis Tausende
+sein, also wurde gemessen statt gehofft: 5.000 synthetische Konzepte mit 15.351 Kanten in den
+geteilten Store, Struktur wie im echten Bestand (jeder 40. ein Cluster, Kantendichte ~2,9), alles
+unter dem Präfix `last:` und danach exakt wieder entfernt — 219/516/200/827 vor dem Test, dieselben
+Zahlen danach.
+
+**Die API trägt das.** `/graph/map` skaliert linear: 200 Knoten in 23 ms, 2.000 Knoten mit 4.774
+Kanten in 234 ms. Die Nutzlast wächst auf 2,1 MB, und das ist die einzige Stelle, an der noch
+Luft ist — ein Kantenobjekt hat 14 Felder, von denen die Karte fünf braucht.
+
+**Die Zeichenfläche trägt das auch.** Cytoscape stellt 2.000 Knoten und 4.774 Kanten mit 144
+Bildern je Sekunde dar; das Mausrad antwortet in 91 ms.
+
+**Die Live-Physik trug es nicht.** Genau dort brach es zusammen, und zwar an meiner Entscheidung
+aus dem vorigen Nachtrag, `cola` mit `infinite: true` laufen zu lassen:
+
+| Knoten | mit Dauersimulation | ohne |
+|---|---|---|
+| 300 | 18 fps, Mausrad 363 ms | 144 fps, 59 ms |
+| 600 | 7 fps, 791 ms | 144 fps, 142 ms |
+| 1.200 | 2 fps, 2.642 ms | 144 fps, 63 ms |
+| 2.000 | 1 fps, **7.891 ms** | 143 fps, 91 ms |
+
+Der Fehler war nicht die Physik, sondern ihre *Dauer*: Eine Simulation, die nie aufhört, rechnet
+je Bild über alle Knoten und Kanten — auch dann, wenn niemand hinsieht.
+
+Zwei naheliegende Auswege wurden ausprobiert und verworfen. `cola` ohne Animation durchrechnen zu
+lassen **blockiert den Tab**; `maxSimulationTime` bremst das nicht, und ein eingefrorener Browser
+ist schlechter als ein langsamer. `cola` animiert, aber zeitlich gedeckelt, hilft ebenso wenig:
+Bei einer Bildrate von 1 sind drei Sekunden genau drei Schritte, und die Anordnung bleibt der
+Zufallsstart.
+
+Die Lösung sind zwei Motoren an einer gemessenen Grenze (`motorFuer()`):
+
+* **bis 400 Knoten** `cytoscape-cola`, animiert und zeitlich begrenzt. Der Graph sortiert sich
+  sichtbar (22 fps für drei Sekunden), kommt zur Ruhe und gibt den Hauptthread frei — danach 60
+  fps. Fasst jemand einen Knoten an, läuft die Simulation wieder an; beim Loslassen kommt sie
+  erneut zur Ruhe. Physik dann, wenn sie etwas beantwortet.
+* **darüber** `cytoscape-fcose`: spektrale Vorplatzierung und wenige Verfeinerungsschritte statt
+  einer Simulation je Bild. Man sieht ihm nicht beim Rechnen zu, bekommt aber in unter einer
+  Sekunde eine Anordnung, die etwas aussagt — bei 2.000 Knoten trennt sie die Komponenten
+  sichtbar — und danach volle Bildrate.
+
+Nach dem Umbau: 60 fps bei 300 Knoten, 142 bei 600, 144 bei 1.200, 140 bei 2.000; vom Klick auf
+"mehr laden" bis zum ersten Bild 44 bis 57 ms, also keine Blockade mehr. Der Speicher liegt bei
+2.000 Knoten bei 140 MB.
+
+Ein Nebenbefund aus der Saat: `content_hash` ist in der Datenbank nullbar, im Domänenmodell aber
+`str` mit `min_length=1`. Alle 233 echten Konzepte haben eines — nur meine synthetischen Zeilen
+nicht, und `/graph/map` quittierte das mit einem 500er. Das Modell setzt die Invariante also
+korrekt durch; die Spalte dürfte trotzdem `NOT NULL` sein.
+
 ---
 
 ## Entwicklung

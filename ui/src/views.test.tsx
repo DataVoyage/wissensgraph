@@ -16,7 +16,7 @@ import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
 import { Operations } from "./views/Operations";
 import { PersonalArea } from "./views/PersonalArea";
-import { FakeApi, KONFIGURATION, konzept, renderMitQuery } from "./test-support";
+import { FakeApi, KONFIGURATION, karte, konzept, renderMitQuery } from "./test-support";
 
 let api: FakeApi;
 
@@ -26,6 +26,7 @@ beforeEach(() => {
   window.history.pushState({}, "", "/");
   api = new FakeApi();
   api.on("GET", /config\/effective/, () => KONFIGURATION);
+  api.on("GET", /graph\/map/, () => karte());
   api.on("GET", /\/api\/v1\/clusters\?/, () => LEERE_SEITE);
   api.on("GET", /\/api\/v1\/concepts\?/, () => LEERE_SEITE);
   api.on("GET", /\/api\/v1\/models$/, () => ({ tasks: [], policies: {}, budget: {} }));
@@ -118,7 +119,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
       <GraphExplorer
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
-        edgeKinds={["member", "references"]}
+        config={KONFIGURATION as never}
       />,
     );
 
@@ -136,13 +137,13 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
 
     renderMitQuery(
       <GraphExplorer
-        state={{ view: "graph", store: "shared" }}
+        state={{ view: "graph", store: "shared", mode: "reise" }}
         onChange={() => undefined}
-        edgeKinds={["member"]}
+        config={KONFIGURATION as never}
       />,
     );
     await userEvent.type(screen.getByLabelText("Suchbegriff"), "Warehouse");
-    await userEvent.click(screen.getByRole("button", { name: "Suchen" }));
+    await userEvent.click(screen.getByRole("button", { name: "Los" }));
 
     await waitFor(() => expect(screen.getByText("hybrid")).toBeInTheDocument());
   });
@@ -181,9 +182,9 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
 
     renderMitQuery(
       <GraphExplorer
-        state={{ view: "graph", store: "shared", id: "confluence:1" }}
+        state={{ view: "graph", store: "shared", mode: "reise", id: "confluence:1" }}
         onChange={() => undefined}
-        edgeKinds={["member"]}
+        config={KONFIGURATION as never}
       />,
     );
 
@@ -195,7 +196,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
       <GraphExplorer
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
-        edgeKinds={["member", "depends_on"]}
+        config={KONFIGURATION as never}
       />,
     );
 

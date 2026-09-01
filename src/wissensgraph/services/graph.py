@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from wissensgraph.config import defaults
@@ -42,7 +42,7 @@ from wissensgraph.domain.edges import Edge
 from wissensgraph.domain.policies import ProviderNotAllowedError
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import ModelError, ModelRouter
-from wissensgraph.ports.repositories import LexicalHit, UnitOfWorkFactory
+from wissensgraph.ports.repositories import ConceptFilter, LexicalHit, UnitOfWorkFactory
 from wissensgraph.services.serialization import kante_dict
 
 _log = get_logger(__name__)
@@ -135,6 +135,63 @@ class Traversal:
             "nodes": [node.as_dict() for node in self.nodes],
             "edges": [kante_dict(edge) for edge in self.edges],
             "edge_count": len(self.edges),
+        }
+
+
+@dataclass(frozen=True)
+class MapNode:
+    """Ein Konzept in der Übersichtskarte — ohne Startpunkt, deshalb ohne Hop und ohne Score.
+
+    Der Unterschied zu :class:`GraphNode` ist keine Sparsamkeit, sondern eine Aussage. Ein
+    Traversierungsknoten trägt eine Entfernung und eine Bewertung, weil beides *relativ zu einem
+    Ausgangspunkt* entsteht (§12.1, §12.3). Eine Karte hat keinen Ausgangspunkt; ein ``hops: 0``
+    an jedem Knoten wäre eine erfundene Zahl. Was eine Karte stattdessen über einen Knoten weiß,
+    ist sein Grad im gezeigten Ausschnitt — und der ist ausdrücklich lokal: Er zählt die Kanten,
+    die im Ausschnitt sichtbar sind, nicht die, die es im Graphen gibt.
+    """
+
+    concept: Concept
+    degree: int
+    """Kanten dieses Knotens **innerhalb des Ausschnitts**, ein- und ausgehend zusammen."""
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialisierbare Form (§16.2)."""
+        return {
+            "id": self.concept.id,
+            "store": self.concept.store,
+            "scope": self.concept.scope,
+            "type": self.concept.type,
+            "title": self.concept.title,
+            "status": str(self.concept.status),
+            "degree": self.degree,
+        }
+
+
+@dataclass(frozen=True)
+class GraphMap:
+    """Ein gefilterter Ausschnitt des gesamten Bestands (§17.2, Ansicht 1 "Karte")."""
+
+    store: str
+    nodes: tuple[MapNode, ...]
+    edges: tuple[Edge, ...]
+    next_cursor: str | None
+    """Der Anschlusspunkt der nächsten Seite; ``None`` heißt: Das war der ganze Bestand.
+
+    Er steht in der Antwort, damit die Oberfläche den Unterschied zwischen "das ist alles" und
+    "das ist der Anfang" *zeigen* kann. Eine Karte, die stillschweigend bei 500 Knoten aufhört,
+    behauptet einen vollständigen Überblick, den sie nicht hat (§17.3, "Große Nachbarschaften
+    werden gedeckelt").
+    """
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialisierbare Form."""
+        return {
+            "store": self.store,
+            "nodes": [node.as_dict() for node in self.nodes],
+            "edges": [kante_dict(edge) for edge in self.edges],
+            "edge_count": len(self.edges),
+            "next_cursor": self.next_cursor,
+            "truncated": self.next_cursor is not None,
         }
 
 
@@ -296,6 +353,85 @@ class GraphService:
             hops=tiefe,
             truncated=gedeckelt,
             queries=abfragen,
+        )
+
+    def map(
+        self,
+        *,
+        store: str,
+        filter: ConceptFilter | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        kinds: Sequence[str] | None = None,
+    ) -> GraphMap:
+        """Ein gefilterter Ausschnitt des gesamten Bestands als Knoten und Kanten (§17.2).
+
+        Der Gegenpol zur Traversierung. ``traverse`` beantwortet "was liegt um *diesen* Knoten",
+        diese Methode beantwortet "wie sieht der Bestand aus, wenn ich ihn so einschränke". Beide
+        Fragen sind berechtigt und keine ist die andere: Wer eine Sammlung noch nicht kennt, hat
+        keinen Startknoten, den er nennen könnte.
+
+        Gezeigt werden **nur Kanten zwischen zwei sichtbaren Knoten**. Eine Kante, deren Gegenüber
+        der Filter ausgeschlossen hat, verschwiege sonst, dass sie ins Nichts führt — sie wäre ein
+        Strich zu einem Knoten, den die Karte nicht kennt. Das ist zugleich der Grund, warum die
+        Karte über Store-Grenzen hinweg *nicht* auflöst: Ein Ausschnitt eines Stores ist eine
+        klare Aussage; ein halb aufgelöster Ausschnitt zweier Stores wäre keine.
+
+        Args:
+            store: Der Store, dessen Bestand gezeigt wird.
+            filter: Die Facetten des Dokumentenbrowsers — Scope, Typ, Status, "lose",
+                "unbestätigt", Cluster (§16.2). Dieselben wie in Ansicht 2, damit ein Filter,
+                den jemand dort gesetzt hat, hier dasselbe bedeutet.
+            limit: Obergrenze der Knoten; ohne Angabe ``traversal.max_nodes``. Sie ist an
+                dieselbe Grenze gebunden wie die Traversierung, weil beide dieselbe
+                Zeichenfläche füllen und der Schutz vor dem Rendering-Kollaps derselbe ist
+                (§17.3).
+            cursor: Anschlusspunkt für die nächste Seite.
+            kinds: Nur diese Kantenarten zeigen. Der Filter wirkt hier — anders als bei
+                ``traverse`` — allein auf die Kanten und nicht auf die Knotenmenge: In einer
+                Karte ist ein Knoten sichtbar, weil er dem Filter entspricht, und nicht, weil
+                man ihn über eine bestimmte Kantenart erreicht hat.
+
+        Returns:
+            Die passenden Knoten mit ihrem Grad im Ausschnitt und den Kanten dazwischen.
+        """
+        deckel = self._settings.traversal.max_nodes if limit is None else max(1, limit)
+        gesucht = replace(
+            filter or ConceptFilter(), loose_threshold=self._settings.orphans.loose_threshold
+        )
+        erlaubt = None if kinds is None else frozenset(kinds)
+
+        with self._unit_of_work(store) as uow:
+            seite = uow.concepts.page(gesucht, limit=deckel, cursor=cursor)
+            sichtbar = {concept.id for concept in seite.items}
+            kanten = tuple(
+                kante
+                for kante in uow.edges.neighbourhood(sorted(sichtbar))
+                if kante.from_id in sichtbar
+                and kante.to_id in sichtbar
+                and kante.to_store == store
+                and (erlaubt is None or kante.kind in erlaubt)
+            )
+
+        grad: dict[str, int] = dict.fromkeys(sichtbar, 0)
+        for kante in kanten:
+            grad[kante.from_id] += 1
+            grad[kante.to_id] += 1
+
+        _log.info(
+            "graph.karte",
+            store=store,
+            nodes=len(seite.items),
+            edges=len(kanten),
+            truncated=seite.next_cursor is not None,
+        )
+        return GraphMap(
+            store=store,
+            nodes=tuple(
+                MapNode(concept=concept, degree=grad[concept.id]) for concept in seite.items
+            ),
+            edges=kanten,
+            next_cursor=seite.next_cursor,
         )
 
     def search(

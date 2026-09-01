@@ -46,10 +46,15 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
 
   return (
     <div className="grid h-full grid-cols-[1fr_1fr] gap-3">
-      <div className="wg-panel space-y-3 overflow-y-auto border-l-4 border-personal">
-        <header>
-          <h2 className="text-base font-semibold text-personal">Persönlicher Bereich</h2>
-          <p className="text-xs text-slate-600">
+      <div className="wg-panel flex flex-col gap-4 overflow-y-auto border-l-4 border-personal">
+        <header className="-m-3 mb-0 border-b border-ton-200 bg-ton-100 p-3">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-ton-900">
+            Persönlicher Bereich
+            <span className="rounded bg-personal px-2 py-0.5 text-2xs font-medium text-ton-0">
+              nur auf diesem Rechner
+            </span>
+          </h2>
+          <p className="wg-hinweis mt-1">
             Alles hier bleibt auf diesem Rechner (Leitprinzip 2).{" "}
             {lokal
               ? "Embeddings laufen über einen lokalen Anbieter."
@@ -74,8 +79,8 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
             );
           }}
         >
-          <label className="block text-sm">
-            Titel
+          <label className="block">
+            <span className="wg-label">Titel</span>
             <input
               className="wg-input"
               aria-label="Titel"
@@ -84,8 +89,8 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
             />
           </label>
           <div className="flex gap-2">
-            <label className="text-sm">
-              Typ
+            <label className="flex-1">
+              <span className="wg-label">Typ</span>
               <select
                 className="wg-input"
                 aria-label="Typ der Notiz"
@@ -99,8 +104,8 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
                 ))}
               </select>
             </label>
-            <label className="text-sm">
-              Scope
+            <label className="flex-1">
+              <span className="wg-label">Scope</span>
               <select
                 className="wg-input"
                 aria-label="Scope der Notiz"
@@ -117,25 +122,29 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
               </select>
             </label>
           </div>
-          <button type="submit" className="wg-button" disabled={titel.trim() === ""}>
+          <button
+            type="submit"
+            className="wg-button wg-button-primaer"
+            disabled={titel.trim() === ""}
+          >
             Anlegen
           </button>
           {anlegen.isError && (
-            <p role="alert" className="text-xs text-red-700">
+            <p role="alert" className="wg-fehler">
               {anlegen.error.message}
             </p>
           )}
         </form>
 
         <section>
-          <h3 className="text-sm font-medium">Eigene Konzepte</h3>
-          <ul className="mt-1 space-y-1 text-sm">
+          <h3 className="wg-panel-titel">Eigene Konzepte</h3>
+          <ul className="-mx-1 space-y-0.5 text-sm">
             {(notizen.data?.items ?? []).map((eintrag) => (
               <li key={eintrag.id}>
                 <button
                   type="button"
-                  className={`text-left underline ${
-                    state.id === eintrag.id ? "font-medium" : ""
+                  className={`wg-eintrag truncate ${
+                    state.id === eintrag.id ? "wg-eintrag-aktiv" : ""
                   }`}
                   onClick={() => onChange({ id: eintrag.id, store: "personal" })}
                 >
@@ -148,21 +157,28 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
       </div>
 
       <div className="wg-panel space-y-3 overflow-y-auto">
-        <h2 className="text-base font-semibold">Brücke schlagen</h2>
-        <p className="text-xs text-slate-600">
+        <h2 className="wg-panel-titel">Brücke schlagen</h2>
+        <p className="wg-hinweis">
           Aus der ausgewählten Notiz auf ein Cluster im geteilten Store. Die Kante liegt danach im
           persönlichen Store — der geteilte weiß nichts von ihr (§12.1).
         </p>
         {state.id === undefined ? (
-          <p className="text-sm text-slate-500">Links eine Notiz auswählen.</p>
+          <div className="wg-leer">
+            <p className="text-sm font-medium text-ton-700">Links eine Notiz auswählen.</p>
+          </div>
         ) : (
           <ul className="space-y-1 text-sm">
             {(cluster.data?.items ?? []).map((eintrag) => (
-              <li key={eintrag.id} className="flex items-center gap-2">
-                <span className="flex-1 truncate">{eintrag.title ?? eintrag.id}</span>
+              <li
+                key={eintrag.id}
+                className="flex items-center gap-2 rounded px-1 py-1 hover:bg-ton-50"
+              >
+                <span className="flex-1 truncate text-ton-700">
+                  {eintrag.title ?? eintrag.id}
+                </span>
                 <button
                   type="button"
-                  className="wg-button"
+                  className="wg-button wg-button-klein"
                   onClick={() =>
                     verlinken.mutate({
                       store: "personal",
@@ -180,12 +196,12 @@ export function PersonalArea({ state, onChange, config }: PersonalAreaProps): JS
           </ul>
         )}
         {verlinken.isError && (
-          <p role="alert" className="text-xs text-red-700">
+          <p role="alert" className="wg-fehler">
             {verlinken.error.message}
           </p>
         )}
         {verlinken.isSuccess && (
-          <p role="status" className="text-xs text-manuell">
+          <p role="status" className="rounded bg-ton-100 px-2.5 py-1.5 text-xs text-ton-700">
             Brücke gesetzt.
           </p>
         )}

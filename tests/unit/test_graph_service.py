@@ -15,6 +15,7 @@ import pytest
 from support.memory import MemoryUnitOfWorkFactory
 from wissensgraph.config.schema import RankingConfig, Settings
 from wissensgraph.domain.concepts import ConceptDraft
+from wissensgraph.ports.repositories import ConceptFilter
 from wissensgraph.services.concepts import ConceptService
 from wissensgraph.services.graph import GraphService, UnknownStartError
 
@@ -381,3 +382,120 @@ class TestSuche:
 
     def test_die_trefferzahl_ist_begrenzt(self, graph: GraphService, bestand: None) -> None:
         assert len(graph.search("e", store="shared", limit=1).hits) <= 1
+
+
+class TestKarte:
+    """Der Ausschnitt ohne Startknoten (§17.2, Ansicht 1 "Karte")."""
+
+    def test_ohne_filter_erscheint_der_ganze_store(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        karte = graph.map(store="shared")
+
+        assert {knoten.concept.id for knoten in karte.nodes} == {
+            "confluence:1",
+            "confluence:2",
+            "cluster:c",
+        }
+
+    def test_die_karte_bleibt_im_gefragten_store(self, graph: GraphService, bestand: None) -> None:
+        """Kein Auflösen über die Grenze — anders als bei der Traversierung.
+
+        ``project:finance`` und ``note:a`` zeigen auf ``confluence:1`` und tauchen deshalb in
+        jeder Traversierung von dort auf. In einer Karte des geteilten Stores haben sie nichts
+        zu suchen: Ein Ausschnitt zweier halb geladener Stores wäre keine klare Aussage.
+        """
+        karte = graph.map(store="shared")
+
+        assert all(knoten.concept.store == "shared" for knoten in karte.nodes)
+
+    def test_ein_scope_filter_schneidet_die_knotenmenge(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        karte = graph.map(store="personal", filter=ConceptFilter(scope="personal"))
+
+        assert {knoten.concept.id for knoten in karte.nodes} == {"project:finance", "note:a"}
+
+    def test_es_erscheinen_nur_kanten_zwischen_sichtbaren_knoten(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        """Ein Strich ins Nichts wäre eine Falschaussage, kein Hinweis.
+
+        Der Typfilter lässt nur die beiden Confluence-Seiten übrig. Die Kante von ``cluster:c``
+        auf ``confluence:1`` hätte damit ein Ende außerhalb der Karte — sie fehlt.
+        """
+        voll = graph.map(store="shared")
+        karte = graph.map(store="shared", filter=ConceptFilter(concept_type="Confluence Page"))
+
+        sichtbar = {knoten.concept.id for knoten in karte.nodes}
+        assert sichtbar == {"confluence:1", "confluence:2"}
+        assert all(kante.from_id in sichtbar and kante.to_id in sichtbar for kante in karte.edges)
+        assert len(karte.edges) < len(voll.edges)
+        assert all(kante.from_id != "cluster:c" for kante in karte.edges)
+
+    def test_der_grad_zaehlt_nur_die_sichtbaren_kanten(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        """Der Grad ist ausdrücklich lokal — sonst logen Knotengröße und Bild sich an.
+
+        Im vollen Store hat ``confluence:1`` zwei Kanten: die eingehende ``member`` vom Cluster
+        und die ausgehende ``references`` auf ``confluence:2``. Schneidet der Filter das Cluster
+        weg, bleibt eine.
+        """
+        voll = {k.concept.id: k.degree for k in graph.map(store="shared").nodes}
+        geschnitten = {
+            k.concept.id: k.degree
+            for k in graph.map(
+                store="shared", filter=ConceptFilter(concept_type="Confluence Page")
+            ).nodes
+        }
+
+        assert voll["confluence:1"] == 2
+        assert geschnitten["confluence:1"] == 1
+
+    def test_ein_kantenfilter_laesst_die_knoten_stehen(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        """Anders als bei ``traverse``: In einer Karte ist ein Knoten sichtbar, weil er dem
+        Filter entspricht — und nicht, weil man ihn über eine Kantenart erreicht hat."""
+        karte = graph.map(store="shared", kinds=["references"])
+        ohne = graph.map(store="shared", kinds=["member"])
+
+        assert {knoten.concept.id for knoten in karte.nodes} == {
+            "confluence:1",
+            "confluence:2",
+            "cluster:c",
+        }
+        assert {kante.kind for kante in karte.edges} == {"references"}
+        # Und der Gegenprobe wegen: Eine Kantenart, die es hier nicht gibt, leert die Kanten —
+        # aber nicht die Knoten.
+        assert ohne.edges == ()
+        assert len(ohne.nodes) == 3
+
+    def test_die_deckelung_meldet_sich_im_cursor(self, graph: GraphService, bestand: None) -> None:
+        """ "Das ist alles" und "das ist der Anfang" müssen unterscheidbar bleiben (§17.3)."""
+        angeschnitten = graph.map(store="shared", limit=2)
+        vollstaendig = graph.map(store="shared", limit=50)
+
+        assert len(angeschnitten.nodes) == 2
+        assert angeschnitten.next_cursor is not None
+        assert angeschnitten.as_dict()["truncated"] is True
+        assert vollstaendig.next_cursor is None
+        assert vollstaendig.as_dict()["truncated"] is False
+
+    def test_der_cursor_blaettert_ohne_wiederholung(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        erste = graph.map(store="shared", limit=2)
+        zweite = graph.map(store="shared", limit=2, cursor=erste.next_cursor)
+
+        assert {k.concept.id for k in erste.nodes}.isdisjoint({k.concept.id for k in zweite.nodes})
+
+    def test_die_serialisierung_traegt_keinen_score(
+        self, graph: GraphService, bestand: None
+    ) -> None:
+        """Eine Karte hat keinen Ausgangspunkt; ein ``hops: 0`` oder ein ``score`` wäre eine
+        erfundene Zahl (§12.3)."""
+        knoten = graph.map(store="shared").as_dict()["nodes"][0]
+
+        assert set(knoten) == {"id", "store", "scope", "type", "title", "status", "degree"}

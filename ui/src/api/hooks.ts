@@ -36,6 +36,7 @@ import type {
   CurationResult,
   CurationTask,
   EffectiveConfig,
+  GraphMap,
   ModelRoute,
   Page,
   Run,
@@ -131,6 +132,29 @@ export function useNeighbors(
     queryKey: ["neighbors", id, store],
     enabled: id !== null,
     queryFn: () => get<Traversal>(`/api/v1/graph/neighbors/${encodeURI(id ?? "")}`, { store }),
+  });
+}
+
+/** Die Facetten der Kartenansicht (§17.2 Ansicht 1) — dieselben wie im Browser, plus Kantenarten. */
+export interface MapFilters extends ConceptFilters {
+  kinds?: string[];
+  include_tombstones?: boolean;
+}
+
+/**
+ * Der gefilterte Ausschnitt des Bestands für die Kartenansicht.
+ *
+ * `placeholderData` hält beim Umstellen eines Filters den vorigen Ausschnitt stehen, statt die
+ * Zeichenfläche zu leeren. Das ist kein Kosmetikgriff: Ein Graph, der bei jedem Häkchen kurz
+ * verschwindet und dann neu aufgebaut wird, verliert seine Anordnung — und mit ihr die
+ * Orientierung des Betrachters.
+ */
+export function useGraphMap(filter: MapFilters, aktiv: boolean): UseQueryResult<GraphMap> {
+  return useQuery({
+    queryKey: ["graph-map", filter],
+    enabled: aktiv,
+    placeholderData: (vorher) => vorher,
+    queryFn: () => get<GraphMap>("/api/v1/graph/map", { ...filter }),
   });
 }
 

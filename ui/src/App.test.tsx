@@ -185,7 +185,10 @@ describe("Kurationsliste (§17.2 Ansicht 4)", () => {
 
     renderMitQuery(<CurationList state={{ view: "kuration", store: "shared" }} />);
 
-    await waitFor(() => expect(screen.getByText("Eine Seite")).toBeInTheDocument());
+    // Der Titel steht jetzt zweimal: in der Warteschlange links und in der Gegenüberstellung
+    // rechts. Beides ist gewollt — eine Warteschlange aus Kantenarten und Zahlen sagt nicht,
+    // *worüber* entschieden wird.
+    await waitFor(() => expect(screen.getAllByText("Eine Seite").length).toBeGreaterThan(1));
     expect(screen.getByText("Zweite Seite")).toBeInTheDocument();
     expect(screen.getByText(/dieselbe Ladestrecke/)).toBeInTheDocument();
   });
@@ -195,7 +198,10 @@ describe("Kurationsliste (§17.2 Ansicht 4)", () => {
     api.on("POST", /edges\/.*\/verify/, () => ({ entry: {}, concept: null, edge: null }));
 
     renderMitQuery(<CurationList state={{ view: "kuration", store: "shared" }} />);
-    await waitFor(() => expect(screen.getByText("Eine Seite")).toBeInTheDocument());
+    // Der Titel steht jetzt zweimal: in der Warteschlange links und in der Gegenüberstellung
+    // rechts. Beides ist gewollt — eine Warteschlange aus Kantenarten und Zahlen sagt nicht,
+    // *worüber* entschieden wird.
+    await waitFor(() => expect(screen.getAllByText("Eine Seite").length).toBeGreaterThan(1));
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() =>
@@ -208,7 +214,10 @@ describe("Kurationsliste (§17.2 Ansicht 4)", () => {
     api.on("POST", /edges\/.*\/reject/, () => ({ entry: {}, concept: null, edge: null }));
 
     renderMitQuery(<CurationList state={{ view: "kuration", store: "shared" }} />);
-    await waitFor(() => expect(screen.getByText("Eine Seite")).toBeInTheDocument());
+    // Der Titel steht jetzt zweimal: in der Warteschlange links und in der Gegenüberstellung
+    // rechts. Beides ist gewollt — eine Warteschlange aus Kantenarten und Zahlen sagt nicht,
+    // *worüber* entschieden wird.
+    await waitFor(() => expect(screen.getAllByText("Eine Seite").length).toBeGreaterThan(1));
     await userEvent.keyboard("x");
 
     await waitFor(() =>

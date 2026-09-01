@@ -73,8 +73,9 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
   return (
     <div className="grid h-full grid-cols-[280px_1fr] gap-3">
       <div className="wg-panel overflow-y-auto">
-        <h2 className="text-sm font-semibold">Cluster</h2>
-        <ul className="mt-2 space-y-1 text-sm">
+        <h2 className="wg-panel-titel">Cluster</h2>
+        <p className="wg-hinweis mb-2">Ein Mitglied lässt sich auf ein Cluster ziehen.</p>
+        <ul className="-mx-1 space-y-0.5 text-sm">
           {(liste.data?.items ?? []).map((eintrag) => (
             <li
               key={eintrag.id}
@@ -82,31 +83,37 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
               onDragOver={(ereignis) => ereignis.preventDefault()}
               onDrop={(ereignis) => {
                 ereignis.preventDefault();
+                ereignis.currentTarget.classList.remove("wg-ziel");
                 const nutzlast = ereignis.dataTransfer.getData("text/plain");
                 const [conceptId, vonCluster] = nutzlast.split("|");
                 if (conceptId && vonCluster) {
                   void verschieben(conceptId, vonCluster, eintrag.id);
                 }
               }}
-              className={`rounded px-1 ${
-                state.cluster === eintrag.id ? "bg-slate-100 font-medium" : ""
-              }`}
+              className="rounded transition-shadow duration-ruhig
+                [&.wg-ziel]:ring-2 [&.wg-ziel]:ring-signal-500"
+              onDragEnter={(ereignis) => ereignis.currentTarget.classList.add("wg-ziel")}
+              onDragLeave={(ereignis) => ereignis.currentTarget.classList.remove("wg-ziel")}
             >
               <button
                 type="button"
-                className="w-full text-left"
+                className={`wg-eintrag flex items-baseline gap-1.5 ${
+                  state.cluster === eintrag.id ? "wg-eintrag-aktiv" : ""
+                }`}
                 onClick={() => {
                   setzeAuswahl(new Set());
                   onChange({ cluster: eintrag.id });
                 }}
               >
-                {eintrag.title ?? eintrag.id}
-                <span className="ml-1 text-xs text-slate-500">({eintrag.member_count})</span>
+                <span className="truncate">{eintrag.title ?? eintrag.id}</span>
                 {eintrag.curated && (
-                  <span className="ml-1 text-xs text-manuell" title="Titel von Hand gesetzt">
+                  <span title="Titel von Hand gesetzt" className="shrink-0 text-2xs opacity-70">
                     ✎
                   </span>
                 )}
+                <span className="ml-auto shrink-0 text-2xs tabular-nums opacity-60">
+                  {eintrag.member_count}
+                </span>
               </button>
             </li>
           ))}
@@ -115,12 +122,20 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
 
       <div className="wg-panel flex flex-col gap-3 overflow-y-auto">
         {detail.data === undefined ? (
-          <p className="text-sm text-slate-500">Cluster links auswählen.</p>
+          <div className="wg-leer">
+            <p className="text-sm font-medium text-ton-700">Cluster links auswählen.</p>
+            <p className="wg-hinweis max-w-xs">
+              Mitglieder lassen sich per Zug in ein anderes Cluster verschieben, mehrere zugleich
+              ausgliedern oder zwei Cluster verschmelzen.
+            </p>
+          </div>
         ) : (
           <>
-            <header className="space-y-1">
-              <h2 className="text-base font-semibold">{detail.data.title ?? detail.data.id}</h2>
-              <p className="text-xs text-slate-500">
+            <header className="-m-3 mb-0 space-y-2 border-b border-ton-200 bg-ton-50 p-3">
+              <h2 className="text-base font-semibold text-ton-900">
+                {detail.data.title ?? detail.data.id}
+              </h2>
+              <p className="wg-hinweis">
                 {detail.data.members.length} Mitglieder ·{" "}
                 {detail.data.centroid_age_seconds === null
                   ? "kein Zentroid"
@@ -137,7 +152,7 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
                 />
                 <button
                   type="button"
-                  className="wg-button"
+                  className="wg-button shrink-0"
                   disabled={titel.trim() === ""}
                   onClick={() =>
                     umbenennen.mutate({
@@ -153,8 +168,13 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
             </header>
 
             <section>
-              <h3 className="text-sm font-medium">Mitglieder</h3>
-              <ul className="mt-1 space-y-1 text-sm">
+              <h3 className="wg-panel-titel">
+                Mitglieder
+                <span className="ml-auto font-normal tabular-nums">
+                  {detail.data.members.length}
+                </span>
+              </h3>
+              <ul className="space-y-1 text-sm">
                 {detail.data.members.map((mitglied) => (
                   <li
                     key={mitglied.id}
@@ -166,7 +186,9 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
                         `${mitglied.id}|${detail.data.id}`,
                       )
                     }
-                    className="flex cursor-grab items-center gap-2 rounded border border-slate-200 px-2 py-1"
+                    className="flex cursor-grab items-center gap-2 rounded border border-ton-200
+                      bg-ton-0 px-2 py-1.5 transition-colors duration-ruhig hover:border-ton-300
+                      hover:bg-ton-50 active:cursor-grabbing"
                   >
                     <input
                       type="checkbox"
@@ -184,10 +206,12 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
                         })
                       }
                     />
-                    <span className="flex-1 truncate">{mitglied.title ?? mitglied.id}</span>
+                    <span className="flex-1 truncate text-ton-700">
+                      {mitglied.title ?? mitglied.id}
+                    </span>
                     <button
                       type="button"
-                      className="wg-button"
+                      className="wg-button wg-button-klein wg-button-still"
                       onClick={() =>
                         entfernen.mutate({
                           clusterId: detail.data.id,
@@ -203,10 +227,10 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
               </ul>
             </section>
 
-            <section className="flex flex-wrap items-end gap-2">
+            <section className="flex flex-wrap items-end gap-3 rounded-lg bg-ton-50 p-3">
               <button
                 type="button"
-                className="wg-button"
+                className="wg-button wg-button-primaer"
                 disabled={auswahl.size === 0 || titel.trim() === ""}
                 onClick={() =>
                   ausgliedern.mutate(
@@ -221,8 +245,8 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
               >
                 Als neues Cluster ausgliedern
               </button>
-              <label className="text-sm">
-                Verschmelzen mit
+              <label className="w-56">
+                <span className="wg-label">Verschmelzen mit</span>
                 <select
                   className="wg-input"
                   aria-label="Verschmelzen mit"
@@ -255,20 +279,20 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
 
             {detail.data.related.length > 0 && (
               <section>
-                <h3 className="text-sm font-medium">Verwandte Cluster</h3>
-                <ul className="text-sm">
+                <h3 className="wg-panel-titel">Verwandte Cluster</h3>
+                <ul className="-mx-1 space-y-0.5 text-sm">
                   {detail.data.related.map((eintrag) => (
                     <li key={eintrag.id}>
                       <button
                         type="button"
-                        className="underline"
+                        className="wg-eintrag flex items-baseline gap-2"
                         onClick={() => onChange({ cluster: eintrag.id })}
                       >
-                        {eintrag.title ?? eintrag.id}
-                      </button>{" "}
-                      <span className="text-xs text-slate-500">
-                        {eintrag.similarity.toFixed(2)}
-                      </span>
+                        <span className="truncate">{eintrag.title ?? eintrag.id}</span>
+                        <span className="ml-auto shrink-0 text-2xs tabular-nums text-ton-400">
+                          {eintrag.similarity.toFixed(2)}
+                        </span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -277,7 +301,7 @@ export function ClusterWorkbench({ state, onChange }: ClusterWorkbenchProps): JS
           </>
         )}
         {fehler !== null && (
-          <p role="alert" className="text-xs text-red-700">
+          <p role="alert" className="wg-fehler">
             {fehler}
           </p>
         )}

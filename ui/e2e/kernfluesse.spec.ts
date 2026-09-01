@@ -25,16 +25,46 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("Graph von einer persönlichen Notiz aus über mehrere Hops (§24)", async ({ page }) => {
-  await page.goto("/?view=graph&store=personal&id=note:1");
+  // Ausdrücklich `mode=reise`: Die Traversierung ist der eine der beiden Modi von Ansicht 1, und
+  // dieser Fluss prüft genau ihn. Die Karte hat keinen Ausgangspunkt und damit keine Hops.
+  await page.goto("/?view=graph&mode=reise&store=personal&id=note:1");
 
   // Hop 1: Die Notiz und das Cluster, auf das ihre Brücke zeigt.
   await expect(page.getByTestId("graph-canvas")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Onboarding-Notiz" })).toBeVisible();
 
   // Hop 2: Vom Cluster aus weiter — über das Seitenpanel, ohne die Zeichenfläche zu treffen.
-  await page.goto("/?view=graph&store=shared&id=cluster:a");
+  await page.goto("/?view=graph&mode=reise&store=shared&id=cluster:a");
   await expect(page.getByRole("heading", { name: "Warehouse" })).toBeVisible();
   await expect(page.getByTestId("graph-canvas")).toBeVisible();
+});
+
+test("Die Karte zeigt den Bestand ohne Startknoten und lässt sich steuern (§17.2)", async ({
+  page,
+}) => {
+  await page.goto("/?view=graph&store=shared");
+
+  // Der Vorgabemodus ist die Karte: kein `id`, kein Klick — und trotzdem ein Bild.
+  await expect(page.getByTestId("graph-canvas")).toBeVisible();
+  await expect(page.getByText(/3 Knoten · 2 Kanten/)).toBeVisible();
+
+  // Die Regler gehören zur Live-Simulation und werden mit einem Einmal-Layout gesperrt.
+  await expect(page.getByRole("button", { name: "Regler" })).toBeEnabled();
+  await page.getByRole("button", { name: "hierarchisch" }).click();
+  await expect(page.getByRole("button", { name: "Regler" })).toBeDisabled();
+
+  // Zurück zur Physik: Die Regler öffnen sich und wirken auf die Simulation.
+  await page.getByRole("button", { name: "Physik" }).click();
+  await page.getByRole("button", { name: "Regler" }).click();
+  await expect(page.getByLabel("Kantenlänge")).toBeVisible();
+});
+
+test("Ein Kartenfilter landet in der URL und ist damit teilbar (§17.1)", async ({ page }) => {
+  await page.goto("/?view=graph&store=shared");
+
+  await page.getByLabel("nur unbestätigte").check();
+
+  await expect(page).toHaveURL(/unverified=1/);
 });
 
 test("Mitglied per Drag-and-Drop in ein anderes Cluster verschieben (§24)", async ({ page }) => {

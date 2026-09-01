@@ -3,26 +3,184 @@
 @tailwind utilities;
 
 /*
- * Wenige eigene Klassen, und alle für Dinge, die §17.2 als Regel festlegt — nicht für Geschmack.
+ * Die Bedienelemente der Oberfläche an einer Stelle.
+ *
+ * Die Liste ist länger als früher, und der Grund ist nicht Geschmack: Solange es nur `wg-button`
+ * gab, unterschied nichts die Hauptaktion einer Fläche von den vier Nebenaktionen daneben. Wer
+ * fünf gleich aussehende Knöpfe sieht, muss jeden lesen. Die Abstufung unten — eine Hauptaktion in
+ * Rot, Nebenaktionen in Weiß mit Rahmen, Beiwerk ohne Rahmen — ist deshalb Information und keine
+ * Dekoration.
+ *
+ * Rot ist knapp gehalten. Es steht für die Marke, für genau eine Hauptaktion je Fläche und für
+ * alles, was auf einen Menschen wartet (unbestätigte Kanten, offene Kuration, Fehler). Ein sechster
+ * roter Akzent nähme den fünf anderen ihre Bedeutung.
  */
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-ton-100 text-ton-800;
+  }
+  /* Ein sichtbarer Fokus ist keine Option: Diese Oberfläche wird laut §17.2 (Ansicht 4)
+     ausdrücklich auch über die Tastatur bedient. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-signal-500 ring-offset-1 ring-offset-ton-0;
+  }
+  ::selection {
+    @apply bg-signal-100 text-signal-900;
+  }
+}
+
 @layer components {
+  /* -- Flächen ------------------------------------------------------------ */
+
   .wg-panel {
-    @apply rounded border border-slate-200 bg-white p-3 shadow-sm;
+    @apply rounded-lg border border-ton-200 bg-ton-0 p-3 shadow-karte;
   }
+  /* Eine Fläche ohne eigene Polsterung — für Listen und die Zeichenfläche, die bis an den Rand
+     gehen sollen. */
+  .wg-panel-blank {
+    @apply overflow-hidden rounded-lg border border-ton-200 bg-ton-0 shadow-karte;
+  }
+  .wg-panel-titel {
+    @apply mb-2 flex items-center gap-2 text-2xs font-semibold uppercase tracking-wider text-ton-500;
+  }
+  .wg-hinweis {
+    @apply text-xs leading-relaxed text-ton-500;
+  }
+
+  /* -- Knöpfe ------------------------------------------------------------- */
+
   .wg-button {
-    @apply rounded border border-slate-300 px-2 py-1 text-sm hover:bg-slate-100 disabled:opacity-40;
+    @apply inline-flex items-center justify-center gap-1.5 rounded border border-ton-300 bg-ton-0
+      px-2.5 py-1.5 text-sm font-medium text-ton-700 transition-colors duration-ruhig
+      hover:border-ton-400 hover:bg-ton-50 active:bg-ton-100
+      disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-ton-0;
   }
+  /* Die eine Hauptaktion einer Fläche. Mehr als eine wäre keine. */
+  .wg-button-primaer {
+    @apply border-signal-600 bg-signal-500 text-ton-0 hover:border-signal-700 hover:bg-signal-600
+      active:bg-signal-700 disabled:hover:bg-signal-500;
+  }
+  /* Beiwerk: Zurücknehmen, Schließen, Umschalten — sichtbar, aber ohne Gewicht. */
+  .wg-button-still {
+    @apply border-transparent bg-transparent text-ton-600 hover:bg-ton-100 hover:text-ton-800;
+  }
+  .wg-button-gefahr {
+    @apply border-signal-200 text-signal-700 hover:border-signal-300 hover:bg-signal-50;
+  }
+  .wg-button-klein {
+    @apply px-2 py-1 text-xs;
+  }
+  /* Ein Knopf, der einen Zustand hält (Physik an/aus, Beschriftungen an/aus). */
+  .wg-toggle {
+    @apply wg-button;
+  }
+  .wg-toggle-an {
+    @apply border-ton-800 bg-ton-800 text-ton-0 hover:border-ton-900 hover:bg-ton-900;
+  }
+
+  /* -- Eingaben ----------------------------------------------------------- */
+
   .wg-input {
-    @apply w-full rounded border border-slate-300 px-2 py-1 text-sm;
+    @apply w-full rounded border border-ton-300 bg-ton-0 px-2.5 py-1.5 text-sm text-ton-800
+      transition-colors duration-ruhig placeholder:text-ton-400
+      hover:border-ton-400 focus:border-signal-500;
+  }
+  .wg-label {
+    @apply mb-1 block text-2xs font-semibold uppercase tracking-wider text-ton-500;
+  }
+  .wg-check {
+    @apply flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm text-ton-700
+      transition-colors duration-ruhig hover:bg-ton-100;
+  }
+  .wg-check input[type="checkbox"] {
+    @apply h-3.5 w-3.5 shrink-0 accent-signal-500;
   }
   /* Ein gesperrtes Feld ist sichtbar gesperrt, nicht nur schreibgeschützt (§17.3). */
   .wg-locked {
-    @apply cursor-not-allowed border-dashed bg-slate-100 text-slate-500;
+    @apply cursor-not-allowed border-dashed border-ton-300 bg-ton-100 text-ton-500;
   }
+
+  /* -- Navigation --------------------------------------------------------- */
+
+  /* Die Reiter der Kopfleiste. Der aktive trägt den roten Balken — das ist der eine Ort, an dem
+     Rot Navigation bedeutet, und er ist einmalig auf dem Bildschirm. */
   .wg-tab {
-    @apply border-b-2 border-transparent px-3 py-2 text-sm hover:border-slate-300;
+    @apply relative border-b-2 border-transparent px-3 py-2.5 text-sm font-medium text-ton-500
+      transition-colors duration-ruhig hover:text-ton-800;
   }
   .wg-tab-active {
-    @apply border-slate-800 font-medium;
+    @apply border-signal-500 text-ton-900;
+  }
+  /* Ein Segmentschalter für Alternativen, die sich gegenseitig ausschließen (Karte / Reise). */
+  .wg-segment {
+    @apply inline-flex rounded-md border border-ton-300 bg-ton-100 p-0.5;
+  }
+  .wg-segment > button {
+    @apply rounded px-3 py-1 text-xs font-medium text-ton-600 transition-colors duration-ruhig
+      hover:text-ton-900;
+  }
+  .wg-segment > button[aria-pressed="true"] {
+    @apply bg-ton-0 text-ton-900 shadow-karte;
+  }
+
+  /* -- Marken und Plaketten ----------------------------------------------- */
+
+  .wg-chip {
+    @apply inline-flex items-center gap-1 rounded border border-ton-200 bg-ton-100 px-1.5 py-0.5
+      font-mono text-2xs text-ton-600;
+  }
+  .wg-chip-signal {
+    @apply border-signal-200 bg-signal-50 text-signal-700;
+  }
+  /* Eine Zahl an einem Reiter — die offenen Posten der Kuration etwa. */
+  .wg-zaehler {
+    @apply ml-1 inline-flex min-w-[1.25rem] justify-center rounded-full bg-signal-500 px-1.5
+      text-2xs font-semibold leading-5 text-ton-0;
+  }
+
+  /* -- Tabellen ----------------------------------------------------------- */
+
+  .wg-tabelle {
+    @apply w-full border-collapse text-sm;
+  }
+  .wg-tabelle thead th {
+    @apply sticky top-0 z-10 border-b border-ton-200 bg-ton-50 px-3 py-2 text-left text-2xs
+      font-semibold uppercase tracking-wider text-ton-500;
+  }
+  .wg-tabelle tbody td {
+    @apply border-b border-ton-100 px-3 py-1.5 align-top;
+  }
+  .wg-tabelle tbody tr {
+    @apply transition-colors duration-ruhig hover:bg-ton-50;
+  }
+  .wg-tabelle tbody tr[aria-selected="true"] {
+    @apply bg-signal-50 hover:bg-signal-50;
+  }
+
+  /* -- Listen ------------------------------------------------------------- */
+
+  /* Ein anklickbarer Listeneintrag — Cluster, Notizen, Läufe. */
+  .wg-eintrag {
+    @apply block w-full rounded px-2 py-1.5 text-left text-sm text-ton-700 transition-colors
+      duration-ruhig hover:bg-ton-100 hover:text-ton-900;
+  }
+  .wg-eintrag-aktiv {
+    @apply bg-ton-800 text-ton-0 hover:bg-ton-800 hover:text-ton-0;
+  }
+
+  /* -- Rückmeldungen ------------------------------------------------------ */
+
+  .wg-fehler {
+    @apply rounded border border-signal-200 bg-signal-50 px-2.5 py-1.5 text-xs text-signal-700;
+  }
+  .wg-leer {
+    @apply flex h-full flex-col items-center justify-center gap-1 p-8 text-center;
+  }
+  .wg-skelett {
+    @apply animate-pulsen rounded bg-ton-200;
   }
 }

@@ -54,18 +54,18 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
   return (
     <div className="grid h-full grid-cols-2 gap-3 overflow-y-auto">
       <section className="wg-panel space-y-2">
-        <h2 className="text-sm font-semibold">Quellen</h2>
+        <h2 className="wg-panel-titel">Quellen</h2>
         <ul className="space-y-1 text-sm">
           {(quellen.data?.items ?? []).map((quelle) => (
             <li key={quelle.name} className="flex items-center gap-2">
               <span
                 className={`h-2 w-2 rounded-full ${
-                  quelle.usable ? "bg-emerald-500" : "bg-red-500"
+                  quelle.usable ? "bg-emerald-500" : "bg-signal-500"
                 }`}
                 aria-label={quelle.usable ? "benutzbar" : "nicht benutzbar"}
               />
               <span className="flex-1">{quelle.name}</span>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-ton-500">
                 {quelle.last_run?.status ?? "noch kein Lauf"}
               </span>
               <button
@@ -79,15 +79,15 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
             </li>
           ))}
           {quellen.data?.items.length === 0 && (
-            <li className="text-xs text-slate-500">Keine Quelle eingeschaltet.</li>
+            <li className="text-xs text-ton-500">Keine Quelle eingeschaltet.</li>
           )}
         </ul>
       </section>
 
       <section className="wg-panel space-y-2">
-        <h2 className="text-sm font-semibold">Läufe anstoßen</h2>
-        <label className="block text-sm">
-          Scope
+        <h2 className="wg-panel-titel">Läufe anstoßen</h2>
+        <label className="block">
+          <span className="wg-label">Scope</span>
           <select
             className="wg-input"
             aria-label="Scope des Laufs"
@@ -106,7 +106,7 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
             <button
               key={kind}
               type="button"
-              className="wg-button"
+              className="wg-button font-mono"
               onClick={() => anstossen(kind, { scope: gewaehlterScope })}
             >
               {kind}
@@ -114,7 +114,7 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
           ))}
         </div>
         {starten.isError && (
-          <p role="alert" className="text-xs text-red-700">
+          <p role="alert" className="wg-fehler">
             {starten.error.message}
           </p>
         )}
@@ -122,9 +122,9 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
       </section>
 
       <section className="wg-panel space-y-2">
-        <h2 className="text-sm font-semibold">Lauf-Historie</h2>
-        <table className="w-full text-xs">
-          <thead className="text-left text-slate-500">
+        <h2 className="wg-panel-titel">Lauf-Historie</h2>
+        <table className="wg-tabelle text-xs">
+          <thead>
             <tr>
               <th>Art</th>
               <th>Status</th>
@@ -134,27 +134,35 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
           </thead>
           <tbody>
             {(laeufe.data?.items ?? []).map((lauf) => (
-              <tr key={lauf.id} className="border-t">
-                <td>{lauf.kind}</td>
-                <td>{lauf.status}</td>
-                <td>{lauf.started_at?.slice(0, 19) ?? "—"}</td>
+              <tr key={lauf.id}>
+                <td className="font-medium text-ton-800">{lauf.kind}</td>
                 <td>
-                  <button
-                    type="button"
-                    className="wg-button"
-                    onClick={() => onChange({ run: lauf.id })}
-                  >
-                    verfolgen
-                  </button>
-                  {(lauf.status === "queued" || lauf.status === "running") && (
+                  <span className={`wg-chip ${lauf.status === "failed" ? "wg-chip-signal" : ""}`}>
+                    {lauf.status}
+                  </span>
+                </td>
+                <td className="tabular-nums text-ton-500">
+                  {lauf.started_at?.slice(0, 19) ?? "—"}
+                </td>
+                <td>
+                  <div className="flex justify-end gap-1">
                     <button
                       type="button"
-                      className="wg-button"
-                      onClick={() => abbrechen.mutate(lauf.id)}
+                      className="wg-button wg-button-klein wg-button-still"
+                      onClick={() => onChange({ run: lauf.id })}
                     >
-                      abbrechen
+                      verfolgen
                     </button>
-                  )}
+                    {(lauf.status === "queued" || lauf.status === "running") && (
+                      <button
+                        type="button"
+                        className="wg-button wg-button-klein wg-button-gefahr"
+                        onClick={() => abbrechen.mutate(lauf.id)}
+                      >
+                        abbrechen
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -163,9 +171,9 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
       </section>
 
       <section className="wg-panel space-y-2">
-        <h2 className="text-sm font-semibold">Modellnutzung</h2>
-        <table className="w-full text-xs">
-          <thead className="text-left text-slate-500">
+        <h2 className="wg-panel-titel">Modellnutzung</h2>
+        <table className="wg-tabelle text-xs">
+          <thead>
             <tr>
               <th>Task</th>
               <th>Aufrufe</th>
@@ -176,17 +184,17 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
           </thead>
           <tbody>
             {(nutzung.data?.items ?? []).map((zeile) => (
-              <tr key={`${zeile.task}-${zeile.model}`} className="border-t">
+              <tr key={`${zeile.task}-${zeile.model}`}>
                 <td>{zeile.task}</td>
-                <td>{zeile.calls}</td>
-                <td>{zeile.tokens_in}</td>
-                <td>{zeile.tokens_out}</td>
-                <td>{zeile.cost_estimate_eur.toFixed(4)}</td>
+                <td className="text-right tabular-nums">{zeile.calls}</td>
+                <td className="text-right tabular-nums">{zeile.tokens_in}</td>
+                <td className="text-right tabular-nums">{zeile.tokens_out}</td>
+                <td className="text-right tabular-nums">{zeile.cost_estimate_eur.toFixed(4)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        <h3 className="text-sm font-medium">Aufgelöste Routen</h3>
+        <h3 className="wg-panel-titel mt-3">Aufgelöste Routen</h3>
         <ul className="text-xs">
           {(modelle.data?.tasks ?? []).map((route) => (
             <li key={route.task}>
@@ -202,9 +210,9 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
       </section>
 
       <section className="wg-panel space-y-2">
-        <h2 className="text-sm font-semibold">Bestand</h2>
-        <table className="w-full text-xs">
-          <thead className="text-left text-slate-500">
+        <h2 className="wg-panel-titel">Bestand</h2>
+        <table className="wg-tabelle text-xs">
+          <thead>
             <tr>
               <th>Store</th>
               <th>Konzepte</th>
@@ -215,12 +223,12 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
           </thead>
           <tbody>
             {(zahlen.data?.stores ?? []).map((eintrag) => (
-              <tr key={eintrag.store} className="border-t">
+              <tr key={eintrag.store}>
                 <td>{eintrag.store}</td>
-                <td>{eintrag.concepts}</td>
-                <td>{eintrag.edges}</td>
-                <td>{eintrag.clusters}</td>
-                <td>{eintrag.loose}</td>
+                <td className="text-right tabular-nums">{eintrag.concepts}</td>
+                <td className="text-right tabular-nums">{eintrag.edges}</td>
+                <td className="text-right tabular-nums">{eintrag.clusters}</td>
+                <td className="text-right tabular-nums">{eintrag.loose}</td>
               </tr>
             ))}
           </tbody>
@@ -228,9 +236,9 @@ export function Operations({ state, onChange }: OperationsProps): JSX.Element {
       </section>
 
       <section className="wg-panel space-y-2">
-        <h2 className="text-sm font-semibold">Aufgelöste Konfiguration</h2>
-        <p className="text-xs text-slate-500">Secrets sind maskiert (§20.2).</p>
-        <pre className="max-h-64 overflow-auto text-xs">
+        <h2 className="wg-panel-titel">Aufgelöste Konfiguration</h2>
+        <p className="wg-hinweis">Secrets sind maskiert (§20.2).</p>
+        <pre className="max-h-64 overflow-auto rounded bg-ton-900 p-3 font-mono text-2xs leading-relaxed text-ton-100">
           {JSON.stringify(konfiguration.data ?? {}, null, 2)}
         </pre>
       </section>
@@ -255,21 +263,38 @@ function Fortschritt({ runId }: { runId: string }): JSX.Element {
   }, [runId]);
 
   return (
-    <div data-testid="fortschritt" className="rounded border border-slate-200 p-2 text-xs">
-      <p>
-        Lauf <code>{runId.slice(0, 8)}</code> — {lauf?.status ?? "verbinde …"}
+    <div
+      data-testid="fortschritt"
+      className="animate-einblenden rounded-lg border border-ton-200 bg-ton-50 p-3 text-xs"
+    >
+      <p className="flex items-center gap-2">
+        <span className="wg-chip">{runId.slice(0, 8)}</span>
+        <span className="font-medium text-ton-800">{lauf?.status ?? "verbinde …"}</span>
+        <span className="ml-auto tabular-nums text-ton-500">
+          {lauf === null ? "" : `${Math.round(lauf.progress * 100)} %`}
+        </span>
       </p>
       {lauf !== null && (
         <>
-          <progress className="w-full" value={lauf.progress} max={1} />
+          {/* Ein eigener Balken statt `<progress>`: Der Fortschritt ist die eine Stelle, an der
+              diese Oberfläche wartet — und ein Element, dessen Aussehen jeder Browser selbst
+              bestimmt, passt dort am wenigsten. Das `<progress>` bleibt unsichtbar bestehen,
+              damit Screenreader weiterhin einen Fortschritt vorfinden. */}
+          <span className="mt-2 block h-1.5 overflow-hidden rounded bg-ton-200">
+            <span
+              className="block h-full rounded bg-signal-500 transition-all duration-ruhig"
+              style={{ width: `${Math.round(lauf.progress * 100)}%` }}
+            />
+          </span>
+          <progress className="sr-only" value={lauf.progress} max={1} />
           {Object.keys(lauf.stats).length > 0 && (
             <pre className="max-h-32 overflow-auto">{JSON.stringify(lauf.stats, null, 2)}</pre>
           )}
-          {lauf.error !== null && <p className="text-red-700">{lauf.error}</p>}
+          {lauf.error !== null && <p className="wg-fehler mt-2">{lauf.error}</p>}
         </>
       )}
       {fehler !== null && (
-        <p role="alert" className="text-red-700">
+        <p role="alert" className="wg-fehler mt-2">
           {fehler}
         </p>
       )}

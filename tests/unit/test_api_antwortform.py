@@ -182,3 +182,60 @@ class TestCluster:
             payload = client.get("/api/v1/graph/overview", headers=AUTH).json()
 
             assert {"id", "title", "member_count"} <= set(payload["items"][0])
+
+
+class TestKarte:
+    """``/graph/map`` — die Übersicht ohne Startknoten (§17.2, Ansicht 1)."""
+
+    def test_die_karte_liefert_knoten_und_kanten(self, settings: Settings, tmp_path: Path) -> None:
+        with _mit_graph(settings, tmp_path) as (client, runtime):
+            befuellen(runtime, korpus())
+
+            payload = client.get("/api/v1/graph/map", headers=AUTH).json()
+
+            assert payload["nodes"], "Ein leerer Bestand würde nichts prüfen."
+            assert isinstance(payload["edges"], list)
+            assert payload["edge_count"] == len(payload["edges"])
+
+    def test_ein_kartenknoten_traegt_seinen_grad_statt_einer_bewertung(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        """Eine Karte hat keinen Ausgangspunkt — ``hops`` und ``score`` wären erfunden."""
+        with _mit_graph(settings, tmp_path) as (client, runtime):
+            befuellen(runtime, korpus())
+
+            knoten = client.get("/api/v1/graph/map", headers=AUTH).json()["nodes"][0]
+
+            assert "degree" in knoten
+            assert "score" not in knoten
+            assert "hops" not in knoten
+
+    def test_die_deckelung_ist_der_antwort_anzusehen(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        with _mit_graph(settings, tmp_path) as (client, runtime):
+            befuellen(runtime, korpus())
+
+            payload = client.get("/api/v1/graph/map", params={"limit": 1}, headers=AUTH).json()
+
+            assert len(payload["nodes"]) == 1
+            assert payload["truncated"] is True
+            assert payload["next_cursor"] is not None
+
+    def test_die_facetten_wirken_wie_im_dokumentenbrowser(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        """Derselbe Filter muss in beiden Ansichten denselben Bestand meinen."""
+        with _mit_graph(settings, tmp_path) as (client, runtime):
+            befuellen(runtime, korpus())
+
+            karte = client.get(
+                "/api/v1/graph/map", params={"type": "Confluence Page"}, headers=AUTH
+            ).json()
+            liste = client.get(
+                "/api/v1/concepts", params={"type": "Confluence Page", "limit": 200}, headers=AUTH
+            ).json()
+
+            assert {knoten["id"] for knoten in karte["nodes"]} == {
+                eintrag["id"] for eintrag in liste["items"]
+            }

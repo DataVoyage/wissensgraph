@@ -367,6 +367,42 @@ export async function mockApi(page: Page): Promise<Protokoll> {
         queries: 1,
       });
     }
+    if (pfad.endsWith("/graph/map")) {
+      // Der Vorgabemodus der Graph-Ansicht (§17.2 Ansicht 1). Ein Kartenknoten trägt `degree`
+      // statt `score` — eine Karte hat keinen Ausgangspunkt, relativ zu dem ein Score entstünde.
+      const karte = (eintrag: ReturnType<typeof konzept>, degree: number) => ({
+        id: eintrag.id,
+        store: eintrag.store,
+        scope: eintrag.scope,
+        type: eintrag.type,
+        title: eintrag.title,
+        status: eintrag.status,
+        degree,
+      });
+      return json(route, {
+        store: "shared",
+        nodes: [karte(CLUSTER_A, 2), karte(konzept(), 1), karte(MITGLIED_2, 1)],
+        edges: [
+          kante({
+            id: "m1",
+            from_id: "cluster:a",
+            to_id: "confluence:1",
+            kind: "member",
+            generated_by: "code:clustering",
+          }),
+          kante({
+            id: "m2",
+            from_id: "cluster:a",
+            to_id: "confluence:2",
+            kind: "member",
+            generated_by: "code:clustering",
+          }),
+        ],
+        edge_count: 2,
+        next_cursor: null,
+        truncated: false,
+      });
+    }
     if (pfad.endsWith("/graph/overview") || pfad.endsWith("/graph/loose")) {
       return json(route, { store: "shared", items: [], next_cursor: null });
     }
