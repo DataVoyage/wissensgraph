@@ -24,6 +24,7 @@ import {
   kartenknoten,
   konzept,
   renderMitQuery,
+  werkbankProps,
 } from "./test-support";
 
 let api: FakeApi;
@@ -204,7 +205,7 @@ describe("Dokumentenbrowser — Filter", () => {
         state={{ view: "browser", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await userEvent.click(screen.getByLabelText("nur lose"));
     await userEvent.click(screen.getByLabelText("nur kuratiert"));
@@ -229,7 +230,7 @@ describe("Dokumentenbrowser — Filter", () => {
         state={{ view: "browser", store: "shared", id: "confluence:1" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await waitFor(() => expect(screen.getAllByText("Eine Seite").length).toBeGreaterThan(0));
 
@@ -244,7 +245,7 @@ describe("Dokumentenbrowser — Filter", () => {
         state={{ view: "browser", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await userEvent.selectOptions(screen.getByLabelText("Typ"), "Confluence Page");
@@ -266,7 +267,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await userEvent.click(screen.getByLabelText("member"));
@@ -283,7 +284,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared", kinds: "member,references" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     expect(screen.getByLabelText("member")).toBeChecked();
@@ -298,7 +299,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "hierarchisch" }));
@@ -321,7 +322,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     expect(screen.getByRole("button", { name: "Regler" })).toBeEnabled();
@@ -336,7 +337,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared", mode: "reise", id: "confluence:0" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
@@ -355,7 +356,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared", mode: "reise" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await waitFor(() => expect(screen.getByText(/Warehouse/)).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
@@ -378,7 +379,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await waitFor(() => expect(screen.getByText(/Warehouse/)).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
@@ -398,7 +399,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() => {
@@ -420,7 +421,7 @@ describe("Graph-Explorer — Filter und Layout", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() =>

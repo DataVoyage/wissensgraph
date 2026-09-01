@@ -7,7 +7,7 @@
  * erscheint statt stillschweigend zu verpuffen.
  */
 
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -224,6 +224,26 @@ describe("Detailpanel", () => {
   });
 });
 
+/**
+ * Ein DataTransfer mit beständigem Speicher.
+ *
+ * Chromium koppelt den Datenspeicher an eine *echte* Drag-Sitzung und leert ihn bei
+ * synthetischen Ereignissen sofort wieder — die Instanz muss aber echt sein, weil der
+ * DragEvent-Konstruktor nichts anderes annimmt. Also: echte Instanz, eigener Speicher.
+ * Geprüft wird damit die Logik beider Handler; die echte Geste fährt der Playwright-Test.
+ */
+function zugDaten(): { daten: DataTransfer; speicher: Map<string, string> } {
+  const daten = new DataTransfer();
+  const speicher = new Map<string, string>();
+  Object.defineProperty(daten, "setData", {
+    value: (art: string, wert: string) => speicher.set(art, wert),
+  });
+  Object.defineProperty(daten, "getData", {
+    value: (art: string) => speicher.get(art) ?? "",
+  });
+  return { daten, speicher };
+}
+
 describe("Cluster-Arbeitsplatz — weitere Wege", () => {
   const zusammenfassung = {
     ...konzept({ id: "cluster:a", title: "Warehouse", type: "Cluster" }),
@@ -281,15 +301,88 @@ describe("Cluster-Arbeitsplatz — weitere Wege", () => {
     await waitFor(() => expect(gemerkt).toContainEqual({ cluster: "cluster:b" }));
   });
 
-  it("zeigt verwandte Cluster mit ihrem Ähnlichkeitswert", async () => {
+  it("zeigt verwandte Cluster mit ihrem Ähnlichkeitswert und springt per Klick dorthin", async () => {
+    const gemerkt: unknown[] = [];
+    renderMitQuery(
+      <ClusterWorkbench
+        state={{ view: "cluster", store: "shared", cluster: "cluster:a" }}
+        onChange={(aenderung) => gemerkt.push(aenderung)}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("0.72")).toBeInTheDocument());
+    await userEvent.click(screen.getByText("0.72"));
+    expect(gemerkt).toContainEqual({ cluster: "cluster:b" });
+  });
+
+  it("verschiebt ein Mitglied per Zug: erst entfernen, dann hinzufügen (§13.4)", async () => {
+    api.on("DELETE", /clusters\/cluster:a\/members\//, () => ({ entry: {} }));
+    api.on("POST", /clusters\/cluster:b\/members/, () => ({ entry: {} }));
+
     renderMitQuery(
       <ClusterWorkbench
         state={{ view: "cluster", store: "shared", cluster: "cluster:a" }}
         onChange={() => undefined}
       />,
     );
+    await waitFor(() => expect(screen.getByTestId("mitglied-confluence:1")).toBeInTheDocument());
 
-    await waitFor(() => expect(screen.getByText("0.72")).toBeInTheDocument());
+    // HTML5-Drag-Ereignisse. Der Datenspeicher ist nachgestellt, und zwar notgedrungen: Chromium
+    // koppelt den DataTransfer-Speicher an eine *echte* Drag-Sitzung und leert ihn bei
+    // synthetischen Ereignissen sofort wieder. Geprüft wird hier die Logik beider Handler —
+    // die echte Geste fährt der Playwright-Test mit echter Maus.
+    const { daten, speicher } = zugDaten();
+    fireEvent.dragStart(screen.getByTestId("mitglied-confluence:1"), { dataTransfer: daten });
+    expect(speicher.get("text/plain")).toBe("confluence:1|cluster:a");
+    const ziel = screen.getByTestId("cluster-cluster:b");
+    fireEvent.dragEnter(ziel, { dataTransfer: daten });
+    fireEvent.dragOver(ziel, { dataTransfer: daten });
+    fireEvent.drop(ziel, { dataTransfer: daten });
+
+    await waitFor(() => {
+      const reihenfolge = api.calls
+        .filter((aufruf) => aufruf.method !== "GET")
+        .map((aufruf) => aufruf.method);
+      expect(reihenfolge).toEqual(["DELETE", "POST"]);
+    });
+  });
+
+  it("tut nichts, wenn ein Mitglied auf sein eigenes Cluster fällt", async () => {
+    renderMitQuery(
+      <ClusterWorkbench
+        state={{ view: "cluster", store: "shared", cluster: "cluster:a" }}
+        onChange={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("mitglied-confluence:1")).toBeInTheDocument());
+
+    const { daten } = zugDaten();
+    fireEvent.dragStart(screen.getByTestId("mitglied-confluence:1"), { dataTransfer: daten });
+    fireEvent.drop(screen.getByTestId("cluster-cluster:a"), { dataTransfer: daten });
+
+    expect(api.calls.filter((aufruf) => aufruf.method !== "GET")).toEqual([]);
+  });
+
+  it("gliedert eine Auswahl als neues Cluster aus (§17.2)", async () => {
+    api.on("POST", /clusters\/cluster:a\/split/, () => ({ entry: {}, concept: null, edge: null }));
+
+    renderMitQuery(
+      <ClusterWorkbench
+        state={{ view: "cluster", store: "shared", cluster: "cluster:a" }}
+        onChange={() => undefined}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Auswahl confluence:1")).toBeInTheDocument(),
+    );
+    await userEvent.click(screen.getByLabelText("Auswahl confluence:1"));
+    await userEvent.type(screen.getByLabelText("Neuer Titel"), "Abspaltung");
+    await userEvent.click(screen.getByRole("button", { name: "Als neues Cluster ausgliedern" }));
+
+    await waitFor(() => {
+      const aufruf = api.calls.find((eintrag) => eintrag.url.includes("/split"));
+      expect(aufruf?.body).toEqual({ concept_ids: ["confluence:1"], title: "Abspaltung" });
+    });
   });
 
   it("entfernt ein Mitglied einzeln — mit Ausschlussvermerk auf Serverseite (§13.4)", async () => {

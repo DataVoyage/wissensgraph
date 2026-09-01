@@ -15,7 +15,22 @@ export default defineConfig({
     },
   },
   test: {
-    environment: "jsdom",
+    // Die UI-Tests laufen gegen einen **echten Browser**, nicht gegen eine DOM-Simulation wie
+    // jsdom. Das ist Vorgabe: jsdom hatte mehrfach verdeckt, was nur der Browser beweist —
+    // Canvas/WebGL, echte Maße, echtes Klickverhalten. `reducedMotion: "reduce"` ist dabei keine
+    // Simulation, sondern eine echte Browser-Einstellung: Die Zeichenfläche ehrt
+    // `prefers-reduced-motion`, und ein Test, der Layout-Animationen abwartet, prüft Geduld
+    // statt Verhalten.
+    browser: {
+      enabled: true,
+      provider: "playwright",
+      name: "chromium",
+      headless: true,
+      screenshotFailures: false,
+      providerOptions: {
+        context: { reducedMotion: "reduce" },
+      },
+    },
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
     // Nur die Komponententests unter src/. Ohne diese Zeile sammelt Vitest auch e2e/*.spec.ts
@@ -23,7 +38,9 @@ export default defineConfig({
     // ihrem Inhalt, sondern daran, dass zwei Testläufer dieselbe Datei für sich beanspruchen.
     include: ["src/**/*.test.{ts,tsx}"],
     coverage: {
-      provider: "v8",
+      // istanbul statt v8: Die v8-Abdeckung setzt einen Node-Prozess voraus; im Browser-Modus
+      // instrumentiert istanbul den Code beim Ausliefern.
+      provider: "istanbul",
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/main.tsx",

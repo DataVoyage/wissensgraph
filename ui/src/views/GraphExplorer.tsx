@@ -33,14 +33,19 @@ import {
 } from "../components/GraphCanvas";
 import { GraphControls } from "../components/GraphControls";
 import { GraphLegend } from "../components/GraphLegend";
+import { Inspektor } from "../components/Inspektor";
 import type { EffectiveConfig } from "../api/types";
 import type { GraphMode, UiState } from "../state";
+import type { WerkbankZustand } from "../werkbank";
 
 export interface GraphExplorerProps {
   state: UiState;
   onChange: (aenderung: Partial<UiState>) => void;
   /** Die Fachregeln kommen aus der Konfiguration; die Oberfläche kennt keine eigenen (§17.1). */
   config: EffectiveConfig;
+  /** Die Werkbank hält Panelbreite und -zustand — sie gehört der Hülle, nicht dieser Ansicht. */
+  werkbank: WerkbankZustand;
+  onWerkbank: (aenderung: Partial<WerkbankZustand>) => void;
 }
 
 interface Ausschnitt {
@@ -54,7 +59,13 @@ const LEER: Ausschnitt = { nodes: new Map(), edges: new Map() };
 const KARTE_SCHRITT = 300;
 const KARTE_MAX = 2000;
 
-export function GraphExplorer({ state, onChange, config }: GraphExplorerProps): JSX.Element {
+export function GraphExplorer({
+  state,
+  onChange,
+  config,
+  werkbank,
+  onWerkbank,
+}: GraphExplorerProps): JSX.Element {
   const modus: GraphMode = state.mode ?? "karte";
   const kantenarten = useMemo(
     () => [...config.edge_kinds.structural, ...config.edge_kinds.semantic],
@@ -217,9 +228,9 @@ export function GraphExplorer({ state, onChange, config }: GraphExplorerProps): 
   };
 
   return (
-    <div className="grid h-full grid-cols-[248px_1fr_340px] gap-3">
+    <div className="flex h-full gap-3">
       {/* -- Steuerspalte ---------------------------------------------------- */}
-      <div className="wg-panel flex flex-col gap-4 overflow-y-auto">
+      <div className="wg-panel flex w-[248px] shrink-0 flex-col gap-4 overflow-y-auto">
         <section>
           <h2 className="wg-panel-titel">Ansicht</h2>
           <div className="wg-segment w-full" role="group" aria-label="Graph-Modus">
@@ -404,7 +415,7 @@ export function GraphExplorer({ state, onChange, config }: GraphExplorerProps): 
       </div>
 
       {/* -- Zeichenfläche ---------------------------------------------------- */}
-      <div className="wg-panel-blank relative h-full">
+      <div className="wg-panel-blank relative h-full min-w-0 flex-1">
         <GraphControls
           layout={layout}
           onLayout={setzeLayout}
@@ -468,18 +479,26 @@ export function GraphExplorer({ state, onChange, config }: GraphExplorerProps): 
         )}
       </div>
 
-      {/* -- Detailspalte ----------------------------------------------------- */}
-      {detail.data ? (
-        <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
-      ) : (
-        <div className="wg-panel wg-leer">
-          <p className="text-sm font-medium text-ton-700">Kein Knoten ausgewählt.</p>
-          <p className="wg-hinweis max-w-[15rem]">
-            Ein Klick in den Graphen hebt die Nachbarschaft hervor und zeigt hier Felder,
-            Provenienz und Journal.
-          </p>
-        </div>
-      )}
+      {/* -- Inspektor: das Selektierte, einklappbar und ziehbar (§17.5) ------- */}
+      <Inspektor
+        titel="Inspektor"
+        breite={werkbank.inspektorBreite}
+        zu={werkbank.inspektorZu}
+        onBreite={(inspektorBreite) => onWerkbank({ inspektorBreite })}
+        onZu={(inspektorZu) => onWerkbank({ inspektorZu })}
+      >
+        {detail.data ? (
+          <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
+        ) : (
+          <div className="wg-leer">
+            <p className="text-sm font-medium text-ton-700">Kein Knoten ausgewählt.</p>
+            <p className="wg-hinweis max-w-[15rem]">
+              Ein Klick in den Graphen hebt die Nachbarschaft hervor und zeigt hier Felder,
+              Provenienz und Journal.
+            </p>
+          </div>
+        )}
+      </Inspektor>
     </div>
   );
 }

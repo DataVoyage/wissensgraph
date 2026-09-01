@@ -11,6 +11,7 @@ trennt einen lokalen `personal`-Store von einem geteilten `shared`-Store.
 | [`agent.md`](agent.md) | **Zum Mitgeben an einen Agenten.** Wie er den Graphen über MCP benutzt: Aufrufreihenfolge, alle Werkzeuge mit ihren Antwortformen, Abläufe, Anti-Muster. |
 | [`docs/architektur-spec-wissensgraph.md`](docs/architektur-spec-wissensgraph.md) | Die vollständige Architektur- und Implementierungsspezifikation — das *Warum*. |
 | [`docs/STATUS.md`](docs/STATUS.md) | Umsetzungsstand entlang des Stufenplans (§24), mit den Entscheidungen und ihren Gründen. |
+| [`docs/konzept-ui.md`](docs/konzept-ui.md) | Das Konzept für den UI-Neubau: Anwendergruppen, Arbeitsbereiche, Graphmotor-Wechsel, Umsetzungsstufen. |
 
 Paragraphenzeichen (§11.5, §17.3, …) verweisen **immer** auf die Spezifikation; auf Stellen
 in diesem README wird als „Abschnitt 4.7“ oder „Kapitel 14“ verwiesen.
@@ -903,7 +904,7 @@ aufgeschlüsselt nach Lauf und Task, mit Kostenschätzung.
 ```bash
 uv run python scripts/dev.py check     # der vollständige Durchlauf
 uv run pytest                          # nur Python
-npx vitest run --coverage              # nur UI (in ui/)
+npx vitest run --coverage              # nur UI (in ui/) — läuft in echtem Chromium, nicht jsdom
 npx playwright test                    # Kernflüsse im Browser (in ui/)
 ```
 

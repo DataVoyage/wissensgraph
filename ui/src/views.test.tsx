@@ -16,7 +16,7 @@ import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
 import { Operations } from "./views/Operations";
 import { PersonalArea } from "./views/PersonalArea";
-import { FakeApi, KONFIGURATION, karte, konzept, renderMitQuery } from "./test-support";
+import { FakeApi, KONFIGURATION, karte, konzept, renderMitQuery, werkbankProps } from "./test-support";
 
 let api: FakeApi;
 
@@ -48,7 +48,7 @@ describe("Dokumentenbrowser (§17.2 Ansicht 2)", () => {
         state={{ view: "browser", store: "personal" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     const auswahl = screen.getByLabelText("Typ") as HTMLSelectElement;
@@ -67,7 +67,7 @@ describe("Dokumentenbrowser (§17.2 Ansicht 2)", () => {
         state={{ view: "browser", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await waitFor(() => expect(screen.getByText("Eine Seite")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: "Weiter" }));
@@ -85,7 +85,7 @@ describe("Dokumentenbrowser (§17.2 Ansicht 2)", () => {
         state={{ view: "browser", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() => expect(screen.getByText("Kein Treffer.")).toBeInTheDocument());
@@ -98,7 +98,7 @@ describe("Dokumentenbrowser (§17.2 Ansicht 2)", () => {
         state={{ view: "browser", store: "shared" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await userEvent.selectOptions(screen.getByLabelText("Scope"), "engineering");
@@ -120,7 +120,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() => expect(screen.getByText(/Warehouse/)).toBeInTheDocument());
@@ -140,7 +140,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
         state={{ view: "graph", store: "shared", mode: "reise" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await userEvent.type(screen.getByLabelText("Suchbegriff"), "Warehouse");
     await userEvent.click(screen.getByRole("button", { name: "Los" }));
@@ -185,7 +185,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
         state={{ view: "graph", store: "shared", mode: "reise", id: "confluence:1" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() => expect(screen.getByTestId("graph-canvas")).toBeInTheDocument());
@@ -197,7 +197,7 @@ describe("Graph-Explorer (§17.2 Ansicht 1)", () => {
         state={{ view: "graph", store: "shared" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     expect(screen.getByLabelText("member")).toBeInTheDocument();

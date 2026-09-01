@@ -134,7 +134,10 @@ test("Eine lokale Notiz ist nirgends gesperrt", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Onboarding-Notiz" })).toBeVisible();
   await expect(page.getByTestId("gesperrt-Beschreibung")).toHaveCount(0);
-  await expect(page.getByText(/verlässt diesen Rechner nicht/)).toBeVisible();
+  // Der Satz steht zweimal — Kopfzeile und Panel-Chip. Beide sollen da sein; sichtbar geprüft
+  // wird der Chip am Konzept, denn er hängt an der Sache und nicht am gewählten Store.
+  await expect(page.getByText(/verlässt diesen Rechner nicht/)).toHaveCount(2);
+  await expect(page.getByText("persönlich — verlässt diesen Rechner nicht")).toBeVisible();
 });
 
 test("Der Ansichtszustand steht in der URL und ist damit teilbar (§17.1)", async ({ page }) => {

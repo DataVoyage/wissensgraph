@@ -11,18 +11,24 @@ import { useState } from "react";
 import { useConcept, useConcepts } from "../api/hooks";
 import type { EffectiveConfig } from "../api/types";
 import { ConceptPanel } from "../components/ConceptPanel";
+import { Inspektor } from "../components/Inspektor";
 import type { UiState } from "../state";
+import type { WerkbankZustand } from "../werkbank";
 
 export interface DocumentBrowserProps {
   state: UiState;
   onChange: (aenderung: Partial<UiState>) => void;
   config: EffectiveConfig;
+  werkbank: WerkbankZustand;
+  onWerkbank: (aenderung: Partial<WerkbankZustand>) => void;
 }
 
 export function DocumentBrowser({
   state,
   onChange,
   config,
+  werkbank,
+  onWerkbank,
 }: DocumentBrowserProps): JSX.Element {
   const [typ, setzeTyp] = useState<string>("");
   const [status, setzeStatus] = useState<string>("");
@@ -48,8 +54,8 @@ export function DocumentBrowser({
     .map((eintrag) => eintrag.name);
 
   return (
-    <div className="grid h-full grid-cols-[1fr_340px] gap-3">
-      <div className="wg-panel-blank flex h-full flex-col overflow-hidden">
+    <div className="flex h-full gap-3">
+      <div className="wg-panel-blank flex h-full min-w-0 flex-1 flex-col overflow-hidden">
         <div className="flex flex-wrap items-end gap-3 border-b border-ton-200 bg-ton-50 p-3">
           <label className="min-w-[12rem] flex-1">
             <span className="wg-label">Suche</span>
@@ -200,16 +206,24 @@ export function DocumentBrowser({
         </div>
       </div>
 
-      {detail.data ? (
-        <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
-      ) : (
-        <div className="wg-panel wg-leer">
-          <p className="text-sm font-medium text-ton-700">Zeile auswählen.</p>
-          <p className="wg-hinweis max-w-[15rem]">
-            Die Detailspalte zeigt Felder, Provenienz, Kanten und das Änderungsjournal.
-          </p>
-        </div>
-      )}
+      <Inspektor
+        titel="Inspektor"
+        breite={werkbank.inspektorBreite}
+        zu={werkbank.inspektorZu}
+        onBreite={(inspektorBreite) => onWerkbank({ inspektorBreite })}
+        onZu={(inspektorZu) => onWerkbank({ inspektorZu })}
+      >
+        {detail.data ? (
+          <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
+        ) : (
+          <div className="wg-leer">
+            <p className="text-sm font-medium text-ton-700">Zeile auswählen.</p>
+            <p className="wg-hinweis max-w-[15rem]">
+              Der Inspektor zeigt Felder, Provenienz, Kanten und das Änderungsjournal.
+            </p>
+          </div>
+        )}
+      </Inspektor>
     </div>
   );
 }

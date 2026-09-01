@@ -1363,6 +1363,7 @@ Jeder Wert hat einen Default in der Config und ist per CLI oder API-Parameter ü
 | `GET` | `/readyz` | Readiness inkl. DB-Verbindungen beider Stores |
 | `GET` | `/api/v1/config/effective` | aufgelöste Konfiguration, Secrets maskiert |
 | `GET` | `/api/v1/stats` | Konzept-/Kanten-/Cluster-Zahlen je Store und Scope |
+| `GET` | `/api/v1/doctor` | Diagnose nach dem Muster von `wg doctor`: Verbindungen, Provider, Adapter, Policies — für die Verwalten-Ansicht (§17.2) |
 
 **Konzepte**
 
@@ -1383,6 +1384,7 @@ Jeder Wert hat einen Default in der Config und ist per CLI oder API-Parameter ü
 | `POST` | `/api/v1/graph/search` | `{query, scope?, granularity: cluster\|document\|auto, limit}` |
 | `GET` | `/api/v1/graph/overview` | Cluster-Übersicht des Kernspace (Einstiegspunkt) |
 | `GET` | `/api/v1/graph/neighbors/{id}` | ein Hop, für inkrementelles Aufklappen in der UI |
+| `GET` | `/api/v1/graph/map` | gefilterte Übersicht über den Bestand ohne Startknoten (Karten-Betriebsart, §17.2); Facetten wie `/concepts` plus `kinds`, cursor-basiert, gedeckelt; nur Kanten, deren beide Enden sichtbar sind |
 
 **Kanten und Kuration**
 
@@ -1414,9 +1416,14 @@ Jeder Wert hat einen Default in der Config und ist per CLI oder API-Parameter ü
 | `GET` | `/api/v1/sources` | konfigurierte Adapter, Capabilities, Health, letzter Lauf |
 | `POST` | `/api/v1/runs/sync` | `{source, full: bool, dry_run: bool}` → Run-ID |
 | `POST` | `/api/v1/runs/embed` | `{scope, rebuild: bool}` |
-| `POST` | `/api/v1/runs/cluster` | `{scope}` oder `{project_id}` |
-| `POST` | `/api/v1/runs/relations` | `{scope}` |
+| `POST` | `/api/v1/runs/cluster` | `{scope, dry_run: bool}` oder `{project_id, dry_run: bool}` |
+| `POST` | `/api/v1/runs/relations` | `{scope, dry_run: bool}` |
 | `POST` | `/api/v1/runs/link-orphans` | alle Parameter aus §15.4 als Body-Felder |
+
+Jeder schreibende Lauf nimmt `dry_run` an und liefert dann eine Ergebnisvorschau statt einer
+Änderung — das Gegenstück zum `--dry-run` der CLI (§19) und die Grundlage der
+Automatisierungs-Ansicht (§17.2, Ansicht 7). `embed` ist ausgenommen: Embeddings sind
+Ableitungen, kein kuratierbarer Inhalt.
 | `GET` | `/api/v1/runs` | Historie mit Status und Statistik |
 | `GET` | `/api/v1/runs/{id}` | Detail inkl. Fortschritt und Fehler |
 | `POST` | `/api/v1/runs/{id}/cancel` | Lauf abbrechen |
@@ -1432,15 +1439,19 @@ Alle `POST /runs/*` legen einen Eintrag in `runs` an, stellen einen Job in die R
 
 ## 17. Web-UI-Spezifikation
 
+Die Ausgestaltung — Anwendergruppen, App-Gerüst, Designsystem, Umsetzungsstufen — steht in
+[`konzept-ui.md`](konzept-ui.md); dieses Kapitel hält die normativen Festlegungen.
+
 ### 17.1 Technische Festlegung
 
 | Aspekt | Festlegung |
 |---|---|
 | Art | Single-Page-Application, eigener Container, ausgeliefert über nginx |
 | Stack | TypeScript, React, Vite; Datenzugriff über TanStack Query |
-| Graph-Rendering | Cytoscape.js (Canvas-basiert, robust bis einige tausend Knoten, eingebaute Layouts) |
-| Styling | Tailwind, ein zentrales Token-Set für Farben und Abstände |
-| Zustand | Server-Zustand über Query-Cache; lokaler UI-Zustand über URL-Parameter, damit Ansichten teilbar sind |
+| Graph-Rendering | sigma.js v3 auf WebGL, Datenmodell und Algorithmen über graphology |
+| Graph-Layout | ForceAtlas2 aus graphology in einem Web Worker — die Simulation konkurriert nie mit der Bedienung um den UI-Thread. Zielmarke: 5.000 Knoten mit laufender Physik bedienbar. |
+| Styling | Tailwind, ein zentrales Token-Set für Farben und Abstände; eigener Komponentensatz, keine Fremdbibliothek |
+| Zustand | Server-Zustand über Query-Cache; was eine Ansicht *bezeichnet* (Bereich, Store, Filter, Selektion) in URL-Parametern, damit Ansichten teilbar sind; was die *Werkbank* einstellt (Panelbreiten, Regler) in `localStorage` |
 | Konfiguration | ausschließlich über `WG_UI_API_BASE_URL`, zur Laufzeit aus `/config.js` geladen — kein Rebuild bei Umgebungswechsel |
 | Auth | Bearer-Token aus der Session; bei `auth_mode: none` entfällt der Schritt |
 
@@ -1448,10 +1459,18 @@ Die UI enthält keine Fachlogik. Jede Regel — was kuratierbar ist, welche Kant
 
 ### 17.2 Ansichten
 
+Die Ansichten sind in **drei Arbeitsbereiche** gegliedert, die den Anwendergruppen folgen:
+**Erkunden** (Anwender: Graph, Suche & Dokumente, Persönlicher Bereich), **Analysieren**
+(Analysten: Kuration, Cluster-Arbeitsplatz, Automatisierung, Qualität) und **Verwalten**
+(Admins: Quellen & Sync, Läufe, Modelle & Kosten, Konfiguration & Diagnose). Die Bereiche
+ordnen die Navigation, sie sind **keine Rechte** — was §17.4 erlaubt, ist überall erlaubt;
+erst mit `oidc` (§20.3) werden sie zu Berechtigungsgrenzen. Die Graphkomponente existiert
+genau einmal und wird aus allen Bereichen heraus geöffnet.
+
 **1. Graph-Explorer** (Hauptansicht)
 
-- Startpunkt: Kernspace-Übersicht (Cluster des `personal`-Stores) oder ein gewählter Knoten.
-- Inkrementelles Aufklappen Hop für Hop über `/graph/neighbors`; kein Vorabladen des Gesamtgraphen.
+- Zwei Betriebsarten: **Karte** (gefilterte Übersicht über den Bestand via `/graph/map`, cursor-basiert nachladbar und gedeckelt) und **Traversierung** (inkrementelles Aufklappen Hop für Hop über `/graph/neighbors` von einem Startpunkt aus; kein Vorabladen des Gesamtgraphen).
+- Startpunkt der Traversierung: Kernspace-Übersicht (Cluster des `personal`-Stores) oder ein gewählter Knoten.
 - Visuelle Kodierung: Store über Knotenform, `type` über Farbe, Score über Größe, Kantenart über Linienstil, Provenienz über Linienfarbe (manuell / Code / Modell), unbestätigte Modellkanten gestrichelt.
 - Filterleiste: Scope, Typ, Kantenarten, nur unbestätigte, nur lose Knoten, Tombstones ein/aus.
 - Seitenpanel je selektiertem Knoten: Felder, Provenienz, Historie, Nachbarn, Aktionen.
@@ -1493,6 +1512,21 @@ Die zentrale Reorganisationsfläche:
 - Lauf-Historie mit Fortschritt, Statistik, Fehlern.
 - Modellnutzung: Aufrufe, Token, Kostenschätzung je Task und Lauf.
 - Aufgelöste Konfiguration in lesbarer Form.
+- Diagnose nach dem Muster von `wg doctor`: Verbindungen, Provider, Adapter, Policies mit Ampel (`GET /doctor`).
+- Schemamigration (`wg migrate`) bleibt bewusst außerhalb der UI.
+
+**7. Automatisierung** (Analysieren)
+
+- Je Aufbaulauf (Embeddings, Clustering, Relationen, Waisen-Anbindung) ein geführtes Formular;
+  Felder und Vorbelegung aus der aufgelösten Konfiguration, Abweichungen sichtbar markiert.
+- Jeder Lauf zuerst als **Probelauf** (`dry_run`) mit Ergebnisvorschau, danach mit denselben
+  Parametern scharf — das `--dry-run`-Prinzip der CLI (§19), in die UI übertragen.
+
+**8. Qualität** (Analysieren)
+
+- Verdichtete Kennzahlen zur Arbeit der Automatisierung: Anteil loser Knoten je Scope, Alter und
+  Größe der Kurationswarteschlange, Bestätigungs-/Verwerfungsquote der Modellvorschläge, Cluster
+  ohne kuratierten Titel.
 
 ### 17.3 Interaktionsregeln
 
@@ -1517,6 +1551,21 @@ Die UI ist die einzige Schnittstelle mit Schreibzugriff auf den `shared`-Store �
 | `shared`: `title`, `description`, `body` | nein | nein | ja |
 
 Der Agent bleibt strikt auf `personal` beschränkt. Ein Mensch darf die geteilte Struktur ordnen; ein Agent nicht.
+
+### 17.5 Anwendergruppen und App-Gerüst
+
+| Gruppe | Aufgabe | Arbeitsbereich |
+|---|---|---|
+| Anwender | Inhalte zu den eigenen Themen finden, lesen, verknüpfen; eigene Notizen; leichte Kuration | Erkunden |
+| Analysten | den Graphen vernetzen: Kuration, Cluster ordnen, Automatisierung parametrieren und ihre Qualität beurteilen | Analysieren |
+| Admins | Quellen und Sync, Läufe, Modelle und Kosten, Diagnose — die Admin-Aufgaben der CLI (§19) | Verwalten |
+
+Das Gerüst ist in allen Bereichen gleich: Navigationsleiste links (Bereiche, Unterpunkte,
+Kurationszähler), Kopfzeile mit globaler Suche (zweistufig nach §12.4) und Store-Wahl samt dem
+Hinweis zum `personal`-Store, Hauptfläche, Inspektor rechts. Der Inspektor ist einklappbar und in
+der Breite ziehbar und zeigt stets das Selektierte — Knoten, Dokument oder Lauf. Tastaturbedienung
+gilt durchgängig, nicht nur in der Kurationsliste. Einzelheiten in
+[`konzept-ui.md`](konzept-ui.md).
 
 ---
 

@@ -26,7 +26,9 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
   const gesperrt = new Set(detail.locked_fields);
 
   return (
-    <aside className="wg-panel flex h-full flex-col gap-4 overflow-y-auto" aria-label="Details">
+    // Kein eigener Rahmen mehr: Das Panel wohnt im Inspektor, und ein Rahmen im Rahmen sähe
+    // aus wie ein Fenster im Fenster.
+    <aside className="flex h-full flex-col gap-4 overflow-y-auto p-3" aria-label="Details">
       <header className="-m-3 mb-0 border-b border-ton-200 bg-ton-50 p-3">
         <h2 className="text-base font-semibold leading-tight text-ton-900">
           {detail.title ?? detail.id}

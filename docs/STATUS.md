@@ -1629,6 +1629,45 @@ meldet "Keine eigenen Zertifizierungsstellen hinterlegt".
 `test_container_herkunft.py` wacht darüber und prüft zugleich die Reihenfolge im Dockerfile, die
 man dem gebauten Image nicht ansieht.
 
+### Nachtrag: Beschluss zum UI-Neubau
+
+Die UI erfüllt ihren Zweck als Sichtfenster nicht: Der Graph ist trotz des Zwei-Motoren-Designs
+bei 5.000 Knoten zäh, das Gerüst ist starr (keine einklappbaren oder ziehbaren Panels), die
+Bedienelemente sind Rohware, und sechs gleichrangige Reiter behandeln drei sehr verschiedene
+Anwendergruppen identisch. Beschlossen ist ein Neubau nach
+[`konzept-ui.md`](konzept-ui.md): drei Arbeitsbereiche (Erkunden / Analysieren / Verwalten)
+statt flacher Reiter, ein Wechsel des Graphmotors von Cytoscape.js auf **sigma.js v3 mit
+graphology** (WebGL-Rendering, ForceAtlas2 im Web Worker — die Simulation verlässt den
+UI-Thread, der Motorwechsel bei 400 Knoten entfällt), ein eigener Komponentensatz auf dem
+bestehenden Token-Set und zwei neue Ansichten für Analysten (Automatisierung mit Probelauf,
+Qualität). §16 und §17 der Spezifikation sind auf diesen Stand gehoben; neu darin sind
+`GET /doctor` und `dry_run` für alle schreibenden Läufe. Die Umsetzung folgt den Stufen U1–U5
+aus dem Konzept und ist noch nicht begonnen.
+
+### Nachtrag: U1 — Fundament des UI-Neubaus
+
+Die erste Stufe aus [`konzept-ui.md`](konzept-ui.md) ist umgesetzt:
+
+* **Alle UI-Tests laufen in echtem Chromium** (Vitest Browser Mode über Playwright) statt in
+  jsdom — auf Vorgabe: keine simulierten DOM-Umgebungen mehr. Das jsdom-Flickwerk in
+  `test-setup.ts` (Canvas-Attrappe, feste Elementmaße) ist ersatzlos gestrichen; die 128
+  bestehenden Tests liefen im Browser auf Anhieb. Abdeckung jetzt über istanbul (v8 braucht
+  einen Node-Prozess), Schwellen unverändert erfüllt. `reducedMotion: "reduce"` ist als echte
+  Browser-Einstellung gesetzt, damit Tests keine Layout-Animationen abwarten.
+* **Drei Arbeitsbereiche statt sechs Reiter**: Navigationsleiste links (`NavRail`) mit
+  Erkunden / Analysieren / Verwalten, schmal oder breit; Kopfzeile mit Bereichspfad und
+  Store-Wahl. Die URL-Form ist unverändert (`view=` bleibt), Links von vorher gelten weiter.
+* **Der Inspektor** ist ein echtes Panel: einklappbar, per Griff und per Pfeiltasten in der
+  Breite ziehbar (280–560 px), Zustand in `localStorage` (`werkbank.ts`) — geteilt wird, was
+  eine Ansicht bezeichnet (URL), persönlich ist, was die Werkbank einstellt. Graph-Explorer und
+  Dokumentenbrowser benutzen ihn; die übrigen Ansichten folgen in U3–U5.
+* **Komponentensatz** (`components/basis.tsx`): Schaltfläche mit Gewichten und `beschaeftigt`
+  (sperrt gegen Doppelklick, `type="button"` als Vorgabe gegen versehentliches Submit), Feld
+  mit sichtbarer Sperre, Auswahl, Leer-/Lade-/Fehlerzustand.
+* Eine Chromium-Eigenheit dokumentiert: Der `DataTransfer`-Speicher synthetischer Drag-Events
+  wird sofort geleert; die Handler-Logik testet deshalb ein nachgestellter Speicher, die echte
+  Geste fährt weiterhin der Playwright-Test.
+
 ---
 
 ## Entwicklung

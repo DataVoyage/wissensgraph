@@ -1,53 +1,18 @@
-/** Globale Einrichtung der UI-Tests. */
+/**
+ * Globale Einrichtung der UI-Tests.
+ *
+ * Die Tests laufen in einem echten Chromium (Vitest Browser Mode) — es gibt hier deshalb keine
+ * nachgebauten Fähigkeiten mehr: Canvas, Maße, `matchMedia` bringt der Browser selbst mit.
+ * Früher stand an dieser Stelle ein jsdom-Flickwerk aus Canvas-Attrappe und festen
+ * Elementgrößen; dass es weg ist, ist der Punkt der Umstellung.
+ */
 
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
 
-/*
- * jsdom hat kein Canvas. Cytoscape bricht ohne eines beim Anlegen ab — nicht weil der Code
- * falsch wäre, sondern weil die Umgebung eine Fähigkeit nicht hat, die jeder Browser mitbringt.
- *
- * Deshalb ein minimaler 2D-Kontext statt des Pakets `canvas`: Das brächte eine native
- * Übersetzung mit und damit eine Abhängigkeit von einem Compiler auf jedem Rechner, auf dem
- * jemand die Tests laufen lässt — für ein Bild, das in einem Test ohnehin niemand ansieht.
- * Was die Zeichenfläche *tut*, prüft der Playwright-Test in einem echten Browser.
- */
-const kontext = new Proxy(
-  {},
-  {
-    get: (_ziel, name) => {
-      if (name === "canvas") {
-        return { width: 800, height: 600 };
-      }
-      if (name === "measureText") {
-        return () => ({ width: 0 });
-      }
-      if (name === "getImageData") {
-        return () => ({ data: new Uint8ClampedArray(4) });
-      }
-      return () => undefined;
-    },
-  },
-);
-
-Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", {
-  value: vi.fn(() => kontext),
-  writable: true,
+// Im Browser-Modus teilen sich alle Tests einer Datei dieselbe Seite. Ohne Aufräumen bleibt der
+// gerenderte Baum des vorigen Tests stehen, und `getByText` findet plötzlich zwei Treffer.
+afterEach(() => {
+  cleanup();
 });
-
-/*
- * jsdom misst jedes Element mit 0 × 0. Ein Layout-Algorithmus, der eine Fläche verteilt, teilt
- * dann durch null. Die Zahlen sind willkürlich — es geht nur darum, dass es überhaupt eine
- * Fläche gibt.
- */
-for (const [name, wert] of [
-  ["clientWidth", 800],
-  ["clientHeight", 600],
-  ["offsetWidth", 800],
-  ["offsetHeight", 600],
-] as const) {
-  Object.defineProperty(window.HTMLElement.prototype, name, {
-    configurable: true,
-    value: wert,
-  });
-}

@@ -72,6 +72,17 @@ export function renderMitQuery(element: ReactElement): RenderResult {
   return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
 }
 
+/** Die Werkbank-Props der Ansichten mit Inspektor — für Tests, die die Ansicht direkt bauen. */
+export function werkbankProps(): {
+  werkbank: { railBreit: boolean; inspektorZu: boolean; inspektorBreite: number };
+  onWerkbank: () => void;
+} {
+  return {
+    werkbank: { railBreit: true, inspektorZu: false, inspektorBreite: 340 },
+    onWerkbank: () => undefined,
+  };
+}
+
 /** Die aufgelöste Konfiguration, wie `/config/effective` sie liefert (§17.1). */
 export const KONFIGURATION = {
   env: "test",
