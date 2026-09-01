@@ -553,8 +553,12 @@ docker compose exec api wg link-orphans --scope engineering --no-use-llm --proxi
 
 ## 7. Die Web-UI
 
-<http://localhost:5173>, sechs Ansichten. Der Store lässt sich oben rechts umschalten; das
-Bearer-Token wird beim ersten Aufruf abgefragt.
+<http://localhost:5173>. Die Navigation links ordnet die Ansichten in **drei Arbeitsbereiche**
+nach Anwendergruppen (§17.5): *Erkunden* (Graph, Dokumente, Persönlich), *Analysieren*
+(Kuration, Cluster) und *Verwalten* (Betrieb) — die Bereiche ordnen, sie sind keine Rechte.
+Rechts sitzt der **Inspektor** mit dem jeweils Selektierten: einklappbar und in der Breite
+ziehbar; die Aufteilung merkt sich der Browser, geteilt wird über die URL nur, *was* man
+ansieht. Der Store steht in der Kopfzeile; das Bearer-Token wird beim ersten Aufruf abgefragt.
 
 | Ansicht | Was sie tut |
 |---|---|
@@ -588,10 +592,15 @@ anfasst und zieht, verformt ihn, statt einen Punkt zu verschieben. Die Simulatio
 **nicht dauerhaft** — sie kommt zur Ruhe und startet wieder, wenn jemand einen Knoten anfasst.
 Der Grund steht in Abschnitt 7.5.
 
+Gerechnet wird die Simulation (ForceAtlas2) in einem **Web Worker**: Sie konkurriert nie mit
+Zoom, Auswahl oder Panels um den UI-Thread. Das ist der Kern des Motortauschs von Cytoscape auf
+sigma.js — die Zahlen dazu in Abschnitt 7.5.
+
 Über die Leiste am oberen Rand:
 
-* **Layout** — `Physik` (live), `kraftbasiert`, `konzentrisch` (Hop-Distanz), `hierarchisch`
-  (entlang `member`). Die drei letzten laufen animiert ein statt zu springen.
+* **Layout** — `Physik` (live, das kraftbasierte Layout aus §17.2), `konzentrisch` (Ringe nach
+  Gewicht — in der Traversierung ist das die Nähe zum Start), `hierarchisch` (Ebenen entlang
+  `member`). Die beiden letzten laufen animiert ein statt zu springen.
 * **Regler** — Abstoßung, Kantenlänge, Zusammenhalt. Sie wirken nur auf die Live-Simulation und
   sind bei den Einmal-Layouts sichtbar gesperrt; ein Regler ohne Wirkung wäre eine Lüge über das
   Bedienelement.
@@ -615,10 +624,14 @@ Spalte schreibt sie aus.
 | Store | Knotenform — Kreis für `shared`, Raute für `personal` |
 | Typ | Knotenfarbe, vergeben entlang der konfigurierten Taxonomie |
 | Gewicht | Knotengröße (Grad in der Karte, Score in der Traversierung) |
-| Cluster | schwarz mit hellem Ring — Behälter, nicht Inhalt |
-| Kantenart | Linienstil |
+| Cluster | schwarz — Behälter, nicht Inhalt |
+| Kantenart | Linienstärke: strukturell (`member`) kräftig, semantisch fein |
 | Provenienz | Linienfarbe: von Hand fast schwarz, aus der Quelle grau, **Modellvorschlag rot** |
-| unbestätigt erzeugt | gestrichelt (Leitprinzip 6) |
+| unbestätigt erzeugt | voll deckend; Geprüftes tritt halbtransparent zurück (Leitprinzip 6) |
+
+Die Strichelung der früheren Fassung ist mit dem Motortausch entfallen — WebGL kennt keine
+gestrichelten Linien, und die Deckkraft trägt dieselbe Botschaft: Was auf einen Menschen wartet,
+steht vorn.
 
 **Die Farben sind Grau, Weiß und Rot** — das Kaufland-CI. Rot ist dabei knapp bemessen und
 deshalb aussagekräftig: Es steht für die Marke, für genau eine Hauptaktion je Fläche und für
@@ -648,30 +661,28 @@ keine Klickanleitung.
 
 ### 7.5 Wie viel der Graph verträgt
 
-Gemessen im laufenden Container an 5.000 synthetischen Knoten mit 15.351 Kanten (Bildrate im
-Browser, Antwortzeit des Mausrads):
+Der Graphmotor ist **sigma.js auf WebGL mit graphology**; die Simulation (ForceAtlas2) rechnet
+in einem Web Worker. Die Zahlen der Cytoscape-Fassung — 1 fps bei 2.000 Knoten im Dauerbetrieb,
+Physik oberhalb von 400 Knoten abgeschaltet, Mausrad nach 7,9 s — waren der Anlass für den
+Tausch; sie sind Geschichte.
 
-| Menge im Bild | API-Antwort | Nutzlast | Bildrate | Mausrad |
-|---|---|---|---|---|
-| 300 Knoten / 685 Kanten | 34 ms | 320 kB | 22 fps beim Einschwingen, danach 60 | 27 ms |
-| 600 / 1.301 | 53 ms | 502 kB | 142 fps | 41 ms |
-| 1.200 / 2.712 | 100 ms | 998 kB | 144 fps | 83 ms |
-| 2.000 / 4.774 | 234 ms | 2,1 MB | 140 fps | 105 ms |
+Gemessen mit dem Lasttest (`ui/e2e/lasttest.spec.ts`, `WG_LASTTEST=1`, echtes GPU-Rendering)
+an 5.000 synthetischen Knoten mit 7.375 Kanten:
 
-**Die Grenze liegt nicht im Zeichnen und nicht in der API, sondern im Layout.** Cytoscape stellt
-2.000 Knoten mit 144 fps dar, und `/graph/map` skaliert linear. Eine dauerhaft laufende
-`cola`-Simulation dagegen kostete bei 2.000 Knoten die gesamte Bildrate — 1 fps, und das Mausrad
-antwortete nach 7,9 Sekunden. Deshalb:
+| Messung | Wert |
+|---|---|
+| Bildrate, **während** die Simulation läuft | **137 fps** |
+| Mausrad-Zoomschritt bis zum nächsten Bild | **1 ms** |
+| Motorwechsel nach Knotenzahl | entfällt — ein Motor, jede Größe |
+| Ziehen eines Knotens | löst die Physik auf jeder Größe aus; der Graph verformt sich unter der Hand |
 
-* Bis **400 Knoten** rechnet `cytoscape-cola`: Man sieht dem Graphen beim Sortieren zu, und ein
-  Zug am Knoten wirft die Simulation wieder an.
-* Darüber übernimmt `cytoscape-fcose` — spektrale Vorplatzierung statt Simulation je Bild. Kein
-  Zusehen, aber in einer Sekunde eine Anordnung, die etwas aussagt, und volle Bildrate danach.
-* Der Zug am Knoten löst oberhalb der Grenze keine Physik mehr aus. Er verschiebt ihn, statt
-  jemanden sieben Sekunden auf eine Rückmeldung warten zu lassen.
+Oberhalb von 500 Knoten rechnet ForceAtlas2 mit Barnes-Hut-Näherung (n·log n statt n²); die
+Simulation sortiert sich, hält nach wenigen Sekunden an und läuft wieder an, wenn jemand einen
+Knoten anfasst — ein Graph, der ewig zappelt, beantwortet nichts.
 
-Die Karte selbst zeigt zunächst 300 Knoten und wächst über „mehr laden" bis 2.000 — die
-Obergrenze von `/graph/map`. Wer mehr als 2.000 Knoten gleichzeitig sehen will, sieht in Wahrheit
+Die Karte selbst zeigt zunächst 300 Knoten und wächst über „mehr laden" bis 2.000 — das ist
+heute die Obergrenze **der API-Seite** (`/graph/map`, Nutzlast 2,1 MB bei 2.000 Knoten), nicht
+mehr die des Motors. Wer mehr als 2.000 Knoten gleichzeitig sehen will, sieht in Wahrheit
 nichts mehr; der Weg dorthin ist der Filter, nicht die Menge.
 
 ---

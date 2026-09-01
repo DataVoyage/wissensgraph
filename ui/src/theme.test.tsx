@@ -11,7 +11,7 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { motorFuer } from "./components/GraphCanvas";
+import { fa2Einstellungen, PHYSIK_VORGABE } from "./graph/anordnung";
 import { GraphLegend } from "./components/GraphLegend";
 import {
   SIGNAL,
@@ -137,18 +137,17 @@ describe("Modellvorschlag gegen Ableitung", () => {
   });
 });
 
-describe("Layout-Motor (gemessen, nicht geschätzt)", () => {
-  it("simuliert kleine Graphen und rechnet große", () => {
-    // Die Grenze ist keine Vorsicht, sondern eine Messung: `cola` läuft bei 300 Knoten mit
-    // 22 Bildern je Sekunde, bei 2000 mit einem — und das Mausrad antwortete dort erst nach
-    // 7,9 Sekunden. `fcose` schafft dieselben 2000 Knoten mit 140.
-    expect(motorFuer(50)).toBe("cola");
-    expect(motorFuer(400)).toBe("cola");
-    expect(motorFuer(401)).toBe("fcose");
-    expect(motorFuer(2000)).toBe("fcose");
+describe("Layout-Motor", () => {
+  it("nähert große Graphen mit Barnes-Hut — n·log n statt n² trägt die 5.000er-Marke", () => {
+    expect(fa2Einstellungen(PHYSIK_VORGABE, 300).barnesHutOptimize).toBe(false);
+    expect(fa2Einstellungen(PHYSIK_VORGABE, 5000).barnesHutOptimize).toBe(true);
   });
 
-  it("bleibt beim Ziehen bei der Simulation — nur sie verformt den Graphen", () => {
-    expect(motorFuer(2000, true)).toBe("cola");
+  it("übersetzt die Regler gleichsinnig: mehr Abstoßung spreizt, mehr Schwerkraft zieht", () => {
+    const basis = fa2Einstellungen(PHYSIK_VORGABE, 100);
+    const gespreizt = fa2Einstellungen({ ...PHYSIK_VORGABE, abstossung: 80 }, 100);
+    const gezogen = fa2Einstellungen({ ...PHYSIK_VORGABE, schwerkraft: 0.9 }, 100);
+    expect(Number(gespreizt.scalingRatio)).toBeGreaterThan(Number(basis.scalingRatio));
+    expect(Number(gezogen.gravity)).toBeGreaterThan(Number(basis.gravity));
   });
 });

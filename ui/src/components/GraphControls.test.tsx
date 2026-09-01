@@ -40,7 +40,7 @@ describe("GraphControls", () => {
   });
 
   it("sperrt die Regler außerhalb der Live-Simulation", () => {
-    aufbauen({ layout: "cose" });
+    aufbauen({ layout: "concentric" });
     expect(screen.getByRole("button", { name: "Regler" })).toBeDisabled();
   });
 

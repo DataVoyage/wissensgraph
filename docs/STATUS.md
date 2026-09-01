@@ -1668,6 +1668,46 @@ Die erste Stufe aus [`konzept-ui.md`](konzept-ui.md) ist umgesetzt:
   wird sofort geleert; die Handler-Logik testet deshalb ein nachgestellter Speicher, die echte
   Geste fährt weiterhin der Playwright-Test.
 
+### Nachtrag: U2 — der Graphmotor ist getauscht
+
+Cytoscape.js ist raus, **sigma.js 3 mit graphology** ist drin; alle `cytoscape-*`-Abhängigkeiten
+und ihre Typ-Shims sind entfernt. Die Zielmarke aus dem Konzept (Abschnitt 3.3) ist gemessen
+erreicht — Lasttest `ui/e2e/lasttest.spec.ts` mit 5.000 synthetischen Knoten und 7.375 Kanten,
+gegen den gebauten Stand mit echtem GPU-Rendering:
+
+| | Cytoscape (vorher, gemessen) | sigma (jetzt, gemessen) |
+|---|---|---|
+| Bildrate bei laufender Physik, 2.000 Knoten | 1 fps | — |
+| Bildrate bei laufender Physik, 5.000 Knoten | nicht erreichbar | **137 fps** |
+| Mausrad-Zoomschritt | 7,9 s (2.000) | **1 ms** (5.000) |
+| Physik beim Ziehen | bis 400 Knoten | jede Größe |
+
+Der Zwei-Motoren-Kompromiss (`cola` bis 400, `fcose` darüber) ist ersatzlos entfallen:
+ForceAtlas2 rechnet in einem **Web Worker** und konkurriert nie mit der Bedienung um den
+UI-Thread; oberhalb von 500 Knoten mit Barnes-Hut-Näherung. Eine Messwarnung verdient
+Erwähnung: Headless-Chromium rendert in Software (SwiftShader) und zeigt 7 fps, wo echtes
+GPU-Rendering 137 liefert — der Lasttest fährt deshalb mit sichtbarem Fenster, und der Zoom
+(12 ms auch headless) beweist unabhängig davon, dass der UI-Thread frei ist.
+
+Umgesetzt wie im Konzept angekündigt:
+
+* **Logik von Zeichnung getrennt**: `graph/anordnung.ts` (Abgleich mit Positionserhalt,
+  Regler-Übersetzung, konzentrisch als Ringe nach Gewicht, hierarchisch als eigene BFS entlang
+  `member` — sigma bringt beides nicht mit) ist ohne WebGL getestet; die Zeichenfläche selbst
+  prüfen Browser-Tests mit echten Mausereignissen und die Playwright-Kernflüsse.
+* **Die Raute für `personal`** ist ein abgeleitetes Knotenprogramm (`graph/rauten.ts`): das
+  Kreisprogramm von sigma mit einer getauschten Shader-Zeile (Manhattan- statt euklidischer
+  Abstand). Ein Test wacht darüber, dass der Tausch in der installierten sigma-Version greift.
+* **Die Strichelung ist Deckkraft geworden** — die im Konzept benannte Rückfall-Entscheidung:
+  WebGL kennt keine gestrichelten Linien, ein eigenes Kantenprogramm wäre mehr Fläche als
+  Aussage. Unbestätigtes steht voll deckend vorn, Geprüftes tritt halbtransparent zurück;
+  Kantenart läuft jetzt über die Linienstärke. §17.2, `theme.ts` und die Legende sind
+  gleichzeitig auf diese Fassung gehoben.
+* Das Layout „kraftbasiert (einmalig)" ist entfallen — die Physik *ist* das kraftbasierte
+  Layout; übrig bleiben Physik, konzentrisch, hierarchisch.
+* `prefers-reduced-motion` stellt weiterhin das Ergebnis statt der Bewegung: FA2 rechnet dann
+  synchron wenige Iterationen statt im Worker zu animieren.
+
 ---
 
 ## Entwicklung

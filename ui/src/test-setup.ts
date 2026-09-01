@@ -8,6 +8,9 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+// Das echte Stylesheet, nicht nur die Komponenten: `h-full` und Co. sind Tailwind-Klassen, und
+// ohne sie misst eine Zeichenfläche im Test 800×0 — sigma zeichnet dann in einen Strich.
+import "./index.css";
 import { cleanup } from "@testing-library/react";
 import { afterEach } from "vitest";
 

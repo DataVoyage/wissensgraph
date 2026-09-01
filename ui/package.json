@@ -15,18 +15,17 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.8",
-    "cytoscape": "^3.34.2",
-    "cytoscape-cola": "^2.5.1",
-    "cytoscape-fcose": "^2.2.0",
+    "graphology": "^0.26.0",
+    "graphology-layout-forceatlas2": "^0.10.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "sigma": "^3.0.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.6.6",
-    "@types/cytoscape": "^3.21.9",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.2",

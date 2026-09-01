@@ -1471,7 +1471,7 @@ genau einmal und wird aus allen Bereichen heraus geöffnet.
 
 - Zwei Betriebsarten: **Karte** (gefilterte Übersicht über den Bestand via `/graph/map`, cursor-basiert nachladbar und gedeckelt) und **Traversierung** (inkrementelles Aufklappen Hop für Hop über `/graph/neighbors` von einem Startpunkt aus; kein Vorabladen des Gesamtgraphen).
 - Startpunkt der Traversierung: Kernspace-Übersicht (Cluster des `personal`-Stores) oder ein gewählter Knoten.
-- Visuelle Kodierung: Store über Knotenform, `type` über Farbe, Score über Größe, Kantenart über Linienstil, Provenienz über Linienfarbe (manuell / Code / Modell), unbestätigte Modellkanten gestrichelt.
+- Visuelle Kodierung: Store über Knotenform (Kreis für `shared`, Raute für `personal`), `type` über Farbe, Score bzw. Grad über Größe, Kantenart über Linienstärke (strukturell kräftig, semantisch fein), Provenienz über Linienfarbe (manuell / Code / Modell). Unbestätigtes steht voll deckend vorn, Geprüftes tritt halbtransparent zurück — die Strichelung der Cytoscape-Fassung ist mit dem Motortausch entfallen (WebGL kennt keine gestrichelten Linien; die Deckkraft trägt dieselbe Botschaft von Leitprinzip 6).
 - Filterleiste: Scope, Typ, Kantenarten, nur unbestätigte, nur lose Knoten, Tombstones ein/aus.
 - Seitenpanel je selektiertem Knoten: Felder, Provenienz, Historie, Nachbarn, Aktionen.
 - Layouts: kraftbasiert (Standard), konzentrisch um den Startknoten (zeigt Hop-Distanz), hierarchisch entlang `member`-Kanten.

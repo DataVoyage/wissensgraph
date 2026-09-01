@@ -28,11 +28,12 @@ export interface GraphControlsProps {
   gedeckelt?: boolean;
 }
 
+// "kraftbasiert" als eigener Eintrag ist mit dem Motortausch entfallen: Die Physik *ist* das
+// kraftbasierte Layout (§17.2) — sie läuft im Worker, sortiert sich und hält an.
 const LAYOUTS: ReadonlyArray<{ wert: LayoutName; label: string; titel: string }> = [
   { wert: "physik", label: "Physik", titel: "Live-Simulation — Knoten lassen sich ziehen" },
-  { wert: "cose", label: "kraftbasiert", titel: "Einmaliges kraftbasiertes Layout, animiert" },
-  { wert: "concentric", label: "konzentrisch", titel: "Ringe nach Hop-Distanz zum Startknoten" },
-  { wert: "breadthfirst", label: "hierarchisch", titel: "Baum entlang der member-Kanten" },
+  { wert: "concentric", label: "konzentrisch", titel: "Ringe nach Gewicht — Traversierung: Nähe zum Start" },
+  { wert: "breadthfirst", label: "hierarchisch", titel: "Ebenen entlang der member-Kanten" },
 ];
 
 const REGLER: ReadonlyArray<{

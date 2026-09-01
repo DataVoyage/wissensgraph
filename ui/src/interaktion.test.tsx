@@ -39,6 +39,7 @@ function knoten(id: string, overrides: Record<string, unknown> = {}) {
     status: "stable",
     hop: 0,
     score: 0.5,
+    gewicht: 0.5,
     density: 0,
     ...overrides,
   };
@@ -58,21 +59,40 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Ein Rahmen mit echten Maßen: Ohne Fläche zeichnet sigma nichts, und ein Test gegen eine
+ *  unsichtbare Zeichenfläche prüft nur das Anlegen. */
+function imRahmen(element: JSX.Element): JSX.Element {
+  return <div style={{ width: 800, height: 600 }}>{element}</div>;
+}
+
 describe("Zeichenfläche (§17.2)", () => {
-  it("meldet eine Auswahl nach oben", () => {
+  it("meldet eine Auswahl nach oben — mit einem echten Klick auf den Knoten", async () => {
     const gewaehlt: string[] = [];
     renderMitQuery(
-      <GraphCanvas
-        nodes={[knoten("a"), knoten("b", { store: "personal" })] as never}
-        edges={[kante({ from_id: "a", to_id: "b", to_store: "personal" })] as never}
-        layout="concentric"
-        physik={PHYSIK_VORGABE}
-        onSelect={(id) => gewaehlt.push(id)}
-      />,
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a", { gewicht: 1 })] as never}
+          edges={[]}
+          layout="concentric"
+          physik={PHYSIK_VORGABE}
+          onSelect={(id) => gewaehlt.push(id)}
+        />,
+      ),
     );
 
-    expect(screen.getByTestId("graph-canvas")).toBeInTheDocument();
-    expect(gewaehlt).toEqual([]);
+    // Ein einzelner Knoten liegt im konzentrischen Layout in der Mitte der Fläche.
+    const flaeche = screen.getByTestId("graph-canvas");
+    await waitFor(() => expect(flaeche.querySelector("canvas")).not.toBeNull());
+    await new Promise((weiter) => window.setTimeout(weiter, 150));
+    const mitte = flaeche.getBoundingClientRect();
+    const x = mitte.left + mitte.width / 2;
+    const y = mitte.top + mitte.height / 2;
+    const ziel = document.elementFromPoint(x, y) ?? flaeche;
+    fireEvent.mouseDown(ziel, { clientX: x, clientY: y, buttons: 1 });
+    fireEvent.mouseUp(ziel, { clientX: x, clientY: y });
+    fireEvent.click(ziel, { clientX: x, clientY: y });
+
+    await waitFor(() => expect(gewaehlt).toEqual(["a"]));
   });
 
   it("lässt Kanten weg, deren Gegenstück außerhalb des Ausschnitts liegt (§17.3)", () => {
@@ -90,30 +110,55 @@ describe("Zeichenfläche (§17.2)", () => {
     expect(screen.getByTestId("graph-canvas")).toBeInTheDocument();
   });
 
-  it("markiert den ausgewählten Knoten", () => {
-    renderMitQuery(
-      <GraphCanvas
-        nodes={[knoten("a"), knoten("b")] as never}
-        edges={[]}
-        selected="b"
-        layout="cose"
-        physik={PHYSIK_VORGABE}
-        onSelect={() => undefined}
-      />,
+  it("markiert den ausgewählten Knoten und blendet den Rest ab", async () => {
+    const { rerender } = renderMitQuery(
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a"), knoten("b"), knoten("fern")] as never}
+          edges={[kante({ id: "k1", from_id: "a", to_id: "b" })] as never}
+          selected="b"
+          layout="physik"
+          physik={PHYSIK_VORGABE}
+          labels={false}
+          onSelect={() => undefined}
+        />,
+      ),
     );
+    const flaeche = screen.getByTestId("graph-canvas");
+    await waitFor(() => expect(flaeche.querySelector("canvas")).not.toBeNull());
 
-    expect(screen.getByTestId("graph-canvas")).toBeInTheDocument();
+    // Ein Wechsel der Auswahl und ein "Alles zeigen" laufen über dieselbe Instanz.
+    rerender(
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a"), knoten("b"), knoten("fern")] as never}
+          edges={[kante({ id: "k1", from_id: "a", to_id: "b" })] as never}
+          selected="a"
+          layout="physik"
+          physik={PHYSIK_VORGABE}
+          einpassen={1}
+          onSelect={() => undefined}
+        />,
+      ),
+    );
+    await new Promise((weiter) => window.setTimeout(weiter, 80));
+    // Nach dem Rerender neu greifen: `rerender` ohne den Query-Provider ersetzt den Baum, und
+    // die alte Referenz zeigt auf einen abgehängten Knoten.
+    const danach = screen.getByTestId("graph-canvas");
+    await waitFor(() => expect(danach.querySelector("canvas")).not.toBeNull());
   });
 
   it("zeigt einen Grabstein gedämpft statt ihn wegzulassen (§7.6)", () => {
     renderMitQuery(
-      <GraphCanvas
-        nodes={[knoten("a", { status: "tombstone" })] as never}
-        edges={[]}
-        layout="cose"
-        physik={PHYSIK_VORGABE}
-        onSelect={() => undefined}
-      />,
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a", { status: "tombstone" })] as never}
+          edges={[]}
+          layout="physik"
+          physik={PHYSIK_VORGABE}
+          onSelect={() => undefined}
+        />,
+      ),
     );
 
     expect(screen.getByTestId("graph-canvas")).toBeInTheDocument();

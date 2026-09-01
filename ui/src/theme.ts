@@ -3,9 +3,14 @@
  *
  * §17.2 legt fest, *dass* Typ über Farbe und Provenienz über Linienfarbe kodiert wird. Welche
  * Farbe das im Einzelnen ist, legt diese Datei fest — und zwar genau einmal. Der Grund ist banal
- * und wichtig: Cytoscape braucht Farben als Zeichenkette, Tailwind vergibt sie als Klasse. Ohne
+ * und wichtig: sigma braucht Farben als Zeichenkette, Tailwind vergibt sie als Klasse. Ohne
  * eine gemeinsame Quelle driften Graph und Legende auseinander, und eine Legende, die etwas
  * anderes behauptet als das Bild, ist schlimmer als keine.
+ *
+ * **Unbestätigtes ist deckend, nicht gestrichelt.** WebGL kennt keine gestrichelte Linie; die
+ * Botschaft von Leitprinzip 6 trägt seit dem Motortausch die Deckkraft: Was auf einen Menschen
+ * wartet, steht voll deckend vorn, alles Geprüfte tritt halbtransparent zurück
+ * (`graph/anordnung.ts`). §17.2 ist auf diese Fassung gehoben.
  *
  * **Warum eine feste Reihe und keine berechnete Farbe.** Vorher entstand die Typfarbe aus einem
  * Hash über den Namen. Das war stabil, aber unkontrolliert: Es konnte zwei kaum unterscheidbare

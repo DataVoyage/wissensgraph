@@ -3,7 +3,7 @@
  *
  * §17.2 legt eine Kodierung fest — Form für den Store, Farbe für den Typ, Linienfarbe für die
  * Provenienz —, und eine festgelegte Kodierung ist nur dann eine Information, wenn sie irgendwo
- * steht. Ohne Legende ist eine gestrichelte rote Linie ein hübsches Detail; mit Legende ist sie
+ * steht. Ohne Legende ist eine kräftige rote Linie ein hübsches Detail; mit Legende ist sie
  * ein unbestätigter Modellvorschlag, der auf jemanden wartet (Leitprinzip 6).
  *
  * Die Farben kommen aus `theme.ts` — derselben Quelle, aus der die Zeichenfläche sie nimmt. Eine
@@ -77,8 +77,8 @@ export function GraphLegend({ typen, alleTypen = [] }: GraphLegendProps): JSX.El
           ))}
         </ul>
         <p className="mt-1.5 text-2xs leading-relaxed text-ton-400">
-          Größe = Gewicht. Gestrichelt heißt: von einem Modell vorgeschlagen, von niemandem
-          bestätigt.
+          Größe = Gewicht, kräftige Linie = Struktur (member). Voll deckend heißt: von einem
+          Modell vorgeschlagen, von niemandem bestätigt — Geprüftes tritt zurück.
         </p>
       </div>
     </section>
