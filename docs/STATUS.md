@@ -1550,6 +1550,85 @@ Ein Nebenbefund aus der Saat: `content_hash` ist in der Datenbank nullbar, im Do
 nicht, und `/graph/map` quittierte das mit einem 500er. Das Modell setzt die Invariante also
 korrekt durch; die Spalte dürfte trotzdem `NOT NULL` sein.
 
+### Nachtrag: der Agent soll nicht raten
+
+Die Taxonomie ist Konfiguration (§7.2) und wird exakt geprüft, Groß- und Kleinschreibung
+eingeschlossen. Ein Agent hatte bisher keinen Weg, sie zu erfahren: `scope`, `kind`, `kinds` und
+`store` standen im Eingabeschema als freie Zeichenkette, und `hops` wurde stillschweigend auf
+`traversal.max_hops` gekappt. Wer 6 anfragte und 3 bekam, hielt das Ergebnis für vollständig.
+
+Geschlossen wird das an **drei** Stellen, weil jede einzelne Lücken hat:
+
+1. **Aufzählungen im Eingabeschema.** Sie kosten keinen Werkzeugaufruf und stehen schon in der
+   Werkzeugliste — der billigste Weg. `store`, `scope`, `kind`, `kinds[]`, `granularity` und
+   `type` sind jetzt `enum`; `hops` trägt `maximum` und nennt die Kappung in seiner Beschreibung.
+   Beim Schreiben sind die Scopes zusätzlich auf den persönlichen Store eingeschränkt: Ein Scope
+   des geteilten Stores wäre dort eine Sackgasse, die der Agent erst durch einen Fehlschlag
+   bemerkt. Sie wirken nur, wenn der Client das Schema durchsetzt.
+
+2. **Ein neues Werkzeug `graph_schema`.** Es beantwortet die Fragen *vor* dem Einsetzen eines
+   Werts: welche Typen es gibt, welcher Scope zu welchem Store gehört, welche Kantenart
+   strukturell und welche semantisch ist, wo die Grenzen liegen und was *dieser Aufrufer*
+   schreiben darf. Bewusst eine Antwort statt fünf kleiner Werkzeuge — sie ist ein knappes
+   Kilobyte, ändert sich zwischen zwei Prozessstarts nicht, und wer fünfmal fragen müsste, fragt
+   viermal nicht. Das Feld `you` trennt, was existiert, von dem, was erlaubt ist (§17.4).
+
+   Es steht in der Werkzeugliste ganz vorn, und das widerspricht §18.2 nicht: Jene Reihenfolge
+   ordnet, wie ein Agent *Inhalte* findet; `graph_schema` beantwortet, welche *Werte* zulässig
+   sind. Der inhaltliche Einstieg bleibt `graph_overview`, worauf die Antwort ausdrücklich
+   verweist.
+
+3. **Ablehnungen, die die Alternativen nennen.** Der Anlass ist eine echte Meldung aus dem
+   Betrieb: Ein Aufruf mit `type: "note"` — die Taxonomie schreibt `Note` — beantwortete der
+   Dienst mit "Ein neuer Typ gehört in die Taxonomie in config/wissensgraph.yaml, nicht in den
+   Code". Für einen Entwickler ist das richtig, für einen Agenten unbrauchbar: Er kann die Datei
+   nicht bearbeiten, und die zulässigen Werte erfährt er nicht. Jetzt prüft die Werkzeugschicht
+   Typ, Scope und Kantenart selbst, nennt die möglichen Werte, weist auf Groß- und
+   Kleinschreibung hin und verweist auf `graph_schema`. Diese Schicht greift auch dann noch, wenn
+   ein Modell die Aufzählung schlicht ignoriert hat.
+
+Dazu kommt `agent.md` im Wurzelverzeichnis — die Anleitung, die man einem Agenten mitgibt:
+Verbindung, die Reihenfolge der Aufrufe mit Begründung, alle acht Werkzeuge mit ihren echten
+Antwortformen (gegen den laufenden Server abgefragt, nicht aus dem Gedächtnis), die Bedeutung von
+`score_kind`, `truncated`, `next_cursor` und der Provenienz, drei Abläufe und eine Liste von
+Anti-Mustern. Das Kapitel im README beschreibt weiterhin den *Betrieb* des Servers, `agent.md`
+den *Gebrauch*.
+
+### Nachtrag: eigene Zertifizierungsstellen
+
+In Unternehmensnetzen bricht ein Proxy häufig TLS auf. Der Container sieht dann nicht das
+Zertifikat der Gegenstelle, sondern eines der internen Zertifizierungsstelle, und bricht mit einem
+Fehler ab, der wie ein Netzproblem aussieht und keines ist.
+
+Der Weg hinein ist eine **Datei und kein Bauargument**: Wer `.crt`-Dateien nach
+`docker/ca-certificates/` legt, hat alles getan; wer keine hinlegt, merkt nichts davon. Ein
+zusätzliches `--build-arg` wäre eine zweite Handlung für dieselbe Entscheidung — und eine, die
+man beim nächsten Build vergisst. Mehrere Zertifikate sind ausdrücklich vorgesehen; Root und
+Issuing sind der Normalfall.
+
+Drei Vertrauensspeicher werden bedient, und das ist der Teil, der beim ersten Anlauf gern fehlt:
+
+| Speicher | Wer ihn liest |
+|---|---|
+| `update-ca-certificates` (System) | `psycopg`, `curl`, alles über OpenSSL |
+| `certifi`-Bündel (angehängt, nicht ersetzt) | `httpx`, das Gemini-SDK, praktisch jede Python-HTTP-Bibliothek |
+| `NODE_EXTRA_CA_CERTS` | Node im UI-Build |
+
+Der Systemspeicher allein genügt **nicht**: Python-Bibliotheken lesen `certifi` und nicht
+`/etc/ssl/certs`. Und die Zertifikate greifen früh im Build, vor `uv sync` und `npm ci` — schlägt
+die Inspektion schon beim Herunterladen der Abhängigkeiten zu, käme ein späteres Zertifikat zu
+spät. Der `certifi`-Schritt kommt notgedrungen danach, weil es das Paket vorher nicht gibt.
+
+Nachgemessen und nicht behauptet: Mit zwei hinterlegten Test-CAs stehen beide sowohl im System-
+als auch im `certifi`-Speicher des Anwendungsimages (123 Wurzeln, ISRG Root X1 weiterhin dabei),
+und Node im UI-Build zählt sie zu seinen 145. Ohne hinterlegte Dateien baut alles unverändert und
+meldet "Keine eigenen Zertifizierungsstellen hinterlegt".
+
+`.gitignore` schließt jede Zertifikatsdatei in diesem Verzeichnis aus — das Repository ist
+öffentlich, und die Ausstellerkette eines Unternehmens gehört nicht hinein. Ein Test in
+`test_container_herkunft.py` wacht darüber und prüft zugleich die Reihenfolge im Dockerfile, die
+man dem gebauten Image nicht ansieht.
+
 ---
 
 ## Entwicklung

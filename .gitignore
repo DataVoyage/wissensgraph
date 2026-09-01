@@ -47,3 +47,10 @@ var/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# --- Eigene Zertifizierungsstellen (opt-in, siehe docker/ca-certificates/README.md) ---
+# Ein CA-Zertifikat ist kein Geheimnis, aber die Ausstellerkette eines Unternehmens gehoert
+# nicht in ein oeffentliches Repository. Der README bleibt, damit das Verzeichnis fuer den
+# COPY im Dockerfile immer existiert.
+docker/ca-certificates/*
+!docker/ca-certificates/README.md

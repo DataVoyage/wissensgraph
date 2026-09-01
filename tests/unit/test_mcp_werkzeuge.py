@@ -1,4 +1,4 @@
-"""Die sieben Werkzeuge des MCP-Layers (§18).
+"""Die Werkzeuge des MCP-Layers (§18).
 
 Zwei der drei Abnahmekriterien aus §24, Stufe 12, stehen hier:
 
@@ -67,10 +67,20 @@ def werkzeuge(semantik_settings: Settings, umgebung: Any) -> Toolbox:
 
 
 class TestWerkzeugliste:
-    def test_es_sind_die_sieben_aus_paragraf_181(self, werkzeuge: Toolbox) -> None:
+    def test_es_sind_die_sieben_aus_paragraf_181_plus_die_auskunft(
+        self, werkzeuge: Toolbox
+    ) -> None:
+        """Die sieben aus §18.1 in ihrer Reihenfolge, davor ``graph_schema``.
+
+        Die Reihenfolge ist Teil der Aussage: §18.2 schreibt sie für die *inhaltlichen* Werkzeuge
+        fest, und daran ändert sich nichts. ``graph_schema`` steht davor, weil es eine andere
+        Frage beantwortet — nicht "wo finde ich etwas", sondern "welche Werte darf ich überhaupt
+        einsetzen".
+        """
         namen = [spec.name for spec in werkzeuge.specs()]
 
         assert namen == [
+            "graph_schema",
             "graph_overview",
             "graph_traverse",
             "graph_search",
@@ -206,9 +216,39 @@ class TestSchreiben:
 
         assert umgebung.state("personal").concepts["note:eigen"].title == "Neu"
 
-    def test_ein_geteilter_typ_wird_abgelehnt(self, werkzeuge: Toolbox) -> None:
-        with pytest.raises(ToolError, match="nicht zugelassen"):
+    def test_ein_geteilter_typ_wird_abgelehnt_und_die_ablehnung_hilft_weiter(
+        self, werkzeuge: Toolbox
+    ) -> None:
+        """Eine Ablehnung, aus der sich der richtige Wert nicht ableiten lässt, ist unbrauchbar.
+
+        Der Anlass ist eine echte Meldung aus dem Betrieb: Ein Aufruf mit ``type: "note"``
+        beantwortete der Dienst mit "Ein neuer Typ gehört in die Taxonomie in
+        config/wissensgraph.yaml, nicht in den Code". Für einen Entwickler ist das richtig — ein
+        Agent kann die Datei nicht bearbeiten und erfährt die zulässigen Werte nicht. Ihm bleibt
+        nur, weiter zu raten.
+        """
+        with pytest.raises(ToolError) as fehler:
             werkzeuge.concept_upsert({"type": "Confluence Page", "title": "Von Hand"})
+
+        meldung = str(fehler.value)
+        assert "Note" in meldung, "Die Ablehnung nennt die zulässigen Typen nicht."
+        assert "graph_schema" in meldung, "Sie verweist nicht auf die vollständige Auskunft."
+
+    def test_eine_falsch_geschriebene_taxonomie_wird_abgelehnt(self, werkzeuge: Toolbox) -> None:
+        """Die Taxonomie prüft exakt — 'note' ist nicht 'Note' (§7.2)."""
+        with pytest.raises(ToolError, match="Groß- und Kleinschreibung"):
+            werkzeuge.concept_upsert({"type": "note", "title": "Von Hand"})
+
+    def test_ein_fremder_scope_wird_abgelehnt(self, werkzeuge: Toolbox) -> None:
+        """Ein Scope des geteilten Stores wäre hier eine Sackgasse (§17.4)."""
+        with pytest.raises(ToolError, match="personal"):
+            werkzeuge.concept_upsert({"type": "Note", "title": "Von Hand", "scope": "engineering"})
+
+    def test_eine_unbekannte_kantenart_wird_abgelehnt(self, werkzeuge: Toolbox) -> None:
+        with pytest.raises(ToolError) as fehler:
+            werkzeuge.link_add({"from_id": "note:eigen", "to_id": "confluence:100", "kind": "mag"})
+
+        assert defaults.EDGE_KIND_REFERENCES in str(fehler.value)
 
     def test_ein_unbekanntes_ziel_beim_fortschreiben_ist_ein_werkzeugfehler(
         self, werkzeuge: Toolbox
@@ -460,3 +500,129 @@ class TestScoreSkala:
         suche = werkzeuge.graph_search({"query": "Faktentabellen"})
 
         assert traversierung["score_kind"] != suche["score_kind"]
+
+
+class TestNichtsZuRaten:
+    """Was ein Agent einsetzen darf, steht im Schema — und ist keine freie Zeichenkette.
+
+    Der Anlass ist konkret: Die Taxonomie ist je Installation verschieden (§7.2), die Prüfung
+    dagegen ist exakt. Ein Agent, der die erlaubten Werte nicht kennt, rät — und ein geratener
+    Scope oder eine geratene Kantenart kostet einen Fehlschlag, aus dem er die richtige Antwort
+    nicht ableiten kann.
+    """
+
+    def _feld(self, werkzeuge: Toolbox, werkzeug: str, feld: str) -> dict[str, object]:
+        spec = next(eintrag for eintrag in werkzeuge.specs() if eintrag.name == werkzeug)
+        return spec.input_schema["properties"][feld]  # type: ignore[no-any-return]
+
+    def test_der_store_ist_aufgezaehlt(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        for werkzeug in ("graph_overview", "graph_traverse", "graph_search", "concept_get"):
+            assert self._feld(werkzeuge, werkzeug, "store")["enum"] == list(
+                semantik_settings.stores
+            )
+
+    def test_der_scope_ist_aufgezaehlt(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        alle = [eintrag.name for eintrag in semantik_settings.scopes]
+
+        assert self._feld(werkzeuge, "graph_overview", "scope")["enum"] == alle
+        assert self._feld(werkzeuge, "graph_search", "scope")["enum"] == alle
+
+    def test_beim_schreiben_stehen_nur_persoenliche_scopes_zur_wahl(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        """Ein Scope des geteilten Stores wäre hier eine Sackgasse (§17.4)."""
+        erlaubt = self._feld(werkzeuge, "concept_upsert", "scope")["enum"]
+
+        assert erlaubt == [
+            eintrag.name for eintrag in semantik_settings.scopes if eintrag.store == "personal"
+        ]
+        assert all(
+            eintrag.store == "personal"
+            for eintrag in semantik_settings.scopes
+            if eintrag.name in erlaubt  # type: ignore[operator]
+        )
+
+    def test_die_kantenarten_sind_aufgezaehlt(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        alle = list(semantik_settings.edge_kinds.all_kinds)
+
+        assert self._feld(werkzeuge, "link_add", "kind")["enum"] == alle
+        assert self._feld(werkzeuge, "graph_traverse", "kinds")["items"]["enum"] == alle  # type: ignore[index]
+
+    def test_die_tiefe_nennt_ihre_obergrenze(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        """Ein größerer Wert wird stillschweigend gekappt — dann muss er im Schema stehen."""
+        hops = self._feld(werkzeuge, "graph_traverse", "hops")
+
+        assert hops["maximum"] == semantik_settings.traversal.max_hops
+        assert str(semantik_settings.traversal.max_hops) in str(hops["description"])
+
+
+class TestSchemaWerkzeug:
+    """``graph_schema`` — die Regeln als Auskunft statt als Vermutung."""
+
+    def test_es_nennt_die_taxonomie_dieser_installation(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        antwort = werkzeuge.graph_schema({})
+
+        assert [eintrag["name"] for eintrag in antwort["concept_types"]] == [
+            eintrag.name for eintrag in semantik_settings.concept_types
+        ]
+        assert [eintrag["name"] for eintrag in antwort["scopes"]] == [
+            eintrag.name for eintrag in semantik_settings.scopes
+        ]
+
+    def test_es_trennt_strukturelle_von_semantischen_kanten(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        """Die Trennung steuert die Traversierung — sie ist keine Sortierhilfe (§7.7)."""
+        antwort = werkzeuge.graph_schema({})
+
+        assert antwort["edge_kinds"]["structural"] == list(semantik_settings.edge_kinds.structural)
+        assert antwort["edge_kinds"]["semantic"] == list(semantik_settings.edge_kinds.semantic)
+
+    def test_es_sagt_welchen_store_der_agent_beschreiben_darf(self, werkzeuge: Toolbox) -> None:
+        """§17.4: "Ein Mensch darf die geteilte Struktur ordnen; ein Agent nicht"."""
+        antwort = werkzeuge.graph_schema({})
+
+        beschreibbar = {
+            eintrag["name"] for eintrag in antwort["stores"] if eintrag["you_can_write"]
+        }
+        assert beschreibbar == {"personal"}
+        assert antwort["you"]["writable_stores"] == ["personal"]
+
+    def test_es_nennt_die_grenzen_die_sonst_still_zuschlagen(
+        self, werkzeuge: Toolbox, semantik_settings: Settings
+    ) -> None:
+        antwort = werkzeuge.graph_schema({})
+
+        assert antwort["limits"]["traverse_max_hops"] == semantik_settings.traversal.max_hops
+        assert antwort["limits"]["traverse_max_nodes"] == semantik_settings.traversal.max_nodes
+        assert antwort["limits"]["max_response_tokens"] == semantik_settings.mcp.max_response_tokens
+
+    def test_es_bietet_kein_cluster_zum_anlegen_an(self, werkzeuge: Toolbox) -> None:
+        """Ein Cluster entsteht aus dem Lauf, nicht von Hand — 'cluster_project' ist der Weg."""
+        antwort = werkzeuge.graph_schema({})
+
+        cluster = next(
+            eintrag for eintrag in antwort["concept_types"] if eintrag["name"] == "Cluster"
+        )
+        assert cluster["you_can_create"] is False
+        assert "Cluster" not in antwort["you"]["creatable_types"]
+
+    def test_es_verlangt_keine_argumente(self, werkzeuge: Toolbox) -> None:
+        spec = next(eintrag for eintrag in werkzeuge.specs() if eintrag.name == "graph_schema")
+
+        assert spec.input_schema["required"] == []
+        assert spec.input_schema["properties"] == {}
+
+    def test_es_weist_den_weg_zur_uebersicht(self, werkzeuge: Toolbox) -> None:
+        """§18.2 bleibt in Kraft: Der inhaltliche Einstieg ist 'graph_overview'."""
+        assert "graph_overview" in werkzeuge.graph_schema({})["next_step"]

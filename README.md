@@ -5,15 +5,20 @@ angebundenen Quellen (Confluence, Jira, …) werden inkrementell synchronisiert,
 versehen, zu thematischen Clustern zusammengefasst und über typisierte Kanten verbunden. Der Graph
 trennt einen lokalen `personal`-Store von einem geteilten `shared`-Store.
 
-Die vollständige Architektur- und Implementierungsspezifikation steht in
-[`docs/architektur-spec-wissensgraph.md`](docs/architektur-spec-wissensgraph.md); der aktuelle
-Umsetzungsstand entlang des dortigen Stufenplans (§24) in
-[`docs/STATUS.md`](docs/STATUS.md). Paragraphenzeichen in diesem Dokument (§11.5, §17.3, …)
-verweisen auf die Spezifikation — dort steht das *Warum*, hier das *Wie*.
+| Dokument | Wofür |
+|---|---|
+| dieses README | Betrieb: aufsetzen, konfigurieren, bedienen, Fehler suchen. |
+| [`agent.md`](agent.md) | **Zum Mitgeben an einen Agenten.** Wie er den Graphen über MCP benutzt: Aufrufreihenfolge, alle Werkzeuge mit ihren Antwortformen, Abläufe, Anti-Muster. |
+| [`docs/architektur-spec-wissensgraph.md`](docs/architektur-spec-wissensgraph.md) | Die vollständige Architektur- und Implementierungsspezifikation — das *Warum*. |
+| [`docs/STATUS.md`](docs/STATUS.md) | Umsetzungsstand entlang des Stufenplans (§24), mit den Entscheidungen und ihren Gründen. |
 
-**Umgesetzt sind die Stufen 0–12.** Stufe 13 (Anbindung der echten Quellsysteme) steht aus; bis
-dahin läuft das System gegen den mitgelieferten Mock-Quellserver, der dieselbe HTTP-Schnittstelle
-spricht wie Confluence und Jira.
+Paragraphenzeichen (§11.5, §17.3, …) verweisen **immer** auf die Spezifikation; auf Stellen
+in diesem README wird als „Abschnitt 4.7“ oder „Kapitel 14“ verwiesen.
+
+**Umgesetzt sind die Stufen 0–13**; Stufe 14 (Föderation) ist dort als Ausblick geführt und nicht
+Teil dieser Umsetzung. Die echten Quellsysteme sind angebunden — solange keine Zugangsdaten
+hinterlegt sind, läuft das System gegen den mitgelieferten Mock-Quellserver, der dieselbe
+HTTP-Schnittstelle spricht wie Confluence und Jira (Kapitel 15).
 
 ---
 
@@ -54,6 +59,25 @@ Sie erklären viele Entscheidungen, die sonst willkürlich wirken:
 ---
 
 ## 2. Was das System aus welchen Bausteinen tut
+
+### Funktionsumfang
+
+Was das System kann, in einer Übersicht — die Einzelheiten in den genannten Kapiteln.
+
+| Bereich | Umfang | Wo |
+|---|---|---|
+| **Quellen anbinden** | Confluence und Jira über eigene Adapter, dazu ein Mock-Server, der beide nachspielt. Inkrementell und cursor-basiert; Rate-Limits und Paginierung inbegriffen. Gespiegelte Inhalte bleiben schreibgeschützt. | 6.1, 15 |
+| **Wissen aufbereiten** | Embeddings je Konzept, thematische Cluster mit erzeugten Titeln, semantische Kanten zwischen Konzepten, Vernetzung loser Knoten. Jeder Schritt ein eigener Lauf, jeder Lauf abbrechbar und nachvollziehbar. | 6 |
+| **Graph abfragen** | Traversierung über mehrere Hops und Store-Grenzen hinweg, Kernspace-Ranking aus Nähe, Dichte und Aktualität, zweistufige Suche (erst Themen, dann Dokumente) mit Rückfall auf Volltext, gefilterte Kartenansicht über den Gesamtbestand. | 7.1, 8 |
+| **Kuratieren** | Modellvorschläge bestätigen oder verwerfen, Cluster anlegen, umbenennen, verschmelzen, aufteilen, Mitglieder verschieben, Status und Tags setzen. Jede Änderung im Journal und rücknehmbar. | 7 |
+| **Persönlicher Bereich** | Notizen und Projekte in einer eigenen Datenbank, die den Rechner nicht verlässt, mit Brücken in den geteilten Bestand. | 7 |
+| **Agentenzugriff** | MCP-Server mit acht Werkzeugen über Streamable HTTP oder stdio. Der Agent liest den geteilten Bestand und schreibt ausschließlich in den persönlichen — erzwungen in der Datenbank. | 9, [`agent.md`](agent.md) |
+| **Betrieb** | Läufe starten und live verfolgen, Quellen-Health, Modellnutzung mit Kostenschätzung, Bestandszahlen, aufgelöste Konfiguration mit maskierten Secrets. | 7, 11 |
+| **Modelle** | Anbieterunabhängig über LangChain, Routing je Aufgabe, Fallback-Ketten, Antwort-Cache, Budgetgrenze je Lauf. Lokale Anbieter für den persönlichen Store. | 5.4, 11 |
+| **Abgeschlossene Netze** | Eigene Registry, eigener Paketindex, Proxy, und optional eigene CA-Zertifikate für Umgebungen mit TLS-Inspektion. | 4.7, 14 |
+
+Was das System **nicht** tut: Es verändert keine Quellinhalte, es schreibt nichts ohne
+Journaleintrag, und es lässt keinen Agenten die geteilte Struktur ordnen.
 
 ### Dienste (`docker-compose.yml`)
 
@@ -203,7 +227,41 @@ WG_API_CORS_ORIGINS=http://localhost:5173,http://192.168.178.21:5173
 Danach `docker compose --profile dev up -d api ui`. **Anschließend zurückstellen:** In dieser
 Konfiguration ist die API im gesamten WLAN erreichbar und nur durch den Bearer-Token geschützt.
 
-### 4.7 Stack stoppen
+### 4.7 Hinter einer TLS-Inspektion (optional)
+
+In Unternehmensnetzen bricht ein Proxy häufig TLS auf. Der Container sieht dann nicht das
+Zertifikat der Gegenstelle, sondern eines der internen Zertifizierungsstelle — und bricht jede
+Verbindung mit einem Zertifikatsfehler ab, der wie ein Netzproblem aussieht und keines ist.
+
+Der Weg hinein ist eine Datei, kein Schalter:
+
+```bash
+cp firma-root.crt firma-issuing.crt docker/ca-certificates/
+docker compose build
+```
+
+Mehr ist nicht zu tun. Mehrere Zertifikate sind ausdrücklich vorgesehen — Root und Issuing sind
+der Normalfall. Wer nichts hinlegt, merkt von dem Mechanismus nichts; die Vorgabe bleibt der
+öffentliche Weg.
+
+Vier Dinge, die man wissen muss:
+
+* **Endung `.crt`, Inhalt PEM, ein Zertifikat je Datei.** Eine `.pem`-Datei wird
+  *stillschweigend* übergangen, eine DER-Datei abgelehnt. Details in
+  `docker/ca-certificates/README.md`.
+* **Die Zertifikate greifen früh im Build**, vor `uv sync` und `npm ci`. Wenn die Inspektion schon
+  beim Herunterladen der Abhängigkeiten zuschlägt, käme ein späteres Zertifikat zu spät.
+* **Drei Vertrauensspeicher, nicht einer.** Der Systemspeicher allein genügt nicht: `httpx`, das
+  Gemini-SDK und praktisch jede Python-Bibliothek lesen das Bündel von `certifi`, Node liest
+  `NODE_EXTRA_CA_CERTS`. Alle drei werden bedient, die öffentlichen Wurzeln bleiben gültig.
+* **Nichts davon landet im Repository.** `.gitignore` schließt die Dateien aus, und ein Test
+  wacht darüber — die Ausstellerkette eines Unternehmens gehört nicht in ein öffentliches
+  Repository.
+
+Für `uv` gibt es zusätzlich `UV_NATIVE_TLS=true` als Bauargument; es lässt uv den
+Betriebssystemspeicher benutzen statt seines eigenen.
+
+### 4.8 Stack stoppen
 
 ```bash
 uv run python scripts/dev.py down --profile dev
@@ -527,7 +585,7 @@ könnte.
 Das Vorgabe-Layout ist **Physik**: Der Graph sortiert sich sichtbar ein, und wer einen Knoten
 anfasst und zieht, verformt ihn, statt einen Punkt zu verschieben. Die Simulation läuft dabei
 **nicht dauerhaft** — sie kommt zur Ruhe und startet wieder, wenn jemand einen Knoten anfasst.
-Der Grund steht in §7.5.
+Der Grund steht in Abschnitt 7.5.
 
 Über die Leiste am oberen Rand:
 
@@ -545,34 +603,6 @@ Ein Klick auf einen Knoten hebt seine Nachbarschaft hervor und blendet den Rest 
 Ein ausgeblendeter Knoten ließe den Graphen zerfallen, ein blasser zeigt, dass da noch mehr ist.
 Wer „weniger Bewegung" im Betriebssystem eingestellt hat, bekommt dieselbe Anordnung ohne
 Animation.
-
-### 7.5 Wie viel der Graph verträgt
-
-Gemessen im laufenden Container an 5.000 synthetischen Knoten mit 15.351 Kanten (Bildrate im
-Browser, Antwortzeit des Mausrads):
-
-| Menge im Bild | API-Antwort | Nutzlast | Bildrate | Mausrad |
-|---|---|---|---|---|
-| 300 Knoten / 685 Kanten | 34 ms | 320 kB | 22 fps beim Einschwingen, danach 60 | 27 ms |
-| 600 / 1.301 | 53 ms | 502 kB | 142 fps | 41 ms |
-| 1.200 / 2.712 | 100 ms | 998 kB | 144 fps | 83 ms |
-| 2.000 / 4.774 | 234 ms | 2,1 MB | 140 fps | 105 ms |
-
-**Die Grenze liegt nicht im Zeichnen und nicht in der API, sondern im Layout.** Cytoscape stellt
-2.000 Knoten mit 144 fps dar, und `/graph/map` skaliert linear. Eine dauerhaft laufende
-`cola`-Simulation dagegen kostete bei 2.000 Knoten die gesamte Bildrate — 1 fps, und das Mausrad
-antwortete nach 7,9 Sekunden. Deshalb:
-
-* Bis **400 Knoten** rechnet `cytoscape-cola`: Man sieht dem Graphen beim Sortieren zu, und ein
-  Zug am Knoten wirft die Simulation wieder an.
-* Darüber übernimmt `cytoscape-fcose` — spektrale Vorplatzierung statt Simulation je Bild. Kein
-  Zusehen, aber in einer Sekunde eine Anordnung, die etwas aussagt, und volle Bildrate danach.
-* Der Zug am Knoten löst oberhalb der Grenze keine Physik mehr aus. Er verschiebt ihn, statt
-  jemanden sieben Sekunden auf eine Rückmeldung warten zu lassen.
-
-Die Karte selbst zeigt zunächst 300 Knoten und wächst über „mehr laden" bis 2.000 — die
-Obergrenze von `/graph/map`. Wer mehr als 2.000 Knoten gleichzeitig sehen will, sieht in Wahrheit
-nichts mehr; der Weg dorthin ist der Filter, nicht die Menge.
 
 ### 7.3 Die visuelle Kodierung
 
@@ -614,6 +644,34 @@ Der lokale Zustand steht in der URL, Ansichten sind damit teilbar — und zwar *
 der Filter**: Ansicht, Modus, Store, Scope, Typ, Kantenarten, „nur unbestätigte", „nur lose",
 Grabsteine und der ausgewählte Knoten. Wer einen Ausschnitt bespricht, schickt einen Link und
 keine Klickanleitung.
+
+### 7.5 Wie viel der Graph verträgt
+
+Gemessen im laufenden Container an 5.000 synthetischen Knoten mit 15.351 Kanten (Bildrate im
+Browser, Antwortzeit des Mausrads):
+
+| Menge im Bild | API-Antwort | Nutzlast | Bildrate | Mausrad |
+|---|---|---|---|---|
+| 300 Knoten / 685 Kanten | 34 ms | 320 kB | 22 fps beim Einschwingen, danach 60 | 27 ms |
+| 600 / 1.301 | 53 ms | 502 kB | 142 fps | 41 ms |
+| 1.200 / 2.712 | 100 ms | 998 kB | 144 fps | 83 ms |
+| 2.000 / 4.774 | 234 ms | 2,1 MB | 140 fps | 105 ms |
+
+**Die Grenze liegt nicht im Zeichnen und nicht in der API, sondern im Layout.** Cytoscape stellt
+2.000 Knoten mit 144 fps dar, und `/graph/map` skaliert linear. Eine dauerhaft laufende
+`cola`-Simulation dagegen kostete bei 2.000 Knoten die gesamte Bildrate — 1 fps, und das Mausrad
+antwortete nach 7,9 Sekunden. Deshalb:
+
+* Bis **400 Knoten** rechnet `cytoscape-cola`: Man sieht dem Graphen beim Sortieren zu, und ein
+  Zug am Knoten wirft die Simulation wieder an.
+* Darüber übernimmt `cytoscape-fcose` — spektrale Vorplatzierung statt Simulation je Bild. Kein
+  Zusehen, aber in einer Sekunde eine Anordnung, die etwas aussagt, und volle Bildrate danach.
+* Der Zug am Knoten löst oberhalb der Grenze keine Physik mehr aus. Er verschiebt ihn, statt
+  jemanden sieben Sekunden auf eine Rückmeldung warten zu lassen.
+
+Die Karte selbst zeigt zunächst 300 Knoten und wächst über „mehr laden" bis 2.000 — die
+Obergrenze von `/graph/map`. Wer mehr als 2.000 Knoten gleichzeitig sehen will, sieht in Wahrheit
+nichts mehr; der Weg dorthin ist der Filter, nicht die Menge.
 
 ---
 
@@ -680,7 +738,12 @@ Erzeugt werden nur die **Eingabeformen**. Die Antwortformen stehen von Hand in
 
 ## 9. Der MCP-Server für Agenten
 
-Sieben Werkzeuge, zwei Transporte. Gebaut ist der Server auf **FastMCP** — im SDK `mcp` 2.x heißt
+> **Für den Agenten selbst gibt es [`agent.md`](agent.md)** — eine vollständige Anleitung zum
+> Mitgeben: Reihenfolge der Aufrufe, alle Werkzeuge mit ihren Antwortformen, die Bedeutung von
+> `score_kind`, `truncated` und der Provenienz, dazu Abläufe und Anti-Muster. Dieses Kapitel hier
+> beschreibt den *Betrieb* des Servers, jenes den *Gebrauch*.
+
+Acht Werkzeuge, zwei Transporte. Gebaut ist der Server auf **FastMCP** — im SDK `mcp` 2.x heißt
 die Klasse `MCPServer`; es ist dieselbe, die früher `FastMCP` hieß.
 
 **Über HTTP (Vorgabe).** Der Container öffnet Port 8800; ein Agent trägt nur die URL ein:
@@ -716,13 +779,30 @@ damit von einer Änderung eines Menschen unterscheidbar.
 
 | Werkzeug | Zweck |
 |---|---|
+| `graph_schema` | Die Regeln dieser Installation: Stores, Scopes, Konzepttypen, Kantenarten, Grenzen und die eigenen Schreibrechte. Statisch — ein Aufruf je Sitzung. Nimmt dem Agenten das Raten ab. |
 | `graph_overview` | „Der erste Aufruf einer Sitzung." Cluster-Übersicht; die Antwort trägt einen `next_step`. |
 | `graph_traverse` | Vom Knoten aus über Hops, optional auf Kantenarten eingeschränkt. |
 | `graph_search` | **Fallback**, wenn die Übersicht nicht weiterhilft. |
 | `concept_get` | Ein Konzept mit Kanten und Provenienz. |
 | `concept_upsert` | Anlegen oder Fortschreiben — **ohne `store`-Argument**. |
 | `link_add` | Kante setzen — **ohne `from_store`-Argument**. |
-| `cluster_project` | Ein Cluster als Projektion. |
+| `cluster_project` | Bildet die Themengruppen im persönlichen Store neu — nach mehreren neuen Notizen zu einem Projekt. Rührt `shared` nicht an. |
+
+**Der Agent muss nichts raten.** Die Taxonomie ist Konfiguration (§7.2) und wird exakt geprüft,
+Groß- und Kleinschreibung eingeschlossen — `note` ist nicht `Note`. Ein Agent hat keinen Weg, das
+zu erraten, also wird es ihm an drei Stellen gesagt:
+
+1. **Im Eingabeschema.** `store`, `scope`, `kind`, `kinds[]`, `granularity` und `type` sind
+   `enum`, gefüllt aus der Konfiguration dieser Installation. `hops` trägt sein `maximum` und
+   nennt in der Beschreibung, dass größere Werte gekappt werden — sonst hält ein Agent, der 6
+   anfragt und 3 bekommt, das Ergebnis für vollständig. Beim Schreiben sind die Scopes zusätzlich
+   auf den persönlichen Store eingeschränkt.
+2. **Über `graph_schema`.** Für die Fragen *vor* dem Einsetzen eines Werts: welcher Scope zu
+   welchem Store gehört, welche Kantenart strukturell und welche semantisch ist, wo die Grenzen
+   liegen und was *dieser Aufrufer* schreiben darf.
+3. **In der Ablehnung.** Ein unzulässiger Wert wird nicht nur zurückgewiesen, sondern beantwortet
+   mit den möglichen Werten und einem Verweis auf `graph_schema`. Diese Schicht greift auch dann
+   noch, wenn ein Client das Schema nicht durchsetzt.
 
 Drei Eigenschaften sind Absicht und keine Lücke:
 
@@ -882,7 +962,20 @@ Die Gegenmaßnahme ist `tests/unit/test_api_antwortform.py`: Er prüft die **ech
 die Feldnamen, auf die sich `ui/src/api/types.ts` verlässt. Wer ein Antwortfeld ändert, ändert es
 dort mit — sonst schlägt der Test fehl.
 
-### 13.6 Nützliche Kommandos
+### 13.6 Der Build bricht mit einem Zertifikatsfehler ab
+
+Meldungen wie `certificate verify failed`, `unable to get local issuer certificate` oder
+`SELF_SIGNED_CERT_IN_CHAIN` beim `docker compose build` oder zur Laufzeit sind fast nie ein
+Netzproblem, sondern eine TLS-Inspektion: Der Container sieht das Zertifikat des Proxys statt das
+der Gegenstelle.
+
+Abhilfe: die eigenen CA-Zertifikate nach `docker/ca-certificates/` legen und neu bauen (Abschnitt 4.7).
+Zwei häufige Stolpersteine — die Endung muss `.crt` sein (eine `.pem`-Datei wird *stillschweigend*
+übergangen), und der Inhalt muss PEM sein, nicht DER.
+
+Tritt der Fehler nur bei `uv` auf, hilft zusätzlich `UV_NATIVE_TLS=true` (Kapitel 14).
+
+### 13.7 Nützliche Kommandos
 
 ```bash
 docker compose ps
@@ -935,6 +1028,23 @@ UV_NATIVE_TLS=true
 Schalter für Umgebungen mit aufbrechendem TLS-Proxy — ohne ihn kennt uv die interne
 Zertifizierungsstelle nicht und bricht mit einem Zertifikatsfehler ab, der wie ein Netzproblem
 aussieht.
+
+### Eigene Zertifizierungsstellen
+
+`UV_NATIVE_TLS` löst nur die eine Hälfte: Es sagt uv, es solle den Systemspeicher benutzen — nicht,
+was darin steht. Die andere Hälfte sind die Zertifikate selbst. Sie kommen als Dateien nach
+`docker/ca-certificates/`, mehrere sind ausdrücklich vorgesehen, und mehr ist nicht zu tun:
+
+```bash
+cp firma-root.crt firma-issuing.crt docker/ca-certificates/
+docker compose build
+```
+
+Bedient werden **drei** Vertrauensspeicher, weil drei verschiedene Programme verschiedene lesen —
+der Systemspeicher (`psycopg`, `curl`), das Bündel von `certifi` (`httpx`, das Gemini-SDK) und
+`NODE_EXTRA_CA_CERTS` (Node im UI-Build). Der Systemspeicher allein genügt also **nicht**. Die
+Einzelheiten und die Regeln für die Dateien stehen in Abschnitt 4.7 und in
+`docker/ca-certificates/README.md`.
 
 > **Der Index allein genügt nicht — und das ist die eine Sache, die man nicht raten kann.**
 >

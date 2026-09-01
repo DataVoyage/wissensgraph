@@ -16,6 +16,32 @@ FROM ${WG_DOCKER_REGISTRY}node:22-alpine AS build
 
 WORKDIR /build
 
+# Eigene Zertifizierungsstellen — dieselbe Ablage wie beim Anwendungsimage, opt-in durch Dateien.
+# Siehe docker/ca-certificates/README.md. Sie greifen vor 'npm ci': Wenn die TLS-Inspektion schon
+# beim Herunterladen der Pakete zuschlägt, käme ein späteres Zertifikat zu spät.
+#
+# 'NODE_EXTRA_CA_CERTS' ist nötig, weil Node einen eigenen eingebauten Vertrauensspeicher hat und
+# '/etc/ssl/certs' nicht liest. Die Variable *ergänzt* die eingebauten Wurzeln, sie ersetzt sie
+# nicht — der öffentliche Weg bleibt unverändert gültig.
+#
+# Sie zeigt auf eine eigene Datei und nicht auf das Systembündel, und zwar aus einem kleinen,
+# aber lästigen Grund: Node warnt bei jedem Aufruf, wenn die genannte Datei fehlt. Ohne
+# hinterlegte Zertifikate ist '/etc/ssl/certs/ca-certificates.crt' in diesem Basis-Image nicht
+# garantiert vorhanden — die Datei unten wird dagegen immer angelegt und ist dann eben leer.
+COPY docker/ca-certificates/ /usr/local/share/ca-certificates/
+RUN set -eu; \
+    : > /etc/wg-extra-ca.crt; \
+    if ls /usr/local/share/ca-certificates/*.crt >/dev/null 2>&1; then \
+        apk add --no-cache ca-certificates; \
+        update-ca-certificates; \
+        cat /usr/local/share/ca-certificates/*.crt > /etc/wg-extra-ca.crt; \
+        echo "Eigene Zertifizierungsstellen aufgenommen:"; \
+        ls -1 /usr/local/share/ca-certificates/*.crt; \
+    else \
+        echo "Keine eigenen Zertifizierungsstellen hinterlegt — Standardvertrauen."; \
+    fi
+ENV NODE_EXTRA_CA_CERTS=/etc/wg-extra-ca.crt
+
 # Der npm-Spiegel. 'NPM_CONFIG_REGISTRY' ist die Variable von npm selbst — auch hier gibt es
 # keinen eigenen Übersetzungsschritt.
 ARG NPM_CONFIG_REGISTRY=

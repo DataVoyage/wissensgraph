@@ -1,4 +1,4 @@
-"""Die sieben Werkzeuge aus §18.1 — als Aufrufe derselben Dienste wie CLI und API.
+"""Die Werkzeuge aus §18.1 — als Aufrufe derselben Dienste wie CLI und API.
 
 Drei Dinge machen diesen Layer aus, und alle drei stehen in §18:
 
@@ -83,7 +83,7 @@ _INT = {"type": "integer"}
 
 
 class Toolbox:
-    """Die sieben Werkzeuge, gebunden an eine Sitzung (§18.1, §18.3)."""
+    """Die acht Werkzeuge, gebunden an eine Sitzung (§18.1, §18.3)."""
 
     def __init__(
         self,
@@ -132,6 +132,45 @@ class Toolbox:
             and eintrag.name != defaults.CONCEPT_TYPE_CLUSTER
         )
 
+    def _store_feld(self, beschreibung: str) -> dict[str, Any]:
+        """Das ``store``-Feld — mit den Stores dieser Installation statt einer freien Zeichenkette.
+
+        Es gibt genau zwei, sie stehen in der Konfiguration, und ein Agent hat keinen Weg, sie zu
+        erraten. Eine Aufzählung im Schema ist der billigste Weg, ihm das Raten abzunehmen: Sie
+        kostet keinen Werkzeugaufruf und steht schon in der Werkzeugliste.
+        """
+        return {**_STR, "enum": list(self._settings.stores), "description": beschreibung}
+
+    def _scope_feld(self, *, store: str | None = None) -> dict[str, Any]:
+        """Das ``scope``-Feld — auf die Scopes eingeschränkt, die es wirklich gibt (§7.1).
+
+        Args:
+            store: Nur Scopes dieses Stores anbieten. Beim Schreiben ist das entscheidend: Ein
+                Agent darf ausschließlich nach ``personal`` schreiben (§17.4), und ein Scope des
+                geteilten Stores wäre dort eine Sackgasse, die er erst durch einen Fehlschlag
+                bemerkt.
+        """
+        namen = [
+            eintrag.name
+            for eintrag in self._settings.scopes
+            if store is None or eintrag.store == store
+        ]
+        zusatz = "" if store is None else f" im Store '{store}'"
+        return {
+            **_STR,
+            "enum": namen,
+            "description": f"Einer der konfigurierten Scopes{zusatz}: {', '.join(namen)}.",
+        }
+
+    def _kantenart_feld(self, beschreibung: str) -> dict[str, Any]:
+        """Das ``kind``-Feld — mit den Kantenarten dieser Installation (§7.7)."""
+        arten = list(self._settings.edge_kinds.all_kinds)
+        return {
+            **_STR,
+            "enum": arten,
+            "description": f"{beschreibung} Möglich sind: {', '.join(arten)}.",
+        }
+
     def _typ_feld(self) -> dict[str, Any]:
         """Das ``type``-Feld von ``concept_upsert`` — mit den Typen dieser Installation.
 
@@ -158,10 +197,28 @@ class Toolbox:
         """Alle Werkzeuge in der Reihenfolge, in der §18.1 sie aufführt.
 
         Die Reihenfolge ist nicht gleichgültig: Ein Agent, der eine Werkzeugliste bekommt, liest
-        sie von oben. ``graph_overview`` steht deshalb zuerst und ``graph_search`` an dritter
-        Stelle — genau die Reihenfolge, die §18.2 als bevorzugt festschreibt.
+        sie von oben. ``graph_overview`` steht deshalb vor ``graph_traverse`` und ``graph_search``
+        an letzter Stelle der lesenden Werkzeuge — genau die Reihenfolge, die §18.2 als bevorzugt
+        festschreibt.
+
+        Ganz vorn steht ``graph_schema``, und das widerspricht dem nicht. §18.2 ordnet, wie ein
+        Agent **Inhalte** findet; ``graph_schema`` beantwortet eine andere Frage, nämlich welche
+        Werte überhaupt zulässig sind. Sie muss einmal je Sitzung beantwortet werden und danach
+        nie wieder — und wer sie nicht stellt, rät.
         """
         return (
+            ToolSpec(
+                name="graph_schema",
+                description=(
+                    "Die Regeln dieser Installation: welche Stores, Scopes, Konzepttypen und "
+                    "Kantenarten es gibt, welche Grenzen gelten und was **du** davon schreiben "
+                    "darfst. Statisch — einmal je Sitzung genügt. Rufe es auf, bevor du zum "
+                    "ersten Mal schreibst oder filterst; die Taxonomie ist je Installation "
+                    "verschieden und lässt sich nicht erraten."
+                ),
+                input_schema=_schema({}),
+                call=self.graph_schema,
+            ),
             ToolSpec(
                 name="graph_overview",
                 description=(
@@ -172,8 +229,13 @@ class Toolbox:
                 ),
                 input_schema=_schema(
                     {
-                        "scope": {**_STR, "description": "Nur Cluster dieses Scopes."},
-                        "store": {**_STR, "description": "'shared' (Vorgabe) oder 'personal'."},
+                        "scope": {
+                            **self._scope_feld(),
+                            "description": "Nur Themengruppen dieses Scopes.",
+                        },
+                        "store": self._store_feld(
+                            f"'{defaults.STORE_SHARED}' (Vorgabe) oder '{defaults.STORE_PERSONAL}'."
+                        ),
                         "limit": {
                             **_INT,
                             "minimum": 1,
@@ -203,13 +265,30 @@ class Toolbox:
                 input_schema=_schema(
                     {
                         "concept_id": {**_STR, "description": "Ausgangspunkt."},
-                        "hops": {**_INT, "minimum": 1, "description": "Tiefe, Vorgabe 1."},
+                        "hops": {
+                            **_INT,
+                            "minimum": 1,
+                            "maximum": self._settings.traversal.max_hops,
+                            # Die Obergrenze steht im Schema und nicht nur in der Konfiguration:
+                            # Ein größerer Wert wird stillschweigend gekappt (§12.1), und ein
+                            # Agent, der 6 anfragt und 3 bekommt, hält das Ergebnis für
+                            # vollständig.
+                            "description": (
+                                f"Tiefe, Vorgabe {self._settings.traversal.default_hops}. "
+                                f"Höchstens {self._settings.traversal.max_hops} — größere Werte "
+                                f"werden auf diesen Wert gekappt."
+                            ),
+                        },
                         "kinds": {
                             "type": "array",
-                            "items": _STR,
-                            "description": "Nur diesen Kantenarten folgen.",
+                            "items": self._kantenart_feld("Eine Kantenart."),
+                            "description": (
+                                "Nur diesen Kantenarten folgen. Der Filter wirkt beim Ausbreiten: "
+                                "Wer nur 'member' verfolgt, erreicht auch nur, was über 'member' "
+                                "erreichbar ist."
+                            ),
                         },
-                        "store": _STR,
+                        "store": self._store_feld("Der Store des Ausgangspunkts."),
                     },
                     required=["concept_id"],
                 ),
@@ -225,14 +304,14 @@ class Toolbox:
                 ),
                 input_schema=_schema(
                     {
-                        "query": _STR,
-                        "scope": _STR,
+                        "query": {**_STR, "description": "Der Suchbegriff in natürlicher Sprache."},
+                        "scope": self._scope_feld(),
                         "granularity": {
                             **_STR,
                             "enum": ["cluster", "document", "auto"],
                             "description": "Vorgabe 'auto': erst Cluster, dann Dokumente.",
                         },
-                        "store": _STR,
+                        "store": self._store_feld("Vorgabe der geteilte Store."),
                     },
                     required=["query"],
                 ),
@@ -245,7 +324,13 @@ class Toolbox:
                     "Kanten und seiner Herkunft. Lange Texte werden gekürzt; das Ergebnis sagt "
                     "es dann über 'truncated'."
                 ),
-                input_schema=_schema({"concept_id": _STR, "store": _STR}, required=["concept_id"]),
+                input_schema=_schema(
+                    {
+                        "concept_id": _STR,
+                        "store": self._store_feld("Vorgabe der geteilte Store."),
+                    },
+                    required=["concept_id"],
+                ),
                 call=self.concept_get,
             ),
             ToolSpec(
@@ -263,7 +348,7 @@ class Toolbox:
                         "description": _STR,
                         "body": _STR,
                         "tags": {"type": "array", "items": _STR},
-                        "scope": _STR,
+                        "scope": self._scope_feld(store=defaults.STORE_PERSONAL),
                         "concept_id": {
                             **_STR,
                             "description": "Zum Fortschreiben eines bestehenden Konzepts.",
@@ -282,10 +367,20 @@ class Toolbox:
                 ),
                 input_schema=_schema(
                     {
-                        "from_id": _STR,
-                        "to_id": _STR,
-                        "to_store": _STR,
-                        "kind": {**_STR, "description": "Vorgabe 'references'."},
+                        "from_id": {
+                            **_STR,
+                            "description": (
+                                f"Dein Konzept im Store '{defaults.STORE_PERSONAL}' — die Kante "
+                                f"geht immer von dort aus."
+                            ),
+                        },
+                        "to_id": {**_STR, "description": "Das Ziel, bevorzugt eine Themengruppe."},
+                        "to_store": self._store_feld(
+                            f"Der Store des Ziels, Vorgabe '{defaults.STORE_SHARED}'."
+                        ),
+                        "kind": self._kantenart_feld(
+                            f"Die Art der Beziehung, Vorgabe '{defaults.EDGE_KIND_REFERENCES}'."
+                        ),
                     },
                     required=["from_id", "to_id"],
                 ),
@@ -304,6 +399,109 @@ class Toolbox:
         )
 
     # -- Umsetzungen --------------------------------------------------------------
+
+    def graph_schema(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Die Regeln dieser Installation, als Auskunft statt als Vermutung (§7.2, §17.4, §18.3).
+
+        Die Aufzählungen in den Eingabeschemata nehmen einem Agenten das Raten an der Stelle ab,
+        an der er einen Wert *einsetzt*. Sie beantworten aber nicht die Fragen davor: Welche Typen
+        gibt es überhaupt, welcher Scope gehört zu welchem Store, welche Kantenart ist strukturell
+        und welche semantisch, wo ist die Grenze meiner Schreibrechte, und ab wann wird eine
+        Antwort gekürzt? Das steht sonst nur im Architekturdokument, und ein Agent liest keine
+        Architekturdokumente.
+
+        Bewusst **eine** Antwort statt fünf kleiner Werkzeuge: Sie ist klein, sie ändert sich
+        zwischen zwei Prozessstarts nicht, und ein Agent, der fünfmal fragen müsste, fragt
+        viermal nicht.
+
+        Das Feld ``you`` ist der Teil, der sich nicht aus der Konfiguration allein ergibt: Was in
+        dieser Installation existiert, ist eine Sache; was *dieser Aufrufer* damit tun darf, eine
+        andere. §17.4 trennt beides ausdrücklich — "ein Mensch darf die geteilte Struktur ordnen;
+        ein Agent nicht" —, und diese Trennung gehört in die Antwort, nicht in eine Fußnote.
+        """
+        del args
+        persoenliche_typen = self._persoenliche_typen()
+        grenzen = self._settings.traversal
+        regeln: dict[str, Any] = {
+            "stores": [
+                {
+                    "name": name,
+                    "you_can_write": name == defaults.STORE_PERSONAL,
+                    "note": (
+                        "Deine Notizen und Projekte. Verlässt diesen Rechner nicht."
+                        if name == defaults.STORE_PERSONAL
+                        else (
+                            "Der geteilte Bestand aus den Quellsystemen. Für dich nur lesbar — "
+                            "die Beschränkung ist in der Datenbank erzwungen, nicht nur hier."
+                        )
+                    ),
+                }
+                for name in self._settings.stores
+            ],
+            "scopes": [
+                {
+                    "name": eintrag.name,
+                    "store": eintrag.store,
+                    "description": eintrag.description,
+                }
+                for eintrag in self._settings.scopes
+            ],
+            "concept_types": [
+                {
+                    "name": eintrag.name,
+                    "stores": list(eintrag.stores),
+                    "source_mirrored": eintrag.source_mirrored,
+                    "you_can_create": eintrag.name in persoenliche_typen,
+                }
+                for eintrag in self._settings.concept_types
+            ],
+            "edge_kinds": {
+                # Die Trennung ist keine Sortierhilfe: Sie steuert die Traversierung und die
+                # Definition eines losen Knotens (§7.7). 'member' führt in eine Themengruppe
+                # hinein, eine semantische Kante führt seitwärts zu etwas Verwandtem.
+                "structural": list(self._settings.edge_kinds.structural),
+                "semantic": list(self._settings.edge_kinds.semantic),
+            },
+            "limits": {
+                "traverse_default_hops": grenzen.default_hops,
+                "traverse_max_hops": grenzen.max_hops,
+                "traverse_max_nodes": grenzen.max_nodes,
+                "overview_default_limit": defaults.MCP_OVERVIEW_LIMIT,
+                "search_default_limit": self._settings.search.limit,
+                "max_response_tokens": self._settings.mcp.max_response_tokens,
+            },
+            "you": {
+                "actor": self.actor,
+                "writable_stores": [defaults.STORE_PERSONAL],
+                "creatable_types": list(persoenliche_typen),
+                # Hier ausdrücklich ohne Ausnahme: Fehlt ein persönlicher Scope, ist der
+                # Agent in dieser Installation nicht vorgesehen. Genau das soll die Auskunft
+                # dann sagen — ein Werkzeug, das die Regeln erklären soll und stattdessen
+                # abbricht, lässt den Agenten mit weniger zurück als vorher.
+                "default_scope": next(
+                    (
+                        eintrag.name
+                        for eintrag in self._settings.scopes
+                        if eintrag.store == defaults.STORE_PERSONAL
+                    ),
+                    None,
+                ),
+                "note": (
+                    "Jeder deiner Schreibvorgänge steht mit dieser Kennung im Änderungsjournal "
+                    "und lässt sich zurücknehmen. Eine Themengruppe legst du nicht von Hand an — "
+                    "dafür gibt es 'cluster_project'."
+                ),
+            },
+            "next_step": (
+                "Diese Antwort ändert sich innerhalb einer Sitzung nicht — merke sie dir. "
+                "Weiter mit 'graph_overview', um zu sehen, worum es in diesem Graphen geht."
+            ),
+        }
+        # §18.3 deckelt *jede* Rückgabe, auch diese. Praktisch greift der Deckel hier nie — die
+        # Antwort ist ein knappes Kilobyte —, und die Aufzählungen blieben ohnehin unangetastet:
+        # Gekürzt werden Texte, nicht Listen. Ein halbierter Regelsatz wäre schlimmer als ein
+        # langer.
+        return self._deckeln(regeln)
 
     def graph_overview(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Die Cluster eines Stores (§18.1)."""
@@ -424,6 +622,17 @@ class Toolbox:
         """
         scope = str(args.get("scope") or self._persoenlicher_scope())
         vorhanden = args.get("concept_id")
+        if not vorhanden:
+            self._pruefe_wahl("type", str(args["type"]), self._persoenliche_typen())
+            self._pruefe_wahl(
+                "scope",
+                scope,
+                tuple(
+                    eintrag.name
+                    for eintrag in self._settings.scopes
+                    if eintrag.store == defaults.STORE_PERSONAL
+                ),
+            )
         try:
             if vorhanden:
                 aenderungen = {
@@ -460,13 +669,15 @@ class Toolbox:
         ``from_store`` gibt es als Argument nicht: Eine Kante des Agenten beginnt immer im
         persönlichen Store. Die Gegenrichtung existiert nicht und soll es nicht (§12.1).
         """
+        kind = str(args.get("kind", defaults.EDGE_KIND_REFERENCES))
+        self._pruefe_wahl("kind", kind, self._settings.edge_kinds.all_kinds)
         try:
             ergebnis = self._curation.add_edge(
                 store=defaults.STORE_PERSONAL,
                 from_id=str(args["from_id"]),
                 to_id=str(args["to_id"]),
-                to_store=str(args.get("to_store", defaults.STORE_SHARED)),
-                kind=str(args.get("kind", defaults.EDGE_KIND_REFERENCES)),
+                to_store=self._store(args.get("to_store", defaults.STORE_SHARED)),
+                kind=kind,
                 actor=self.actor,
             )
         except NotFoundError as exc:
@@ -494,6 +705,32 @@ class Toolbox:
 
     # -- Hilfen -------------------------------------------------------------------
 
+    def _pruefe_wahl(self, feld: str, wert: str, erlaubt: Sequence[str]) -> None:
+        """Prüft einen Wert gegen eine Aufzählung und nennt im Fehlerfall die Alternativen.
+
+        Die dritte und letzte Schicht gegen das Raten. Die erste ist die Aufzählung im
+        Eingabeschema — sie wirkt nur, wenn der Client sie durchsetzt. Die zweite ist
+        ``graph_schema`` — sie wirkt nur, wenn der Agent fragt. Diese hier wirkt immer, und sie
+        ist die einzige, die auch dann noch greift, wenn ein Modell die Aufzählung schlicht
+        ignoriert hat.
+
+        Der Anlass ist eine echte Meldung aus dem Betrieb. Ein Aufruf mit ``type: "note"`` (die
+        Taxonomie schreibt ``Note``) beantwortete der Dienst mit "Ein neuer Typ gehört in die
+        Taxonomie in config/wissensgraph.yaml, nicht in den Code". Das ist für einen Entwickler
+        richtig und für einen Agenten unbrauchbar: Er kann die Datei nicht bearbeiten, und die
+        zulässigen Werte erfährt er nicht — ihm bleibt nur, weiter zu raten.
+
+        Raises:
+            ToolError: Wenn der Wert nicht in der Aufzählung steht.
+        """
+        if wert in erlaubt:
+            return
+        raise ToolError(
+            f"'{wert}' ist kein zulässiger Wert für '{feld}'. Möglich sind: "
+            f"{', '.join(erlaubt)}. Groß- und Kleinschreibung zählt. "
+            f"Alle Regeln dieser Installation liefert 'graph_schema'."
+        )
+
     def _store(self, angabe: Any) -> str:
         """Löst einen Store-Namen auf; ohne Angabe der geteilte.
 
@@ -505,7 +742,8 @@ class Toolbox:
         name = str(angabe)
         if name not in self._settings.stores:
             raise ToolError(
-                f"Unbekannter Store '{name}'. Es gibt: {', '.join(self._settings.stores)}."
+                f"Unbekannter Store '{name}'. Es gibt: {', '.join(self._settings.stores)}. "
+                f"Alle Regeln dieser Installation liefert 'graph_schema'."
             )
         return name
 

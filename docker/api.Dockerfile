@@ -37,6 +37,32 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # ---------------------------------------------------------------------------
+# Eigene Zertifizierungsstellen — opt-in durch Dateien, nicht durch Schalter
+# ---------------------------------------------------------------------------
+# In einem Unternehmensnetz mit aufbrechender TLS-Inspektion sieht der Container nicht das
+# Zertifikat der Gegenstelle, sondern eines der internen Zertifizierungsstelle. Ohne sie im
+# Vertrauensspeicher scheitert jede TLS-Verbindung mit einem Fehler, der wie ein Netzproblem
+# aussieht und keines ist.
+#
+# Der Weg hinein ist eine Datei und kein Bauargument: Wer .crt-Dateien nach
+# 'docker/ca-certificates/' legt, hat damit alles getan; wer keine hinlegt, merkt von dieser
+# Stufe nichts. Ein zusätzliches '--build-arg' wäre eine zweite Handlung für dieselbe
+# Entscheidung — und eine, die man beim nächsten Build vergisst. Mehrere Zertifikate sind
+# ausdrücklich vorgesehen (Root und Issuing sind der Normalfall).
+#
+# Die Stufe steht **vor** 'uv sync'. Wenn die Inspektion schon beim Herunterladen der
+# Abhängigkeiten zuschlägt, hilft ein Zertifikat, das erst danach installiert wird, nicht mehr.
+COPY docker/ca-certificates/ /usr/local/share/ca-certificates/
+RUN set -eu; \
+    if ls /usr/local/share/ca-certificates/*.crt >/dev/null 2>&1; then \
+        update-ca-certificates; \
+        echo "Eigene Zertifizierungsstellen aufgenommen:"; \
+        ls -1 /usr/local/share/ca-certificates/*.crt; \
+    else \
+        echo "Keine eigenen Zertifizierungsstellen hinterlegt — Standardvertrauen."; \
+    fi
+
+# ---------------------------------------------------------------------------
 # Paketquelle (§5.3)
 # ---------------------------------------------------------------------------
 # 'UV_DEFAULT_INDEX' ersetzt PyPI, 'UV_INDEX' stellt weitere Indizes daneben. Beide sind
@@ -83,6 +109,22 @@ RUN --mount=type=secret,id=netrc,target=/root/.netrc \
 COPY src/ ./src/
 RUN --mount=type=secret,id=netrc,target=/root/.netrc \
     uv sync --frozen --no-dev
+
+# Dieselben Zertifikate noch einmal — für Python.
+#
+# Der Systemspeicher von oben genügt nicht, und das ist der Punkt, an dem eine naheliegende
+# Lösung scheitert: 'httpx', das Gemini-SDK und praktisch jede Python-Bibliothek, die HTTP
+# spricht, benutzen das Bündel von 'certifi' und nicht '/etc/ssl/certs'. Ein Zertifikat, das nur
+# im Systemspeicher steht, ist für sie unsichtbar. Angehängt statt ersetzt: Die öffentlichen
+# Wurzeln bleiben gültig, die interne kommt dazu.
+#
+# Erst hier, weil 'certifi' vorher nicht installiert ist.
+RUN set -eu; \
+    if ls /usr/local/share/ca-certificates/*.crt >/dev/null 2>&1; then \
+        buendel="$(python -c 'import certifi; print(certifi.where())')"; \
+        cat /usr/local/share/ca-certificates/*.crt >> "$buendel"; \
+        echo "certifi-Bündel ergänzt: $buendel"; \
+    fi
 
 # Nicht als root laufen. Die Bind-Mounts für config/ und secrets/ sind read-only (§5.3), auf
 # ./data schreibt ausschließlich PostgreSQL in seinem eigenen Container.
