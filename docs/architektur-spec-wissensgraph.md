@@ -235,16 +235,22 @@ Aufbau-Pipelines (Sync, Embedding, Clustering, Relation, Orphan) und Abfragepfad
 
 Der gesamte Stack wird über eine `docker-compose.yml` gestartet. Kein Service setzt eine Installation auf dem Host voraus außer Docker selbst.
 
-| Service | Image/Basis | Aufgabe | Ports (Default, konfigurierbar) |
+| Service | Image/Basis | Aufgabe | Host → Container (Default, konfigurierbar) |
 |---|---|---|---|
 | `db-shared` | `pgvector/pgvector:pg16` | PostgreSQL für den `shared`-Store | 5433 → 5432 |
-| `db-personal` | `pgvector/pgvector:pg16` | PostgreSQL für den `personal`-Store | 5434 → 5432 |
-| `api` | Projekt-Image (Python/uv) | HTTP-API, Kern-Services | 8080 |
+| `db-personal` | `pgvector/pgvector:pg16` | PostgreSQL für den `personal`-Store | **keine Freigabe** (§5.2) |
+| `api` | Projekt-Image (Python/uv) | HTTP-API, Kern-Services | 8080 → 8080 |
 | `worker` | dasselbe Image, anderer Befehl | asynchrone Läufe (Sync, Embedding, Clustering, Orphan) | — |
-| `mcp` | dasselbe Image, anderer Befehl | FastMCP-Server für den Agenten | 8081 |
-| `ui` | Node-Build → nginx | Auslieferung der SPA | 5173 |
-| `mock-sources` | Projekt-Image, anderer Befehl | HTTP-Mocks für Confluence und Jira | 8090 |
-| `broker` | `redis:7` | Job-Queue und Ergebnis-Backend | 6379 |
+| `mcp` | dasselbe Image, anderer Befehl | FastMCP-Server für den Agenten | 8800 → 8800 |
+| `ui` | Node-Build → nginx | Auslieferung der SPA | 5173 → 80 |
+| `mock-sources` | Projekt-Image, anderer Befehl | HTTP-Mocks für Confluence und Jira | 8090 → 8090 |
+| `broker` | `redis:7-alpine` | Job-Queue und Ergebnis-Backend | **keine Freigabe** |
+
+Zwei Dienste erscheinen bewusst **ohne** Host-Freigabe. Bei `db-personal` ist das die
+Ausformung von §5.2 und §20.1: Das Netz `wg-personal` ist `internal`, eine Freigabe wäre dort
+ohnehin wirkungslos — und der Verzicht macht die Absicht sichtbar. Werkzeuge gegen diesen Store
+laufen deshalb im Container (§19), nicht auf dem Host. Der Broker wird von außen nicht
+gebraucht; wer ihn ansieht, tut das über `docker compose exec`.
 
 **Zwei Datenbank-Services statt zwei Datenbanken in einem Service** ist eine bewusste Entscheidung: Sie macht die Trennung im Deployment sichtbar, erlaubt getrennte Netzwerke und macht den späteren Umzug des `shared`-Stores auf einen zentralen Server zu einer reinen Konfigurationsänderung.
 
@@ -430,8 +436,10 @@ Alle Variablen tragen das Präfix `WG_`. Verschachtelung über `__`.
 | `WG_API_TOKEN` | bedingt | — | Bearer-Token bei `auth_mode=token` |
 | `WG_API_CORS_ORIGINS` | nein | `http://localhost:5173` | kommaseparierte Liste |
 | `WG_UI_API_BASE_URL` | ja (UI) | — | zur Build- oder Laufzeit in die SPA injiziert |
-| `WG_MCP_TRANSPORT` | nein | `stdio` | `stdio` \| `http` |
-| `WG_MCP_PORT` | nein | `8081` | Port bei HTTP-Transport |
+| `WG_MCP_TRANSPORT` | nein | `http` | `stdio` \| `http` |
+| `WG_MCP_HOST` / `WG_MCP_PORT` | nein | `127.0.0.1` / `8800` | Bind-Adresse des MCP-Servers im Container |
+| `WG_MCP_PATH` | nein | `/mcp` | Pfad des Streamable-HTTP-Endpunkts |
+| `WG_MCP_HOST_BIND` / `WG_MCP_HOST_PORT` | nein | `0.0.0.0` / `8800` | Wohin Docker den Port auf dem Host bindet. Auf einem im Netz erreichbaren Rechner gehört dort `127.0.0.1` hin: Der Endpunkt kennt keine Authentifizierung (§18.3). |
 | `WG_BROKER_URL` | ja | — | Redis-URL für die Job-Queue |
 | `WG_MODELS_FILE` | nein | `${WG_CONFIG_DIR}/models.yaml` | Pfad zur Router-Konfiguration |
 | `WG_SOURCES_FILE` | nein | `${WG_CONFIG_DIR}/sources.yaml` | Pfad zur Quell-Konfiguration |
@@ -1575,6 +1583,7 @@ gilt durchgängig, nicht nur in der Kurationsliste. Einzelheiten in
 
 | Werkzeug | Signatur | Zweck |
 |---|---|---|
+| `graph_schema` | `()` | Die Regeln dieser Installation: Stores, Scopes, Konzepttypen, Kantenarten, Grenzen und die eigenen Schreibrechte. Statisch — ein Aufruf je Sitzung genügt. Nimmt dem Agenten das Raten ab. |
 | `graph_overview` | `(scope?: str)` | günstiger Einstieg: Cluster-Titel und -Beschreibungen des Kernspace. Erster Aufruf einer Sitzung, keine Suche. |
 | `graph_traverse` | `(concept_id: str, hops: int = 1, kinds?: list[str])` | hop-für-hop-Bewegung; unterscheidet `member` (abwärts) und `related`/semantische Kanten (seitwärts). Nach dem ersten Anker der dominante Aufruf. |
 | `graph_search` | `(query: str, scope?: str, granularity: str = "auto")` | Fallback, wenn weder Brücke noch Übersicht einen Startpunkt liefern. Zweistufig nach §12.4. |
@@ -1593,6 +1602,18 @@ aktive Brücke oder graph_overview  →  graph_traverse entlang echter Kanten
 ```
 
 `graph_search` trägt in seiner Beschreibung ausdrücklich den Hinweis, dass es der Fallback ist. Das ist die einzige wirksame Stelle, an der sich das Verhalten des Agenten steuern lässt.
+
+`graph_schema` steht in der Werkzeugliste vor allen anderen, und das widerspricht dieser Reihenfolge nicht: Sie ordnet, wie ein Agent *Inhalte* findet; `graph_schema` beantwortet, welche *Werte* zulässig sind. Der inhaltliche Einstieg bleibt `graph_overview`.
+
+### 18.2a Der Agent muss nichts raten
+
+Die Taxonomie ist Konfiguration (§7.2) und wird exakt geprüft, Groß- und Kleinschreibung eingeschlossen — `note` ist nicht `Note`. Ein Agent hat keinen Weg, das zu erraten, also wird es ihm an drei Stellen gesagt, weil jede einzelne Lücken hat:
+
+1. **Im Eingabeschema.** `store`, `scope`, `kind`, `kinds[]`, `granularity` und `type` sind `enum`, gefüllt aus der Konfiguration dieser Installation; `hops` trägt sein `maximum`. Kostet keinen Werkzeugaufruf — wirkt aber nur, wenn der Client das Schema durchsetzt.
+2. **Über `graph_schema`.** Für die Fragen *vor* dem Einsetzen eines Werts — wirkt nur, wenn der Agent fragt.
+3. **In der Ablehnung.** Ein unzulässiger Wert wird mit den möglichen Werten und einem Verweis auf `graph_schema` beantwortet. Diese Schicht greift immer, auch wenn ein Modell die Aufzählung ignoriert hat.
+
+Die Anleitung zum Mitgeben an einen Agenten ist [`agent.md`](../agent.md) im Wurzelverzeichnis.
 
 ### 18.3 Absicherung
 
@@ -1620,9 +1641,8 @@ docker compose exec worker wg sync --all
 
 # Aufbau
 docker compose exec worker wg embed --scope engineering [--rebuild]
-docker compose exec worker wg cluster --scope engineering
-docker compose exec worker wg cluster --project project:finance-integration
-docker compose exec worker wg relations --scope engineering
+docker compose exec worker wg cluster --scope engineering [--dry-run]
+docker compose exec worker wg relations --scope engineering [--dry-run]
 docker compose exec worker wg link-orphans --scope engineering \
     --loose-threshold 1 --proximity-top-n 30 \
     --proximity-auto-commit 0.85 --proximity-candidate-band 0.60 \
@@ -1632,15 +1652,23 @@ docker compose exec worker wg link-orphans --scope engineering \
 docker compose exec api wg graph overview
 docker compose exec api wg graph traverse --start note:abc --hops 2
 
+# Dienste (die Startbefehle der Container)
+docker compose exec api wg serve
+docker compose exec worker wg worker
+docker compose exec mcp wg mcp [--transport http|stdio] [--host H] [--port P] [--session ID]
+
 # Modelle
 docker compose exec api wg models describe --task relation_extraction
 docker compose exec api wg models usage --run <run-id>
-
-# Export (optional)
-docker compose exec worker wg export --scope engineering --format okf-md --out /var/exports
 ```
 
-Jeder Befehl ist wiederholbar und idempotent. `--dry-run` gibt es bei allen schreibenden Läufen.
+Jeder Befehl ist wiederholbar und idempotent. **`--dry-run` gibt es bei jedem schreibenden
+Lauf** — `sync`, `cluster`, `relations` und `link-orphans`. Ausgenommen ist `embed`: Embeddings
+sind Ableitungen und kein kuratierbarer Inhalt; ein Probelauf, der nichts berechnet, wüsste
+nichts zu berichten. Dieselbe Trennung gilt in der UI (§17.2, Ansicht 7).
+
+Ein Export (`wg export`) ist **Ausblick und nicht umgesetzt**; er bräuchte zuerst einen
+API-Endpunkt, damit CLI und UI dieselbe Auskunft geben (Leitprinzip 14).
 
 ---
 

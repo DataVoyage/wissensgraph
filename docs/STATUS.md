@@ -1794,6 +1794,59 @@ Zwei Punkte aus der Risikoliste des Konzepts sind zum Abschluss abgearbeitet:
   obwohl seither vier Ansichten, ein Markdown-Renderer und die globale Suche dazugekommen
   sind. Cytoscape samt `cola` und `fcose` war der schwerste Posten der Oberfläche.
 
+### Nachtrag: Die Architekturskizze stimmt wieder — und ein Wächter hält sie dabei
+
+Die Skizze nannte für den `mcp`-Dienst seit jeher **Port 8081**, während der Stack auf **8800**
+läuft. Beim Abgleich der ganzen Diensttabelle kamen vier weitere Abweichungen zutage, und eine
+davon war mehr als veraltet:
+
+| Stelle | stand da | ist tatsächlich |
+|---|---|---|
+| `mcp`, Port | 8081 | 8800 (Host → Container) |
+| `db-personal`, Port | 5434 → 5432 | **keine Freigabe** — das Netz ist `internal` (§5.2) |
+| `broker`, Port | 6379 | keine Freigabe |
+| `ui`, Port | 5173 | 5173 → 80 (nginx im Container) |
+| `WG_MCP_TRANSPORT` | `stdio` | `http` |
+
+Die Zeile zu `db-personal` war der ernste Fund: Eine Port-Freigabe für den persönlichen Store
+widerspricht dem Prinzip, das dieselbe Spezifikation in §5.2 und §20.1 aufstellt — wer nur die
+Tabelle liest, hält die Trennung für schwächer, als sie ist. Beide Dienste stehen jetzt
+ausdrücklich als „keine Freigabe" da, mit dem Grund daneben.
+
+Weiter geglättet: §18.1 kannte sieben Werkzeuge, es sind acht (`graph_schema` fehlte); §18.2a
+hält jetzt die Drei-Schichten-Regel „der Agent muss nichts raten" auch in der Spezifikation
+fest statt nur in STATUS und README. §19 zeigte `wg cluster --project`, das es nie gab, und
+`wg export`, das nicht umgesetzt ist — ersteres ist weg, letzteres als Ausblick gekennzeichnet;
+dafür stehen die Startbefehle der Container (`serve`, `worker`, `mcp`) und die
+`--dry-run`-Regel samt der begründeten Ausnahme `embed` jetzt drin.
+
+**Damit sich das nicht wiederholt**, prüft `tests/unit/test_doku_stimmt.py` die Skizze künftig
+gegen die Wirklichkeit: Portvorgaben gegen `defaults.py`, die Diensttabelle gegen
+`docker-compose.yml` (inklusive der Zusage, dass `db-personal` und `broker` keine Freigabe
+bekommen), die Werkzeugtabelle §18.1 gegen die MCP-Registry in beide Richtungen — fehlende
+*und* erfundene Werkzeuge, wobei der zweite Fall schwerer wiegt, weil ein Agent aufruft, was
+er dort liest — und jedes Kommando aus den `bash`-Blöcken gegen die tatsächlich registrierten
+CLI-Befehle. Bewusst geprüft werden nur Zahlen und Namen — ein Test, der Sätze festnagelt,
+macht das Umschreiben teuer und die Doku dadurch schlechter. Der Fließtext darf weiterhin ein
+Kommando als Ausblick nennen; ein Beispiel im Codeblock soll man abtippen können.
+
+### Nachtrag: Der flackernde Zeitstempel-Test ist sauber umgesetzt
+
+`test_created_at_bleibt_beim_update_stehen` prüfte `danach.updated_at > erst.updated_at`,
+nachdem es zwei Upserts unmittelbar hintereinander ausgeführt hatte. Der Zeitstempel kommt aus
+`datetime.now()` — und dessen Auflösung liegt unter Windows bei rund 15 ms. Zwei schnelle
+Upserts fielen damit in denselben Tick, die Werte waren gleich, und der Vergleich schlug fehl.
+Der Test war also nie falsch, sondern von der Geschwindigkeit des Rechners abhängig.
+
+Die Lösung stand schon im Code: `ConceptService` nimmt eine Uhr als Parameter, ausdrücklich
+„damit ein Test den Zeitpunkt bestimmen kann". Der Test stellt sie jetzt — zwei feste
+Zeitpunkte, dazwischen umgestellt — statt auf die Systemuhr zu hoffen. Eine *stehende* Uhr und
+keine Folge fester Werte, weil ein Upsert die Zeit mehrfach liest; ein Iterator lief nach dem
+zweiten Wert in `StopIteration`. Nebenbei ist die Aussage schärfer geworden: Der Test prüft
+nicht mehr nur, dass `created_at` gleich *bleibt*, sondern dass es der ursprüngliche Zeitpunkt
+*ist* — ein Überschreiben mit dem Update-Zeitpunkt fällt jetzt auf. Acht Läufe hintereinander,
+acht Mal grün.
+
 ---
 
 ## Entwicklung

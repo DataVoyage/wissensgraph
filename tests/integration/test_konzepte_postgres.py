@@ -152,20 +152,40 @@ class TestSchreibverhalten:
         assert concept.store == "shared"
 
     def test_created_at_bleibt_beim_update_stehen(
-        self, service: ConceptService, migrated: StoreRegistry
+        self, postgres_settings: Settings, migrated: StoreRegistry
     ) -> None:
+        """§10.2: Ein Update rührt ``created_at`` nicht an und setzt ``updated_at`` neu.
+
+        Die Zeitpunkte sind hier **gestellt** und nicht der Uhr überlassen. Das ist der Grund,
+        warum ``ConceptService`` eine Uhr als Parameter nimmt: Beide Upserts liefen zuvor über
+        ``datetime.now()``, und ob dabei zwei verschiedene Werte herauskommen, hängt an der
+        Auflösung der Systemuhr — unter Windows sind das rund 15 ms, also durchaus ein Tick für
+        beide Aufrufe. Der Test war damit nicht falsch, sondern von der Geschwindigkeit des
+        Rechners abhängig; mit gestellten Zeitpunkten prüft er die Aussage selbst.
+        """
+        angelegt = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        geaendert = datetime(2026, 3, 1, 12, 5, tzinfo=UTC)
+        # Eine gestellte Uhr, die stehen bleibt, statt einer Folge fester Werte: Ein Upsert darf
+        # die Zeit mehrfach lesen, ohne dass der Test daran zerbricht.
+        jetzt = angelegt
+        service = ConceptService(
+            postgres_settings, UnitOfWorkFactory(migrated), clock=lambda: jetzt
+        )
+
         service.upsert(seite())
         with UnitOfWorkFactory(migrated)("shared") as uow:
             erst = uow.concepts.get("confluence:1")
 
+        jetzt = geaendert
         service.upsert(seite(body="neu"))
         with UnitOfWorkFactory(migrated)("shared") as uow:
             danach = uow.concepts.get("confluence:1")
 
         assert erst is not None
         assert danach is not None
-        assert danach.created_at == erst.created_at
-        assert danach.updated_at > erst.updated_at
+        assert erst.created_at == angelegt
+        assert danach.created_at == angelegt
+        assert danach.updated_at == geaendert
 
     def test_generierte_suchspalte_wird_von_der_datenbank_gefuellt(
         self, service: ConceptService, migrated: StoreRegistry
