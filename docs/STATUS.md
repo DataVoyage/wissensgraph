@@ -1708,6 +1708,29 @@ Umgesetzt wie im Konzept angekündigt:
 * `prefers-reduced-motion` stellt weiterhin das Ergebnis statt der Bewegung: FA2 rechnet dann
   synchron wenige Iterationen statt im Worker zu animieren.
 
+### Nachtrag: U3 — Erkunden
+
+Die Anwender-Sitzung „Was haben wir zu X?" läuft jetzt ohne Reiterwissen, und ein
+Playwright-Test fährt sie wörtlich so: `/` fokussiert die globale Suche in der Kopfzeile,
+gesucht wird zweistufig über `/graph/search` (§12.4, der Volltext-Rückfall wird als solcher
+angeschrieben), und jeder Treffer bietet die beiden Antworten auf ein Suchergebnis an —
+**lesen** (Dokumente + Inspektor) oder **im Graphen ansehen** (Traversierung vom Treffer aus).
+Die Trefferliste ist Tastatur-erst: Pfeile, Enter, Escape.
+
+**Gelesen wird gerendert, nicht roh.** Der Inspektor zeigt Beschreibung und Fließtext als
+Markdown — über einen eigenen, bewusst kleinen Renderer (`components/Markdown.tsx`) statt einer
+Bibliothek: Ein Markdown-Paket samt Sanitizer wäre die größte neue Abhängigkeit der Oberfläche,
+und die Sicherheitsfrage stellt sich hier gar nicht erst, weil der Renderer React-Knoten baut
+und kein HTML — ein `<script>` aus einer gespiegelten Confluence-Seite ist schlicht Text, ein
+`javascript:`-Link wird zu Text, nur `http(s)`-Links werden Links. Ein `resource`-Feld wird als
+„zur Quelle ↗" verlinkt (§17.2 Ansicht 2).
+
+**Notizen werden bearbeitet, wo man sie liest.** Im persönlichen Store tragen Beschreibung und
+Fließtext ein „bearbeiten" direkt im Inspektor (Textarea → `PATCH`); an gespiegelten Inhalten
+gibt es den Knopf nicht — die Sperre kommt weiter aus `locked_fields`, nicht aus einer Regel
+der Oberfläche. Der Persönliche Bereich ist auf den Komponentensatz umgezogen und dreispaltig:
+Anlegen und eigene Konzepte links, Brücken in der Mitte, der Inspektor rechts.
+
 ---
 
 ## Entwicklung

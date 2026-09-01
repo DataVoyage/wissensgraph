@@ -212,7 +212,7 @@ describe("Persönlicher Bereich (§17.2 Ansicht 5)", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() =>
@@ -246,7 +246,7 @@ describe("Persönlicher Bereich (§17.2 Ansicht 5)", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     await waitFor(() =>
@@ -268,7 +268,7 @@ describe("Persönlicher Bereich (§17.2 Ansicht 5)", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await userEvent.type(screen.getByLabelText("Titel"), "Meine Notiz");
     await userEvent.click(screen.getByRole("button", { name: "Anlegen" }));
@@ -291,7 +291,7 @@ describe("Persönlicher Bereich (§17.2 Ansicht 5)", () => {
         state={{ view: "persoenlich", store: "personal", id: "note:1" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await waitFor(() => expect(screen.getByRole("button", { name: "verlinken" })).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: "verlinken" }));

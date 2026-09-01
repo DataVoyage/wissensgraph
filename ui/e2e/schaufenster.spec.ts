@@ -22,6 +22,15 @@ test("Gerüst: Karte mit offenem Inspektor", async ({ page }) => {
   await page.screenshot({ path: "test-results/schaufenster-graph.png", fullPage: false });
 });
 
+test("Erkunden: Suche offen, Persönlich mit Inspektor", async ({ page }) => {
+  await page.goto("/?view=persoenlich&store=personal&id=note:1");
+  await page.keyboard.press("/");
+  await page.keyboard.type("Warehouse");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: "test-results/schaufenster-erkunden.png", fullPage: false });
+});
+
 test("Gerüst: Dokumente, Inspektor eingeklappt, Rail schmal", async ({ page }) => {
   await page.goto("/?view=browser&store=shared");
   await page.getByRole("button", { name: "Inspektor einklappen" }).click();

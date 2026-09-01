@@ -140,6 +140,24 @@ test("Eine lokale Notiz ist nirgends gesperrt", async ({ page }) => {
   await expect(page.getByText("persönlich — verlässt diesen Rechner nicht")).toBeVisible();
 });
 
+test("Die Anwender-Sitzung: / suchen, Treffer lesen — ohne Reiterwissen (§17.5, U3)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByRole("searchbox", { name: "Globale Suche" })).toBeVisible();
+
+  // `/` fokussiert die Suche von überall; die Frage ist "Was haben wir zu Warehouse?".
+  await page.keyboard.press("/");
+  await page.keyboard.type("Warehouse");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("listbox", { name: "Suchtreffer" })).toBeVisible();
+
+  // Enter öffnet den ersten Treffer zum Lesen — Dokumente-Ansicht, Inspektor rechts.
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/view=browser/);
+  await expect(page.getByRole("complementary", { name: "Details" })).toBeVisible();
+});
+
 test("Der Ansichtszustand steht in der URL und ist damit teilbar (§17.1)", async ({ page }) => {
   await page.goto("/");
 

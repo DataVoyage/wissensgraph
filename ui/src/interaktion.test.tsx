@@ -496,7 +496,7 @@ describe("Persönlicher Bereich — Auswahl", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     const typen = screen.getByLabelText("Typ der Notiz") as HTMLSelectElement;
@@ -512,7 +512,7 @@ describe("Persönlicher Bereich — Auswahl", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await waitFor(() => expect(screen.getByText("Meine Notiz")).toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: "Meine Notiz" }));
@@ -526,7 +526,7 @@ describe("Persönlicher Bereich — Auswahl", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
     await userEvent.type(screen.getByLabelText("Titel"), "Test");
     await userEvent.click(screen.getByRole("button", { name: "Anlegen" }));
@@ -540,7 +540,7 @@ describe("Persönlicher Bereich — Auswahl", () => {
         state={{ view: "persoenlich", store: "personal" }}
         onChange={() => undefined}
         config={KONFIGURATION as never}
-      />,
+      {...werkbankProps()} />,
     );
 
     expect(screen.getByText("Links eine Notiz auswählen.")).toBeInTheDocument();

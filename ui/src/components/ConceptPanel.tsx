@@ -13,6 +13,8 @@ import { useState } from "react";
 import { useEdgeAction, useHistory, usePatchConcept, useUndo } from "../api/hooks";
 import { farbeFuerKante, istModellvorschlag, istUnbestaetigt } from "../theme";
 import type { ChangeEntry, ConceptDetail, Edge } from "../api/types";
+import { Markdown } from "./Markdown";
+import { Schaltflaeche } from "./basis";
 
 export interface ConceptPanelProps {
   detail: ConceptDetail;
@@ -39,15 +41,45 @@ export function ConceptPanel({ detail, onOpen }: ConceptPanelProps): JSX.Element
           <span className="wg-chip">{detail.scope}</span>
         </p>
         <StoreMarke store={detail.store} />
+        {detail.resource !== null && /^https?:\/\//i.test(detail.resource) && (
+          <p className="mt-1.5">
+            <a
+              href={detail.resource}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-xs text-signal-700 underline decoration-signal-200 hover:decoration-signal-500"
+            >
+              zur Quelle ↗
+            </a>
+          </p>
+        )}
       </header>
 
-      <Feld label="Beschreibung" gesperrt={gesperrt.has("description")}>
-        {detail.description ?? "—"}
+      <Feld
+        label="Beschreibung"
+        gesperrt={gesperrt.has("description")}
+        wert={detail.description}
+        bearbeitbar={detail.store === "personal" && !gesperrt.has("description")}
+        speichern={(description) =>
+          patchen.mutate({ id: detail.id, store: detail.store, patch: { description } })
+        }
+      >
+        {detail.description === null ? "—" : <Markdown text={detail.description} />}
       </Feld>
 
-      {detail.body !== null && (
-        <Feld label="Fließtext" gesperrt={gesperrt.has("body")}>
-          <pre className="whitespace-pre-wrap text-xs">{detail.body}</pre>
+      {(detail.body !== null || detail.store === "personal") && (
+        <Feld
+          label="Fließtext"
+          gesperrt={gesperrt.has("body")}
+          wert={detail.body}
+          bearbeitbar={detail.store === "personal" && !gesperrt.has("body")}
+          speichern={(body) =>
+            patchen.mutate({ id: detail.id, store: detail.store, patch: { body } })
+          }
+        >
+          {/* Gerendert, nicht roh (§17.2 Ansicht 2) — der Renderer baut React-Knoten und kein
+              HTML, ein <script> aus einer gespiegelten Seite bleibt Text. */}
+          {detail.body === null ? "—" : <Markdown text={detail.body} />}
         </Feld>
       )}
 
@@ -113,12 +145,21 @@ function StoreMarke({ store }: { store: string }): JSX.Element {
 function Feld({
   label,
   gesperrt,
+  bearbeitbar = false,
+  wert = null,
+  speichern,
   children,
 }: {
   label: string;
   gesperrt: boolean;
+  /** Nur im persönlichen Store: Notizen werden hier bearbeitet (§17.2 Ansicht 5). */
+  bearbeitbar?: boolean;
+  wert?: string | null;
+  speichern?: (wert: string) => void;
   children: React.ReactNode;
 }): JSX.Element {
+  const [entwurf, setzeEntwurf] = useState<string | null>(null);
+
   return (
     <section>
       <h3 className="wg-panel-titel">
@@ -132,14 +173,51 @@ function Feld({
             🔒 aus der Quelle
           </span>
         )}
+        {bearbeitbar && entwurf === null && (
+          <Schaltflaeche
+            art="still"
+            klein
+            className="ml-auto"
+            aria-label={`${label} bearbeiten`}
+            onClick={() => setzeEntwurf(wert ?? "")}
+          >
+            bearbeiten
+          </Schaltflaeche>
+        )}
       </h3>
-      <div
-        className={`text-sm leading-relaxed text-ton-700 ${
-          gesperrt ? "wg-locked rounded border px-2 py-1" : ""
-        }`}
-      >
-        {children}
-      </div>
+      {entwurf === null ? (
+        <div
+          className={`text-sm leading-relaxed text-ton-700 ${
+            gesperrt ? "wg-locked rounded border px-2 py-1" : ""
+          }`}
+        >
+          {children}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <textarea
+            className="wg-input min-h-28 font-mono text-xs"
+            aria-label={`${label} (Markdown)`}
+            value={entwurf}
+            onChange={(ereignis) => setzeEntwurf(ereignis.target.value)}
+          />
+          <div className="flex gap-1.5">
+            <Schaltflaeche
+              art="primaer"
+              klein
+              onClick={() => {
+                speichern?.(entwurf);
+                setzeEntwurf(null);
+              }}
+            >
+              Speichern
+            </Schaltflaeche>
+            <Schaltflaeche art="still" klein onClick={() => setzeEntwurf(null)}>
+              Verwerfen
+            </Schaltflaeche>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

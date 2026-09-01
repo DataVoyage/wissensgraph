@@ -560,6 +560,12 @@ Rechts sitzt der **Inspektor** mit dem jeweils Selektierten: einklappbar und in 
 ziehbar; die Aufteilung merkt sich der Browser, geteilt wird über die URL nur, *was* man
 ansieht. Der Store steht in der Kopfzeile; das Bearer-Token wird beim ersten Aufruf abgefragt.
 
+In der Kopfzeile sitzt außerdem die **globale Suche** (`/` fokussiert sie von überall):
+zweistufig nach §12.4, und jeder Treffer lässt sich **lesen** oder **im Graphen ansehen** —
+der Einstieg „Was haben wir zu X?" braucht kein Wissen über Ansichten. Gelesen wird im
+Inspektor gerendert (Markdown über einen eigenen, XSS-freien Renderer — er baut React-Knoten,
+kein HTML); eigene Notizen tragen dort ein „bearbeiten".
+
 | Ansicht | Was sie tut |
 |---|---|
 | **Graph** | Die Zentrale, in zwei Modi (siehe unten): **Karte** über den gefilterten Bestand und **Traversierung** Hop für Hop. Mit Live-Physik, Filterleiste und Legende. |

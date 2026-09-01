@@ -20,6 +20,7 @@ import { configure } from "./api/client";
 import { useConfig, useQueue } from "./api/hooks";
 import { bereichVon } from "./bereiche";
 import { loadConfig } from "./config";
+import { GlobaleSuche } from "./components/GlobaleSuche";
 import { NavRail } from "./components/NavRail";
 import { useUiState } from "./state";
 import { useWerkbank } from "./werkbank";
@@ -114,13 +115,28 @@ export function App(): JSX.Element {
             <span aria-hidden="true" className="h-4 w-1.5 rounded-sm bg-signal-500" />
             Wissensgraph
           </h1>
-          <p className="text-sm text-ton-400">
+          <p className="shrink-0 text-sm text-ton-400">
             {bereich.label}
             <span className="mx-1.5 text-ton-300">/</span>
             <span className="font-medium text-ton-700">
               {bereich.ansichten.find((eintrag) => eintrag.name === zustand.view)?.label}
             </span>
           </p>
+
+          {/* Der Einstieg des Anwenders: "Was haben wir zu X?" — von überall, ohne Reiterwissen. */}
+          <div className="mx-2 hidden min-w-0 flex-1 justify-center md:flex">
+            <GlobaleSuche
+              store={zustand.store}
+              typen={config.concept_types.map((eintrag) => eintrag.name)}
+              onOeffnen={({ id, store, wohin }) =>
+                aendern(
+                  wohin === "graph"
+                    ? { view: "graph", mode: "reise", id, store }
+                    : { view: "browser", id, store },
+                )
+              }
+            />
+          </div>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {persoenlich && (
@@ -168,7 +184,13 @@ export function App(): JSX.Element {
           {zustand.view === "cluster" && <ClusterWorkbench state={zustand} onChange={aendern} />}
           {zustand.view === "kuration" && <CurationList state={zustand} />}
           {zustand.view === "persoenlich" && (
-            <PersonalArea state={zustand} onChange={aendern} config={config} />
+            <PersonalArea
+              state={zustand}
+              onChange={aendern}
+              config={config}
+              werkbank={werkbank}
+              onWerkbank={werkbankAendern}
+            />
           )}
           {zustand.view === "betrieb" && <Operations state={zustand} onChange={aendern} />}
         </main>
