@@ -46,7 +46,12 @@ export const BEREICHE: readonly Bereich[] = [
     name: "verwalten",
     label: "Verwalten",
     kuerzel: "V",
-    ansichten: [{ name: "betrieb", label: "Betrieb" }],
+    ansichten: [
+      { name: "quellen", label: "Quellen & Sync" },
+      { name: "laeufe", label: "Läufe" },
+      { name: "modelle", label: "Modelle & Kosten" },
+      { name: "diagnose", label: "Diagnose" },
+    ],
   },
 ] as const;
 

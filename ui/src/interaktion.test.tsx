@@ -14,7 +14,7 @@ import { GraphCanvas, PHYSIK_VORGABE } from "./components/GraphCanvas";
 import { CurationList } from "./views/CurationList";
 import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
-import { Operations } from "./views/Operations";
+import { RunsView } from "./views/RunsView";
 import { PersonalArea } from "./views/PersonalArea";
 import {
   FakeApi,
@@ -571,8 +571,8 @@ describe("Fortschrittsanzeige (§16.3)", () => {
     api.on("GET", /\/api\/v1\/models$/, () => ({ tasks: [], policies: {}, budget: {} }));
 
     renderMitQuery(
-      <Operations
-        state={{ view: "betrieb", store: "shared", run: "abcdefgh-0000-4000-8000-000000000000" }}
+      <RunsView
+        state={{ view: "laeufe", store: "shared", run: "abcdefgh-0000-4000-8000-000000000000" }}
         onChange={() => undefined}
       />,
     );

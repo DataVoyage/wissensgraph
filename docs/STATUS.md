@@ -1763,6 +1763,26 @@ Ein Nebenbefund mit Fix: Seit die Kopfzeile ein Suchfeld trägt (U3), hätte ein
 Suchbegriff in der Kurationsansicht einen Vorschlag verworfen — die Tastaturkuration ignoriert
 jetzt Eingaben, die in einem Feld landen. Ein Test hält das fest.
 
+### Nachtrag: U5 — Verwalten
+
+Die eine Betriebsansicht ist in die vier Verwalten-Ansichten aus dem Konzept aufgegangen:
+**Quellen & Sync** (je Quelle Health, letzter Lauf und der Sync mit `full` und `dry_run` —
+`wg sync` damit vollständig in der UI), **Läufe** (Historie mit Probelauf-Kennzeichnung,
+Live-Verfolgung, Abbrechen), **Modelle & Kosten** und **Diagnose**. Alte Links gelten weiter:
+`view=betrieb` führt zu den Läufen. Das „Läufe anstoßen"-Panel mit den nackten
+Kind-Knöpfen ist ersatzlos entfallen — Aufbauläufe startet die Automatisierung, mit Probelauf
+zuerst.
+
+**`GET /api/v1/doctor`** ist der neue Endpunkt dahinter: dieselben Prüfungen, dieselbe
+Reihenfolge, dieselbe Auskunft wie `wg doctor` (Leitprinzip 14 — die Diagnose-Karte ist eine
+Zustellart, kein zweiter Doktor). Die UI ruft ihn bewusst nur auf Knopfdruck (`enabled: false`
+im Hook): Die Prüfungen verbinden sich wirklich mit den Stores, das gehört nicht in ein
+Abfrageintervall. `wg migrate` bleibt, wie im Konzept beschlossen, außerhalb der UI.
+
+Damit ist die **CLI-Paritätstabelle aus dem Konzept (Abschnitt 2.2) erfüllt** — mit den zwei
+bewussten Ausnahmen (`wg migrate` an der Konsole, `wg export` als Ausbaustufe, die zuerst einen
+API-Endpunkt braucht). Die Stufen U1–U5 des Konzepts sind vollständig umgesetzt.
+
 ---
 
 ## Entwicklung

@@ -26,11 +26,14 @@ import { useUiState } from "./state";
 import { useWerkbank } from "./werkbank";
 import { Automation } from "./views/Automation";
 import { ClusterWorkbench } from "./views/ClusterWorkbench";
+import { Diagnose } from "./views/Diagnose";
+import { Models } from "./views/Models";
 import { Quality } from "./views/Quality";
+import { RunsView } from "./views/RunsView";
+import { Sources } from "./views/Sources";
 import { CurationList } from "./views/CurationList";
 import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
-import { Operations } from "./views/Operations";
 import { PersonalArea } from "./views/PersonalArea";
 
 /** Schlüssel, unter dem der Bearer-Token in der Sitzung liegt (§17.1). */
@@ -198,7 +201,10 @@ export function App(): JSX.Element {
               onWerkbank={werkbankAendern}
             />
           )}
-          {zustand.view === "betrieb" && <Operations state={zustand} onChange={aendern} />}
+          {zustand.view === "quellen" && <Sources state={zustand} onChange={aendern} />}
+          {zustand.view === "laeufe" && <RunsView state={zustand} onChange={aendern} />}
+          {zustand.view === "modelle" && <Models state={zustand} onChange={aendern} />}
+          {zustand.view === "diagnose" && <Diagnose state={zustand} onChange={aendern} />}
         </main>
       </div>
     </div>

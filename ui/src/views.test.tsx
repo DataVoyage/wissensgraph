@@ -14,7 +14,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { subscribeToRun } from "./api/events";
 import { DocumentBrowser } from "./views/DocumentBrowser";
 import { GraphExplorer } from "./views/GraphExplorer";
-import { Operations } from "./views/Operations";
+import { Diagnose } from "./views/Diagnose";
+import { RunsView } from "./views/RunsView";
+import { Sources } from "./views/Sources";
 import { PersonalArea } from "./views/PersonalArea";
 import { FakeApi, KONFIGURATION, karte, konzept, renderMitQuery, werkbankProps } from "./test-support";
 
@@ -310,37 +312,36 @@ describe("Persönlicher Bereich (§17.2 Ansicht 5)", () => {
   });
 });
 
-describe("Betriebsansicht (§17.2 Ansicht 6)", () => {
+describe("Verwalten (§17.2 Ansicht 6, U5)", () => {
+  const quelle = {
+    name: "confluence-eng",
+    adapter: "confluence",
+    enabled: true,
+    id_prefix: "confluence",
+    scope: "engineering",
+    usable: true,
+    health: { state: "healthy", detail: "" },
+    capabilities: {},
+    last_run: null,
+  };
+
   it("zeigt Quellen mit Zustand und dem letzten Lauf", async () => {
-    api.on("GET", /\/api\/v1\/sources/, () => ({
-      items: [
-        {
-          name: "confluence-eng",
-          adapter: "confluence",
-          enabled: true,
-          id_prefix: "confluence",
-          scope: "engineering",
-          usable: true,
-          health: { state: "healthy", detail: "" },
-          capabilities: {},
-          last_run: null,
-        },
-      ],
-    }));
+    api.on("GET", /\/api\/v1\/sources/, () => ({ items: [quelle] }));
 
     renderMitQuery(
-      <Operations state={{ view: "betrieb", store: "shared" }} onChange={() => undefined} />,
+      <Sources state={{ view: "quellen", store: "shared" }} onChange={() => undefined} />,
     );
 
     await waitFor(() => expect(screen.getByText("confluence-eng")).toBeInTheDocument());
     expect(screen.getByText("noch kein Lauf")).toBeInTheDocument();
   });
 
-  it("stößt einen Lauf an und merkt sich seine ID zum Verfolgen", async () => {
+  it("startet einen Sync mit den Optionen aus §19 und merkt sich die Lauf-ID", async () => {
     const gemerkt: unknown[] = [];
-    api.on("POST", /runs\/cluster/, () => ({
+    api.on("GET", /\/api\/v1\/sources/, () => ({ items: [quelle] }));
+    api.on("POST", /runs\/sync/, () => ({
       id: "22222222-2222-4222-8222-222222222222",
-      kind: "cluster",
+      kind: "sync",
       params: {},
       status: "queued",
       started_at: null,
@@ -351,22 +352,26 @@ describe("Betriebsansicht (§17.2 Ansicht 6)", () => {
     }));
 
     renderMitQuery(
-      <Operations
-        state={{ view: "betrieb", store: "shared" }}
+      <Sources
+        state={{ view: "quellen", store: "shared" }}
         onChange={(aenderung) => gemerkt.push(aenderung)}
       />,
     );
-    await waitFor(() => expect(screen.getByLabelText("Scope des Laufs")).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: "cluster" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Sync" })).toBeEnabled());
+    await userEvent.click(screen.getByLabelText(/Vollabgleich/));
+    await userEvent.click(screen.getByLabelText(/Trockenlauf/));
+    await userEvent.click(screen.getByRole("button", { name: "Sync" }));
 
-    await waitFor(() =>
-      expect(gemerkt).toContainEqual({ run: "22222222-2222-4222-8222-222222222222" }),
-    );
+    await waitFor(() => {
+      const aufruf = api.calls.find((eintrag) => eintrag.url.includes("/runs/sync"));
+      expect(aufruf?.body).toEqual({ source: "confluence-eng", full: true, dry_run: true });
+    });
+    expect(gemerkt).toContainEqual({ run: "22222222-2222-4222-8222-222222222222" });
   });
 
   it("zeigt die aufgelöste Konfiguration mit maskierten Secrets (§20.2)", async () => {
     renderMitQuery(
-      <Operations state={{ view: "betrieb", store: "shared" }} onChange={() => undefined} />,
+      <Diagnose state={{ view: "diagnose", store: "shared" }} onChange={() => undefined} />,
     );
 
     await waitFor(() =>
@@ -374,14 +379,38 @@ describe("Betriebsansicht (§17.2 Ansicht 6)", () => {
     );
   });
 
-  it("bricht einen wartenden Lauf ab", async () => {
+  it("führt die Diagnose nur auf Anstoß aus und zeigt die Ampel", async () => {
+    api.on("GET", /\/api\/v1\/doctor/, () => ({
+      healthy: false,
+      checks: [
+        { name: "stores", status: "ok", detail: "beide erreichbar", context: {} },
+        { name: "provider", status: "fail", detail: "kein Schlüssel", context: {} },
+      ],
+    }));
+
+    renderMitQuery(
+      <Diagnose state={{ view: "diagnose", store: "shared" }} onChange={() => undefined} />,
+    );
+    // Kein Aufruf beim Rendern: Die Prüfungen verbinden sich wirklich mit den Stores.
+    expect(api.calls.some((aufruf) => aufruf.url.includes("/doctor"))).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Diagnose ausführen" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Mindestens eine Prüfung ist fehlgeschlagen/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("kein Schlüssel")).toBeInTheDocument();
+    expect(screen.getByLabelText("fail")).toBeInTheDocument();
+  });
+
+  it("bricht einen wartenden Lauf ab und weist Probeläufe aus", async () => {
     api.on("GET", /\/api\/v1\/runs\?/, () => ({
       store: "shared",
       items: [
         {
           id: "33333333-3333-4333-8333-333333333333",
           kind: "embed",
-          params: {},
+          params: { dry_run: true },
           status: "queued",
           started_at: null,
           finished_at: null,
@@ -394,9 +423,10 @@ describe("Betriebsansicht (§17.2 Ansicht 6)", () => {
     api.on("POST", /runs\/.*\/cancel/, () => ({ id: "x", status: "cancelled" }));
 
     renderMitQuery(
-      <Operations state={{ view: "betrieb", store: "shared" }} onChange={() => undefined} />,
+      <RunsView state={{ view: "laeufe", store: "shared" }} onChange={() => undefined} />,
     );
     await waitFor(() => expect(screen.getByRole("button", { name: "abbrechen" })).toBeInTheDocument());
+    expect(screen.getByText("Probelauf")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "abbrechen" }));
 
     await waitFor(() =>

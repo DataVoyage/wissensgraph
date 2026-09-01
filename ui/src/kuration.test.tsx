@@ -7,14 +7,15 @@
  * erscheint statt stillschweigend zu verpuffen.
  */
 
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, get, send } from "./api/client";
 import { ConceptPanel } from "./components/ConceptPanel";
 import { ClusterWorkbench } from "./views/ClusterWorkbench";
-import { Operations } from "./views/Operations";
+import { Automation } from "./views/Automation";
+import { Models } from "./views/Models";
 import { FakeApi, kante, konzept, renderMitQuery } from "./test-support";
 
 let api: FakeApi;
@@ -444,25 +445,8 @@ describe("Cluster-Arbeitsplatz — weitere Wege", () => {
   });
 });
 
-describe("Betriebsansicht — Zahlen", () => {
-  it("zeigt Bestand und Modellnutzung", async () => {
-    api.on("GET", /config\/effective/, () => ({ scopes: [], stores: {} }));
-    api.on("GET", /\/api\/v1\/sources/, () => ({ items: [] }));
-    api.on("GET", /\/api\/v1\/runs\?/, () => ({ store: "shared", items: [] }));
-    api.on("GET", /\/api\/v1\/stats/, () => ({
-      stores: [
-        {
-          store: "shared",
-          concepts: 14,
-          edges: 6,
-          clusters: 3,
-          loose: 1,
-          by_scope: {},
-          by_type: {},
-          by_status: {},
-        },
-      ],
-    }));
+describe("Verwalten — Modelle & Kosten (U5)", () => {
+  it("zeigt Modellnutzung und fehlende Schlüssel", async () => {
     api.on("GET", /models\/usage/, () => ({
       store: "shared",
       items: [
@@ -499,30 +483,28 @@ describe("Betriebsansicht — Zahlen", () => {
     }));
 
     renderMitQuery(
-      <Operations state={{ view: "betrieb", store: "shared" }} onChange={() => undefined} />,
+      <Models state={{ view: "modelle", store: "shared" }} onChange={() => undefined} />,
     );
 
-    await waitFor(() => expect(screen.getByText("14")).toBeInTheDocument());
-    expect(screen.getByText("0.0001")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("0.0001")).toBeInTheDocument());
     expect(screen.getByText(/kein Schlüssel hinterlegt/)).toBeInTheDocument();
   });
 
-  it("meldet eine abgelehnte Lauf-Anfrage sichtbar", async () => {
+  it("meldet eine abgelehnte Lauf-Anfrage sichtbar (Automatisierung)", async () => {
     api.on("GET", /config\/effective/, () => ({
       scopes: [{ name: "engineering", store: "shared", description: null }],
+      concept_types: [],
+      edge_kinds: { structural: [], semantic: [] },
       stores: {},
+      orphans: {},
+      api: { auth_mode: "token" },
     }));
-    api.on("GET", /\/api\/v1\/sources/, () => ({ items: [] }));
-    api.on("GET", /\/api\/v1\/runs\?/, () => ({ store: "shared", items: [] }));
-    api.on("GET", /\/api\/v1\/stats/, () => ({ stores: [] }));
-    api.on("GET", /models\/usage/, () => ({ store: "shared", items: [] }));
-    api.on("GET", /\/api\/v1\/models$/, () => ({ tasks: [], policies: {}, budget: {} }));
 
     renderMitQuery(
-      <Operations state={{ view: "betrieb", store: "shared" }} onChange={() => undefined} />,
+      <Automation state={{ view: "automatisierung", store: "shared" }} onChange={() => undefined} />,
     );
-    await waitFor(() => expect(screen.getByRole("button", { name: "embed" })).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("button", { name: "embed" }));
+    const karte = await screen.findByRole("region", { name: "Embeddings" });
+    await userEvent.click(within(karte).getByRole("button", { name: "Starten" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
   });

@@ -113,6 +113,22 @@ class TestAuthentifizierung:
             assert offener_client.get("/api/v1/config/effective").status_code == 200
 
 
+class TestDoctor:
+    def test_liefert_die_pruefungen_als_json(self, client: TestClient) -> None:
+        """§16.2: dieselbe Auskunft wie ``wg doctor``, als Zustellart für die UI (§17.2)."""
+        payload = client.get("/api/v1/doctor", headers=AUTH).json()
+
+        assert isinstance(payload["healthy"], bool)
+        assert len(payload["checks"]) > 5
+        for pruefung in payload["checks"]:
+            assert pruefung["status"] in {"ok", "warn", "fail"}
+            assert pruefung["name"]
+            assert "detail" in pruefung
+
+    def test_verlangt_authentifizierung(self, client: TestClient) -> None:
+        assert client.get("/api/v1/doctor").status_code == 401
+
+
 class TestEffectiveConfig:
     def test_liefert_aufgeloeste_konfiguration(self, client: TestClient) -> None:
         payload = client.get("/api/v1/config/effective", headers=AUTH).json()

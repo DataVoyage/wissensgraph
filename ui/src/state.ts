@@ -9,7 +9,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-/** Die Ansichten aus §17.2 — seit U4 acht: Automatisierung und Qualität kamen dazu. */
+/**
+ * Die Ansichten aus §17.2. Seit U4/U5 sind es mehr als sechs: Automatisierung und Qualität
+ * kamen dazu, und die Betriebsansicht ist in die vier Verwalten-Ansichten aufgegangen.
+ */
 export type ViewName =
   | "graph"
   | "browser"
@@ -18,7 +21,10 @@ export type ViewName =
   | "automatisierung"
   | "qualitaet"
   | "persoenlich"
-  | "betrieb";
+  | "quellen"
+  | "laeufe"
+  | "modelle"
+  | "diagnose";
 
 /**
  * Die zwei Arten, den Graphen anzusehen (§17.2 Ansicht 1).
@@ -64,7 +70,10 @@ const FLAGGEN = ["unverified", "orphan", "tombstones"] as const;
 
 function lesen(): UiState {
   const params = new URLSearchParams(window.location.search);
-  const view = (params.get("view") ?? STANDARD.view) as ViewName;
+  const roh = params.get("view") ?? STANDARD.view;
+  // Alte Links gelten weiter: "betrieb" war bis U5 die eine Betriebsansicht; ihre nächste
+  // Verwandte ist die Lauf-Historie.
+  const view = (roh === "betrieb" ? "laeufe" : roh) as ViewName;
   const flaggen = Object.fromEntries(
     FLAGGEN.map((name) => [name, params.get(name) === "1" ? true : undefined]),
   );

@@ -203,6 +203,17 @@ export async function mockApi(page: Page): Promise<Protokoll> {
       return json(route, { store: "shared", items: [] });
     }
 
+    if (pfad.endsWith("/doctor")) {
+      return json(route, {
+        healthy: true,
+        checks: [
+          { name: "konfiguration", status: "ok", detail: "gültig geladen", context: {} },
+          { name: "stores", status: "ok", detail: "beide erreichbar", context: {} },
+          { name: "provider", status: "warn", detail: "kein Schlüssel für gemini", context: {} },
+        ],
+      });
+    }
+
     // -- Läufe ----------------------------------------------------------------
     if (pfad === "/api/v1/runs" && methode === "GET") {
       return json(route, { store: "shared", items: [] });

@@ -78,6 +78,21 @@ def _letzter_lauf(runtime: Runtime, source: str) -> Run | None:
     return max(treffer, key=lambda lauf: (lauf.started_at is not None, lauf.started_at))
 
 
+@router.get("/doctor", tags=["Betrieb"], summary="Diagnose nach dem Muster von wg doctor")
+def doctor(runtime: RuntimeDep, actor: ActorDep) -> dict[str, Any]:
+    """Alle Prüfungen aus ``wg doctor`` als JSON (§16.2, §17.2 Verwalten).
+
+    Dieselben Prüfungen, dieselbe Reihenfolge, dieselbe Auskunft wie die CLI — die
+    Diagnose-Karte der UI ist eine Zustellart, kein zweiter Doktor (Leitprinzip 14). Die
+    Prüfungen verbinden sich wirklich mit den Stores; der Aufruf kostet entsprechend und
+    gehört hinter einen Knopf, nicht in ein Abfrageintervall.
+    """
+    del actor
+    from wissensgraph.diagnostics import run_diagnostics
+
+    return run_diagnostics(runtime.settings, runtime.stores).as_dict()
+
+
 @router.get("/runs", summary="Lauf-Historie mit Status und Statistik")
 def list_runs(
     runtime: RuntimeDep,

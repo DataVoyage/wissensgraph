@@ -575,7 +575,10 @@ kein HTML); eigene Notizen tragen dort ein „bearbeiten".
 | **Automatisierung** | Jeder Aufbaulauf (Embeddings, Clustering, Relationen, Waisen-Anbindung) als geführtes Formular, vorbelegt aus der Konfiguration, Abweichungen angeschrieben. **Probelauf zuerst**: Der scharfe Knopf existiert erst nach der Vorschau und schickt dieselben Parameter (§19). |
 | **Qualität** | Arbeitet die Automatisierung gut? Anteil loser Knoten je Store, Alter und Größe der Kurationswarteschlange, Cluster ohne kuratierten Titel — mit Absprung zu Kuration und Arbeitsplatz. |
 | **Persönlich** | Notizen und Projekte im `personal`-Store, inklusive Brücken in den `shared`-Store. |
-| **Betrieb** | Läufe starten und live verfolgen (Server-Sent Events), Quellen-Health, Modellverbrauch, Bestandszahlen. |
+| **Quellen & Sync** | Quellen mit Health und letztem Lauf; Sync je Quelle mit `full` und `dry_run` — `wg sync` vollständig in der UI. |
+| **Läufe** | Historie mit Status, Probelauf-Kennzeichnung, Live-Verfolgung (Server-Sent Events) und Abbrechen. |
+| **Modelle & Kosten** | Nutzung je Task und Modell mit Kostenschätzung, dazu die aufgelösten Routen — `wg models describe/usage` als Ansicht. |
+| **Diagnose** | `wg doctor` auf Knopfdruck (`GET /doctor`): alle Prüfungen mit Ampel, dazu die aufgelöste Konfiguration mit maskierten Secrets. Die Schemamigration bleibt bewusst an der Konsole. |
 
 ### 7.1 Die zwei Graph-Modi
 
@@ -716,6 +719,7 @@ POST /api/v1/graph/search                      Zweistufig: erst Cluster, dann Do
 GET  /api/v1/graph/loose                       Lose Knoten eines Stores
 GET  /api/v1/clusters, /api/v1/clusters/{id}
 GET  /api/v1/stats, /api/v1/sources, /api/v1/models, /api/v1/models/usage
+GET  /api/v1/doctor                       # dieselben Prüfungen wie wg doctor, als JSON
 GET  /api/v1/config/effective                  Secrets maskiert
 GET  /healthz, /readyz
 ```

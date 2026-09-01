@@ -40,6 +40,16 @@ test("Analysieren: Automatisierung und Qualität", async ({ page }) => {
   await page.screenshot({ path: "test-results/schaufenster-qualitaet.png" });
 });
 
+test("Verwalten: Quellen und Diagnose", async ({ page }) => {
+  await page.goto("/?view=quellen&store=shared");
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: "test-results/schaufenster-quellen.png" });
+  await page.goto("/?view=diagnose&store=shared");
+  await page.getByRole("button", { name: "Diagnose ausführen" }).click();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: "test-results/schaufenster-diagnose.png" });
+});
+
 test("Gerüst: Dokumente, Inspektor eingeklappt, Rail schmal", async ({ page }) => {
   await page.goto("/?view=browser&store=shared");
   await page.getByRole("button", { name: "Inspektor einklappen" }).click();

@@ -72,6 +72,28 @@ export function useConfig(): UseQueryResult<EffectiveConfig> {
   });
 }
 
+/** Eine einzelne Diagnose-Prüfung, wie `GET /doctor` sie liefert (§16.2). */
+export interface DoctorCheck {
+  name: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+  context: Record<string, unknown>;
+}
+
+/**
+ * Die Diagnose nach dem Muster von `wg doctor` — bewusst nur auf Anstoß (`enabled: false`):
+ * Die Prüfungen verbinden sich wirklich mit den Stores, das gehört hinter einen Knopf und
+ * nicht in ein Abfrageintervall.
+ */
+export function useDoctor(): UseQueryResult<{ healthy: boolean; checks: DoctorCheck[] }> {
+  return useQuery({
+    queryKey: ["doctor"],
+    queryFn: () => get<{ healthy: boolean; checks: DoctorCheck[] }>("/api/v1/doctor"),
+    enabled: false,
+    gcTime: 0,
+  });
+}
+
 export function useStats(): UseQueryResult<{ stores: StoreStats[] }> {
   return useQuery({
     queryKey: ["stats"],

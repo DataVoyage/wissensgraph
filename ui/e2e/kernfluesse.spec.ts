@@ -107,9 +107,10 @@ test("Modellvorschlag verwerfen — und der Unterschied zum Löschen (§16.2)", 
 });
 
 test("Sync aus der UI starten und den Fortschritt live sehen (§24, §16.3)", async ({ page }) => {
-  await page.goto("/?view=betrieb&store=shared");
+  await page.goto("/?view=quellen&store=shared");
 
-  await page.getByRole("button", { name: "Sync" }).click();
+  // `exact`, weil der Navigationseintrag "Quellen & Sync" den Namen sonst mit-matcht.
+  await page.getByRole("button", { name: "Sync", exact: true }).click();
 
   const fortschritt = page.getByTestId("fortschritt");
   await expect(fortschritt).toBeVisible();

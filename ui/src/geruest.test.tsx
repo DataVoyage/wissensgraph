@@ -26,7 +26,7 @@ describe("Arbeitsbereiche (§17.5)", () => {
     expect(new Set(alle).size).toBe(alle.length);
     expect(bereichVon("graph").name).toBe("erkunden");
     expect(bereichVon("kuration").name).toBe("analysieren");
-    expect(bereichVon("betrieb").name).toBe("verwalten");
+    expect(bereichVon("diagnose").name).toBe("verwalten");
   });
 
   it("zeigt die drei Bereiche mit ihren Ansichten", () => {
@@ -72,10 +72,24 @@ describe("Arbeitsbereiche (§17.5)", () => {
         onBreite={(breit) => breiten.push(breit)}
       />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Betrieb" }));
+    await userEvent.click(screen.getByRole("button", { name: "Läufe" }));
     await userEvent.click(screen.getByRole("button", { name: "Navigation breit" }));
-    expect(navigiert).toEqual(["betrieb"]);
+    expect(navigiert).toEqual(["laeufe"]);
     expect(breiten).toEqual([false]);
+  });
+});
+
+describe("Alte Links (U5)", () => {
+  it("führt view=betrieb weiter zu den Läufen — alte Links gelten weiter", async () => {
+    window.history.pushState({}, "", "/?view=betrieb");
+    const { useUiState } = await import("./state");
+    function Probe(): JSX.Element {
+      const [zustand] = useUiState();
+      return <p>{zustand.view}</p>;
+    }
+    render(<Probe />);
+    expect(screen.getByText("laeufe")).toBeInTheDocument();
+    window.history.pushState({}, "", "/");
   });
 });
 

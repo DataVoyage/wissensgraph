@@ -47,7 +47,19 @@ describe("Hülle", () => {
     renderMitQuery(<App />);
 
     await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
-    for (const label of ["Graph", "Dokumente", "Cluster", "Kuration", "Persönlich", "Betrieb"]) {
+    for (const label of [
+      "Graph",
+      "Dokumente",
+      "Cluster",
+      "Kuration",
+      "Automatisierung",
+      "Qualität",
+      "Persönlich",
+      "Quellen & Sync",
+      "Läufe",
+      "Modelle & Kosten",
+      "Diagnose",
+    ]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
@@ -65,8 +77,13 @@ describe("Hülle", () => {
     ["Dokumente", "browser"],
     ["Cluster", "cluster"],
     ["Kuration", "kuration"],
+    ["Automatisierung", "automatisierung"],
+    ["Qualität", "qualitaet"],
     ["Persönlich", "persoenlich"],
-    ["Betrieb", "betrieb"],
+    ["Quellen & Sync", "quellen"],
+    ["Läufe", "laeufe"],
+    ["Modelle & Kosten", "modelle"],
+    ["Diagnose", "diagnose"],
   ])("zeigt die Ansicht %s ohne Fehler", async (label, view) => {
     api.on("GET", /\/api\/v1\/concepts\?/, () => ({ store: "shared", items: [], next_cursor: null }));
     api.on("GET", /curation\/queue/, () => ({ store: "shared", items: [] }));
