@@ -23,10 +23,12 @@ from support.semantik import (
     JETZT,
     THEMEN,
     Umgebung,
+    antwort_skript,
     baue,
     befuellen,
     konzept,
     korpus,
+    models_config,
 )
 from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
@@ -467,3 +469,85 @@ def _kandidaten(umgebung: Umgebung) -> list[Any]:
     """Die vorgemerkten Zuordnungen eines Stores."""
     with umgebung.uow("shared") as uow:
         return list(uow.clusters.candidates())
+
+
+class TestBetitelungGleichzeitig:
+    """§11.2 für die Cluster-Betitelung — der letzte Modellaufruf, der noch anstand.
+
+    Eine Frage je neuem Cluster, keine hängt an einer anderen, und jede wartet fast nur auf das
+    Netz. Bei 141 neuen Clustern und knapp einer Sekunde Antwortzeit sind das über zwei Minuten
+    reines Warten in einem Lauf, der sonst rechnet.
+    """
+
+    @staticmethod
+    def _messender_chat() -> tuple[Any, dict[str, int]]:
+        """Ein Chat, der mitschreibt, wie viele Fragen sich zeitlich überschneiden."""
+        import threading
+        import time
+
+        stand = {"jetzt": 0, "hoechst": 0}
+        sperre = threading.Lock()
+
+        def chat(prompt: Any) -> str:
+            system = prompt.system or ""
+            if "Themengruppen" not in system:
+                return antwort_skript(prompt)
+            with sperre:
+                stand["jetzt"] += 1
+                stand["hoechst"] = max(stand["hoechst"], stand["jetzt"])
+            time.sleep(0.05)
+            with sperre:
+                stand["jetzt"] -= 1
+            return json.dumps({"title": "Ein Thema", "description": "Ein Satz."})
+
+        return chat, stand
+
+    def test_die_titel_werden_gleichzeitig_geholt(self, semantik_settings: Settings) -> None:
+        chat, stand = self._messender_chat()
+        umgebung = vorbereitet(
+            semantik_settings, chat=chat, models=models_config(max_concurrency=4)
+        )
+
+        umgebung.clusters.run(scope="engineering")
+
+        assert stand["hoechst"] > 1, "Die Betitelungen liefen nacheinander statt gleichzeitig."
+
+    def test_ohne_konfiguration_bleibt_es_beim_alten_ablauf(
+        self, semantik_settings: Settings
+    ) -> None:
+        """``max_concurrency: 1`` ist die Vorgabe — wer nichts einstellt, ändert nichts."""
+        chat, stand = self._messender_chat()
+        umgebung = vorbereitet(semantik_settings, chat=chat)
+
+        umgebung.clusters.run(scope="engineering")
+
+        assert stand["hoechst"] == 1
+
+    def test_dasselbe_ergebnis_wie_nacheinander(self, semantik_settings: Settings) -> None:
+        # Der eigentliche Prüfstein: Nebenläufigkeit darf den Bestand nicht verändern. Zähler,
+        # Titel und Mitgliedschaften müssen gleich herauskommen.
+        einer = vorbereitet(semantik_settings)
+        viele = vorbereitet(semantik_settings, models=models_config(max_concurrency=4))
+
+        a = einer.clusters.run(scope="engineering")
+        b = viele.clusters.run(scope="engineering")
+
+        assert b.as_dict() == a.as_dict()
+
+    def test_ein_gescheiterter_titel_steht_im_bericht(self, semantik_settings: Settings) -> None:
+        """Verbucht wird der Reihe nach: Der Fehler kommt aus dem Thread zurück, gezählt wird
+        er beim Aufrufer — sonst wäre der Zähler ein Wettlauf."""
+
+        def kaputt(prompt: Any) -> str:
+            if "Themengruppen" in (prompt.system or ""):
+                return "kein JSON"
+            return antwort_skript(prompt)
+
+        umgebung = vorbereitet(
+            semantik_settings, chat=kaputt, models=models_config(max_concurrency=4)
+        )
+
+        bericht = umgebung.clusters.run(scope="engineering")
+
+        assert bericht.errors, "Ein misslungener Titel muss im Bericht stehen."
+        assert bericht.clusters_created == 3, "Der Lauf darf daran nicht scheitern."

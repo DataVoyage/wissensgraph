@@ -18,7 +18,7 @@
  * Klick den Weg, über den man gekommen ist.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { get } from "../api/client";
 import { useClusters, useConcept, useGraphMap, useSearch } from "../api/hooks";
@@ -151,10 +151,29 @@ export function GraphExplorer({
     [aufnehmen],
   );
 
-  // Ein Knoten aus der URL wird beim Öffnen aufgeklappt: Ein geteilter Link soll denselben
-  // Ausschnitt zeigen und nicht eine leere Fläche mit einem markierten Punkt.
+  /**
+   * Ein Knoten aus der URL wird **beim Einstieg** aufgeklappt — und nur dann.
+   *
+   * Ein geteilter Link soll denselben Ausschnitt zeigen und nicht eine leere Fläche mit einem
+   * markierten Punkt. Vorher hing das Aufklappen aber an jeder Änderung von `state.id`, und
+   * damit an jeder Auswahl: Ein einfacher Klick auf einen Knoten holte einen Hop nach, obwohl
+   * die Steuerspalte "Doppelklick auf einen Knoten" verspricht und §17.2 die Erkundung
+   * ausdrücklich als Doppelklick beschreibt. Die drei Gesten sind jetzt drei verschiedene
+   * Dinge: Klick wählt aus und hebt die Nachbarschaft hervor, Doppelklick klappt auf, Klick
+   * ins Leere hebt die Auswahl auf.
+   */
+  const eingestiegen = useRef(false);
   useEffect(() => {
-    if (modus === "reise" && state.id !== undefined) {
+    if (modus !== "reise") {
+      // Beim Wechsel in die Karte zurücksetzen, damit ein späterer Einstieg wieder greift.
+      eingestiegen.current = false;
+      return;
+    }
+    if (eingestiegen.current) {
+      return;
+    }
+    eingestiegen.current = true;
+    if (state.id !== undefined) {
       void aufklappen(state.id, state.store);
     }
   }, [modus, state.id, state.store, aufklappen]);
@@ -270,7 +289,7 @@ export function GraphExplorer({
           <p className="wg-hinweis mt-1.5">
             {modus === "karte"
               ? "Der gefilterte Bestand auf einen Blick."
-              : "Hop für Hop aufklappen — Doppelklick auf einen Knoten."}
+              : "Klick zeigt Details, Doppelklick klappt einen Hop auf."}
           </p>
         </section>
 
@@ -318,11 +337,17 @@ export function GraphExplorer({
                     className={`wg-eintrag flex items-baseline justify-between gap-2 ${
                       aktiv ? "wg-eintrag-aktiv" : ""
                     }`}
-                    onClick={() =>
-                      modus === "karte"
-                        ? onChange({ cluster: aktiv ? undefined : eintrag.id })
-                        : onChange({ id: eintrag.id })
-                    }
+                    onClick={() => {
+                      if (modus === "karte") {
+                        onChange({ cluster: aktiv ? undefined : eintrag.id });
+                        return;
+                      }
+                      // In der Reise ist die Übersicht der Einstieg (§17.2) — hier ist das
+                      // Aufklappen gewollt und wird deshalb ausdrücklich ausgelöst, seit die
+                      // Auswahl allein keinen Hop mehr nachholt.
+                      onChange({ id: eintrag.id });
+                      void aufklappen(eintrag.id, state.store);
+                    }}
                   >
                     <span className="truncate">{eintrag.title ?? eintrag.id}</span>
                     <span className="shrink-0 text-2xs tabular-nums opacity-60">
@@ -504,7 +529,18 @@ export function GraphExplorer({
         onZu={(inspektorZu) => onWerkbank({ inspektorZu })}
       >
         {detail.data ? (
-          <ConceptPanel detail={detail.data} onOpen={(id, store) => onChange({ id, store })} />
+          <ConceptPanel
+            detail={detail.data}
+            onOpen={(id, store) => {
+              // "Öffnen" heißt hingehen: In der Reise soll der Knoten danach auch auf der
+              // Fläche stehen und nicht nur im Inspektor — ein Verweis, dem man folgt, ist
+              // dieselbe Bewegung wie ein Doppelklick, nur von der anderen Seite.
+              onChange({ id, store });
+              if (modus === "reise") {
+                void aufklappen(id, store);
+              }
+            }}
+          />
         ) : (
           <div className="wg-leer">
             <p className="text-sm font-medium text-ton-700">Kein Knoten ausgewählt.</p>

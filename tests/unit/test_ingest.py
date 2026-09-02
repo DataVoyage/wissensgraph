@@ -20,6 +20,7 @@ from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
 from wissensgraph.config.sources import SourceConfig
 from wissensgraph.infrastructure.adapters import ConfluenceAdapter, JiraAdapter
+from wissensgraph.ports.sources import SourceError
 from wissensgraph.services.concepts import ConceptService
 from wissensgraph.services.sources import SourceIngestService
 
@@ -310,3 +311,45 @@ class TestBericht:
 
         assert not bericht.cursor.is_empty
         assert bericht.cursor == umgebung.confluence.next_cursor()
+
+
+class TestVorauslesen:
+    """``connection.read_ahead``: Die Quelle darf holen, während der Kern schreibt (§8.2).
+
+    Geprüft wird nicht die Uhr, sondern die Gleichheit: Ein Lauf mit Vorlauf muss dasselbe
+    Ergebnis liefern wie einer ohne. Alles andere wäre kein schnellerer Lauf, sondern ein
+    anderer — und ein Zeitgewinn, den man mit einem abweichenden Bestand bezahlt, ist keiner.
+    """
+
+    def test_liefert_mit_vorlauf_dasselbe_wie_ohne(self, settings: Settings) -> None:
+        ohne = Umgebung(settings)
+        bericht_ohne = ohne.ingest.ingest(ohne.confluence, ohne.confluence_cfg)
+
+        mit = Umgebung(settings)
+        cfg = mit.confluence_cfg.model_copy(
+            update={"connection": mit.confluence_cfg.connection.model_copy(
+                update={"read_ahead": 40}
+            )}
+        )
+        bericht_mit = mit.ingest.ingest(mit.confluence, cfg)
+
+        assert bericht_mit.as_dict() == bericht_ohne.as_dict()
+        assert bericht_mit.documents == SEITEN
+        # Und der Bestand selbst, nicht nur die Zahlen darüber.
+        assert sorted(c.id for c in mit.shared.concepts.values()) == sorted(
+            c.id for c in ohne.shared.concepts.values()
+        )
+
+    def test_ein_ausfall_der_quelle_kommt_beim_aufrufer_an(self, settings: Settings) -> None:
+        """§22.3: Der Cursor darf bei einem Abbruch nicht fortschreiten — dafür muss die
+        Ausnahme durch den Vorlauf hindurch dort ankommen, wo sie ohne ihn entstanden wäre."""
+        umgebung = Umgebung(settings)
+        cfg = umgebung.confluence_cfg.model_copy(
+            update={"connection": umgebung.confluence_cfg.connection.model_copy(
+                update={"read_ahead": 40, "base_url": "http://127.0.0.1:9/nicht-da"}
+            )}
+        )
+        umgebung.confluence.configure(cfg)
+
+        with pytest.raises(SourceError):
+            umgebung.ingest.ingest(umgebung.confluence, cfg)

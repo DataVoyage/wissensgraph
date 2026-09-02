@@ -10,7 +10,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, type RenderResult } from "@testing-library/react";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { vi } from "vitest";
 
 import { configure } from "./api/client";
@@ -69,7 +69,15 @@ export function renderMitQuery(element: ReactElement): RenderResult {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
+  const ergebnis = render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
+  // `rerender` legt den Provider von selbst wieder darum. Ohne das müsste jeder Test, der eine
+  // Prop ändert, ihn von Hand mitgeben — und wer ihn vergisst, bekommt statt eines Testfehlers
+  // die Meldung "No QueryClient set", die über die geprüfte Sache nichts aussagt.
+  return {
+    ...ergebnis,
+    rerender: (neu: ReactNode) =>
+      ergebnis.rerender(<QueryClientProvider client={client}>{neu}</QueryClientProvider>),
+  };
 }
 
 /** Die Werkbank-Props der Ansichten mit Inspektor — für Tests, die die Ansicht direkt bauen. */

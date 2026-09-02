@@ -45,10 +45,10 @@ from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import EdgeDraft
 from wissensgraph.domain.hashing import content_hash
 from wissensgraph.domain.policies import ProviderNotAllowedError
+from wissensgraph.nebenlaeufig import BLOCK_JE_ARBEITER, bloecke, parallel
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import BudgetExceededError, ModelError, ModelRouter, PromptSpec
 from wissensgraph.ports.repositories import LooseConcept, UnitOfWorkFactory
-from wissensgraph.services.nebenlaeufig import BLOCK_JE_ARBEITER, bloecke, parallel
 from wissensgraph.services.relations import RelationReport, RelationService
 
 _log = get_logger(__name__)

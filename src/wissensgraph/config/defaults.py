@@ -189,6 +189,21 @@ SOURCE_RATE_LIMIT_PER_SECOND: Final = 5.0
 SOURCE_RETRIES: Final = 3
 SOURCE_PAGE_SIZE: Final = 50
 
+#: Wie viele Dokumente eine Quelle vorauslesen darf, während der Kern die vorigen verarbeitet.
+#: 0 heißt: gar nicht — Holen und Verarbeiten wechseln sich ab, so wie bisher. Der Wert ist eine
+#: Anzahl Dokumente und keine Anzahl Threads: Das Blättern einer Quelle ist der Sache nach
+#: sequenziell (die nächste Seite hängt am Ergebnis der vorigen), nebenläufig laufen kann daher
+#: nur *Holen gegen Verarbeiten*.
+SOURCE_READ_AHEAD: Final = 0
+
+#: Wie viele Quellen gleichzeitig angefasst werden — beim Gesundheitscheck aller Quellen und bei
+#: ``wg sync --all``. Vorgabe 1: nacheinander, so wie bisher.
+SOURCES_MAX_CONCURRENCY: Final = 1
+
+#: Namenspräfix der Arbeitsthreads auf der Quellenseite — damit ein Stacktrace zeigt, woher ein
+#: Thread kommt. Das Gegenstück zu ``MODEL_WORKER_PREFIX``.
+SOURCE_WORKER_PREFIX: Final = "wg-quelle"
+
 #: Backoff zwischen zwei Versuchen: erste Wartezeit, Verdopplungsfaktor, Obergrenze. §22.3
 #: verlangt, dass eine 429-Antwort zu Backoff führt und nicht zum Abbruch.
 SOURCE_BACKOFF_INITIAL_SECONDS: Final = 0.5

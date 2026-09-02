@@ -816,6 +816,7 @@ Was aus einem `SourceDocument` ein Konzept macht, steht in der Config:
 
 ```yaml
 # config/sources.yaml
+max_concurrency: 4                       # wie viele Quellen gleichzeitig (health, sync --all)
 sources:
   - name: confluence-eng
     adapter: confluence                  # Registry-Schlüssel
@@ -831,6 +832,7 @@ sources:
       timeout_seconds: 30
       rate_limit_per_second: 5
       retries: 3
+      read_ahead: 50                     # Dokumente vorauslesen, während der Kern schreibt
     selection:
       spaces: ["ENG", "ARCH"]
       exclude_labels: ["archiv", "entwurf"]
@@ -1034,6 +1036,49 @@ class ModelRouter(Protocol):
 `CompletionResult` trägt `parsed` (validiertes Pydantic-Objekt), `raw`, `model_key`, `usage`, `attempts`.
 
 Aufrufer nennen **nie ein Modell**, nur eine Aufgabe. Das ist die Regel, die den Router wirksam macht.
+
+#### Nebenläufigkeit: jede Anfrage nach draußen, und immer über eine Einstellung
+
+Ein Aufruf nach außen — an ein Modell oder an ein Quellsystem — wartet fast die ganze Zeit auf das
+Netz. Gemessen an der Kantenerkennung: 1,26 Anfragen je Sekunde bei 824 ms Antwortzeit, also
+achtundneunzig Prozent Leerlauf. Deshalb gilt für **jede** Interaktion nach draußen dieselbe
+Regel: Sie kann nebenläufig laufen, und wie weit, sagt die Konfiguration — nie eine Zahl im Code
+(§6.1 Regel 1).
+
+Die Einteilung dahinter ist an allen Stellen dieselbe und wichtiger als jede Zahl:
+
+> **Gefragt wird nebenläufig, verbucht wird der Reihe nach.**
+
+Die Fragen sind unabhängig — jede ist eine eigene HTTP-Anfrage, keine liest, was eine andere
+schreibt. Alles danach ist es nicht: Berichte zählen, Kanten entstehen, Budgets werden geführt.
+Zwei Threads auf denselben Zählern wären ein Wettlauf, und der teure Teil ist ohnehin das Warten.
+Threads und nicht asyncio, weil der ganze Weg darunter — LangChain, SQLAlchemy, psycopg —
+synchron ist; beim Warten auf das Netz wird der GIL ohnehin frei.
+
+| Wo | Einstellung | Wirkung |
+|---|---|---|
+| Embedding-Bündel | `providers.<name>.max_concurrency` | mehrere Bündel gleichzeitig an den Anbieter |
+| `summarization` (fehlende Beschreibung) | `providers.<name>.max_concurrency` | eine Frage je Dokument, gleichzeitig |
+| `cluster_labeling` | `providers.<name>.max_concurrency` | eine Frage je neuem Cluster, gleichzeitig |
+| `relation_extraction` | `providers.<name>.max_concurrency` | eine Frage je Paar, gleichzeitig |
+| `cluster_matching` (Waisen) | `providers.<name>.max_concurrency` | eine Frage je Waise, gleichzeitig |
+| Dokumente einer Quelle | `connection.read_ahead` | Quelle holt vor, während der Kern schreibt |
+| Quellen untereinander | `max_concurrency` (in `sources.yaml`) | `health()` und `wg sync --all` gleichzeitig |
+
+Die Modellseite ist am *Anbieter* gedeckelt und nicht an der Aufgabe: Was ihn begrenzt, ist sein
+Ratenlimit, und das gilt für alle Aufgaben zusammen.
+
+Die Quellenseite hat zwei verschiedene Grenzen, weil sie zwei verschiedene Dinge begrenzen. Das
+Blättern *einer* Quelle ist der Sache nach sequenziell — die nächste Seite hängt am Ergebnis der
+vorigen (§8.2 Regel 1) —, dort lässt sich nur *Holen gegen Verarbeiten* trennen; `read_ahead` ist
+deshalb eine Anzahl vorauszulesender Dokumente und keine Anzahl Threads. `max_concurrency` in
+`sources.yaml` begrenzt dagegen etwas anderes: nicht die Last auf einem Quellsystem, sondern die
+Zahl der Läufe, die sich diese Maschine und ihren Datenbank-Pool teilen.
+
+**Vorgabe ist überall 1 beziehungsweise 0.** Wer nichts konfiguriert, bekommt den sequenziellen
+Ablauf — samt seiner Stacktraces. Und für jede dieser Grenzen gilt: `database.pool_size` muss
+mindestens so groß sein wie der höchste eingestellte Wert, sonst warten die Aufrufe aufeinander
+statt auf den Anbieter.
 
 ### 11.3 Task-Profile
 

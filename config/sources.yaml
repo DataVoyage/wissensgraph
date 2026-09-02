@@ -18,6 +18,12 @@
 # (der Adapter liest beide Antwortformen) und 'resource' (er baut eine absolute Adresse). Ein
 # 'mapping' für diese Felder gehört deshalb nur dorthin, wo eine Instanz wirklich abweicht.
 
+# Wie viele Quellen gleichzeitig angefasst werden: beim Gesundheitscheck aller Quellen (§8.3)
+# und bei 'wg sync --all' (§19). Jeder Lauf nimmt seinen eigenen Advisory-Lock und schreibt in
+# seinen eigenen Nummernkreis; was sie sich teilen, ist der Datenbank-Pool. 'database.pool_size'
+# in config/wissensgraph.yaml sollte deshalb mindestens so groß sein wie dieser Wert.
+max_concurrency: ${WG_SOURCES_MAX_CONCURRENCY:-4}
+
 sources:
   - name: confluence-eng
     adapter: confluence
@@ -37,6 +43,10 @@ sources:
       rate_limit_per_second: 5
       retries: 3
       page_size: 50
+      # Vorauslesen: So viele Dokumente darf die Quelle holen, während der Kern die vorigen
+      # schreibt (§8.2). 0 schaltet es ab. Eine Seite weit vorlaufen zu lassen kostet nichts
+      # und nimmt dem Lauf den Wechsel aus Warten und Schreiben.
+      read_ahead: ${WG_SOURCE_CONFLUENCE__READ_AHEAD:-50}
     selection:
       spaces: [ENG, ARCH]
       exclude_labels: [archiv, entwurf]
@@ -62,6 +72,7 @@ sources:
       rate_limit_per_second: 5
       retries: 3
       page_size: 50
+      read_ahead: ${WG_SOURCE_JIRA__READ_AHEAD:-50}
     selection:
       boards: [TEAM]
       jql_filter: project = TEAM
@@ -115,6 +126,9 @@ sources:
     connection:
       # Keine API — die Adresse dient nur den Links im erzeugten Text.
       base_url: https://github.com/SAP-docs/btp-cloud-platform/blob/main
+      # Auch ohne Netz lohnt der Vorlauf: Diese Quelle liest Dateien vom Datenträger, und das
+      # Lesen wartet ebenso auf E/A wie eine HTTP-Anfrage. Der Kern schreibt derweil.
+      read_ahead: ${WG_SOURCE_SAPDOCS__READ_AHEAD:-50}
     selection:
       directory: ${WG_SOURCE_SAPDOCS__DIR:-/app/.testdaten/btp-cloud-platform/docs}
       # Ohne Angabe der ganze Bestand. Eine Zahl deckelt ihn — nützlich für einen ersten Lauf,

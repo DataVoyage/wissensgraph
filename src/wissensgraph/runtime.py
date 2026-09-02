@@ -32,6 +32,7 @@ from wissensgraph.infrastructure.models import (
     RedisResponseCache,
 )
 from wissensgraph.infrastructure.queue import MemoryJobQueue, RedisJobQueue
+from wissensgraph.nebenlaeufig import parallel
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import ModelClientFactory, ResponseCache
 from wissensgraph.ports.queue import Job, JobQueue
@@ -201,14 +202,28 @@ class Runtime:
 
         Eine unbenutzbare Quelle wird übersprungen und nicht zum Abbruch: §8.3 verlangt, dass ein
         fehlerhafter Adapter die anderen nicht mitreißt.
+
+        Wie viele Quellen dabei gleichzeitig laufen, sagt ``sources.max_concurrency``. Zwei
+        Quellen behindern einander nicht: Jeder Lauf nimmt seinen eigenen Advisory-Lock auf
+        *seinen* Quellnamen (§10.5), schreibt in seinen eigenen Nummernkreis (§7.5) und führt
+        seine eigene Zeile in ``runs``. Was sie sich teilen, ist der Datenbank-Pool — deshalb
+        steht die Grenze in der Konfiguration und nicht im Code. Die Reihenfolge der Ergebnisse
+        bleibt die der Konfiguration, weil ``parallel`` sie hält; sonst wechselte die Ausgabe
+        von ``wg sync --all`` von Lauf zu Lauf.
         """
-        laeufe: list[Run] = []
+        benutzbar = []
         for quelle in self.registered:
             if not quelle.usable:
                 _log.warning("lauf.uebersprungen", source=quelle.name, detail=quelle.health.detail)
                 continue
-            laeufe.append(self.sync.sync(quelle.require(), quelle.config, request))
-        return tuple(laeufe)
+            benutzbar.append(quelle)
+        return tuple(
+            parallel(
+                benutzbar,
+                lambda quelle: self.sync.sync(quelle.require(), quelle.config, request),
+                gleichzeitig=self._sources.max_concurrency,
+            )
+        )
 
     # -- Läufe der semantischen Schicht (§13 bis §15) ----------------------------
 

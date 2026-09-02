@@ -35,6 +35,7 @@ from wissensgraph.infrastructure.adapters.confluence import ConfluenceAdapter
 from wissensgraph.infrastructure.adapters.fixture import FixtureAdapter
 from wissensgraph.infrastructure.adapters.jira import JiraAdapter
 from wissensgraph.infrastructure.adapters.sap_docs import SapDocsAdapter
+from wissensgraph.nebenlaeufig import parallel
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.sources import HealthState, HealthStatus, SourceAdapter
 
@@ -203,11 +204,23 @@ class AdapterRegistry:
         Raises:
             AdapterNotFound: Wenn eine Quelle auf einen unbekannten Adapter zeigt (§6.5).
         """
-        gebaut = tuple(self.register(cfg) for cfg in sources.enabled)
+        # `register` ruft `health()` auf, und das ist bei einer HTTP-Quelle eine Anfrage nach
+        # draußen. Bei zehn Quellen summierten sich zehn Zeitlimits nacheinander, bevor der
+        # Dienst überhaupt startet — und die schlechteste Quelle bestimmte die Startzeit aller.
+        # `sources.max_concurrency` löst das; die Reihenfolge bleibt die der Konfiguration,
+        # weil `parallel` sie hält (§8.3: der Status ist eine Anzeige, kein Wettlauf).
+        gebaut = tuple(
+            parallel(
+                sources.enabled,
+                self.register,
+                gleichzeitig=sources.max_concurrency,
+            )
+        )
         _log.info(
             "quellen.registriert",
             total=len(gebaut),
             usable=sum(1 for item in gebaut if item.usable),
+            gleichzeitig=sources.max_concurrency,
         )
         return gebaut
 

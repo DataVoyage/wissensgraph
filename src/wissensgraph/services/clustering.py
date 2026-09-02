@@ -40,6 +40,7 @@ from wissensgraph.domain.changes import ChangeEntry, ChangeType
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import EdgeDraft
 from wissensgraph.domain.policies import ProviderNotAllowedError
+from wissensgraph.nebenlaeufig import parallel
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import BudgetExceededError, ModelError, ModelRouter, PromptSpec
 from wissensgraph.ports.repositories import Neighbour, UnitOfWork, UnitOfWorkFactory
@@ -58,6 +59,10 @@ _TITEL_SYSTEM = (
 #: Wie viele Mitgliedstitel höchstens in den Prompt gehen. Mehr verbessert den Titel nicht und
 #: kostet linear mehr Token.
 _TITEL_MITGLIEDER = 15
+
+#: "Es wurde nichts vorab geholt" — ein eigenes Objekt, weil ``None`` hier schon etwas heißt:
+#: Das Modell wurde gefragt und hat keinen brauchbaren Titel geliefert.
+_KEIN_VORAB = object()
 
 
 class ClusterLabel(BaseModel):
@@ -195,17 +200,30 @@ class ClusterService:
         bestehende = self._bestehende_cluster(scope=scope, store=store)
         vergeben: set[str] = set()
 
+        # Erst zuordnen, dann schreiben: Die Zuordnung ist reine Rechnung auf schon geladenen
+        # Mengen und muss vor den Modellfragen feststehen, weil erst sie sagt, welches Cluster
+        # neu ist — und nur ein neues wird betitelt.
+        zuordnungen: list[tuple[_Komponente, str]] = []
+        for komponente in komponenten:
+            cluster_id = self._zuordnen(komponente, bestehende, vergeben)
+            vergeben.add(cluster_id)
+            zuordnungen.append((komponente, cluster_id))
+
+        if dry_run:
+            for komponente, cluster_id in zuordnungen:
+                if cluster_id in bestehende:
+                    bericht.clusters_matched += 1
+                else:
+                    bericht.clusters_created += 1
+                bericht.members_added += len(komponente.members)
+            _log.info("cluster.probelauf", **bericht.as_dict())
+            return bericht
+
         try:
-            for komponente in komponenten:
-                cluster_id = self._zuordnen(komponente, bestehende, vergeben)
-                vergeben.add(cluster_id)
-                if dry_run:
-                    if cluster_id in bestehende:
-                        bericht.clusters_matched += 1
-                    else:
-                        bericht.clusters_created += 1
-                    bericht.members_added += len(komponente.members)
-                    continue
+            titel = self._titel_vorab(
+                zuordnungen, bestehende=bestehende, store=store, run_id=lauf, bericht=bericht
+            )
+            for komponente, cluster_id in zuordnungen:
                 self._cluster_schreiben(
                     komponente=komponente,
                     cluster_id=cluster_id,
@@ -216,14 +234,11 @@ class ClusterService:
                     run_id=lauf,
                     actor=actor,
                     bericht=bericht,
+                    vorab=titel.get(cluster_id, _KEIN_VORAB),
                 )
         except BudgetExceededError as exc:
             bericht.budget_exceeded = True
             _log.warning("cluster.budget_erschoepft", scope=scope, grund=str(exc))
-
-        if dry_run:
-            _log.info("cluster.probelauf", **bericht.as_dict())
-            return bericht
 
         self._verwandte_cluster(
             store=store, model_key=route.model_key, run_id=lauf, actor=actor, bericht=bericht
@@ -428,6 +443,64 @@ class ClusterService:
                 bester = (ueberschneidung, cluster_id)
         return self._new_id() if bester is None else bester[1]
 
+    # -- Betitelung vorab -------------------------------------------------------
+
+    def _titel_vorab(
+        self,
+        zuordnungen: Sequence[tuple[_Komponente, str]],
+        *,
+        bestehende: Mapping[str, Any],
+        store: str,
+        run_id: UUID,
+        bericht: ClusterReport,
+    ) -> dict[str, ClusterLabel | None]:
+        """Holt die Titel aller **neuen** Cluster nebenläufig, vor dem Schreiben (§11.2).
+
+        Die Betitelung war der letzte Modellaufruf, der noch der Reihe nach lief. Sie ist dafür
+        der denkbar geeignetste Fall: eine Frage je neuem Cluster, keine hängt an einer anderen,
+        und jede wartet fast nur auf das Netz. Bei 141 neuen Clustern und knapp einer Sekunde
+        Antwortzeit sind das über zwei Minuten reines Warten in einem Lauf, der sonst rechnet.
+
+        Die Einteilung ist dieselbe wie in ``relations`` und ``orphans``: **Gefragt wird
+        nebenläufig, verbucht wird der Reihe nach.** Hier wird deshalb nur gefragt — kein Zähler,
+        keine Kante, keine Transaktion. Was zurückkommt, ist eine Zuordnung von Cluster-ID auf
+        Titel, die das Schreiben danach einfädig abarbeitet.
+
+        Ein Cluster, das schon existiert, fehlt in der Antwort und wird beim Schreiben behandelt
+        wie bisher: Sein Titel bleibt stehen, und ob eine Neubetitelung *vorgeschlagen* wird,
+        entscheidet §13.4 — das ist ein eigener, seltener Aufruf.
+        """
+        neue = [cluster_id for _, cluster_id in zuordnungen if cluster_id not in bestehende]
+        if not neue:
+            return {}
+
+        mitglieder = {
+            cluster_id: komponente.members
+            for komponente, cluster_id in zuordnungen
+            if cluster_id in set(neue)
+        }
+        with self._unit_of_work(store) as uow:
+            geladen = {
+                cluster_id: uow.concepts.get_many(ids[:_TITEL_MITGLIEDER])
+                for cluster_id, ids in mitglieder.items()
+            }
+
+        gleichzeitig = self._router.concurrency_for(defaults.TASK_CLUSTER_LABELING)
+        antworten = parallel(
+            neue,
+            lambda cluster_id: self._modelltitel(
+                geladen[cluster_id], store=store, run_id=run_id
+            ),
+            gleichzeitig=gleichzeitig,
+        )
+
+        titel: dict[str, ClusterLabel | None] = {}
+        for cluster_id, (label, fehler) in zip(neue, antworten, strict=True):
+            titel[cluster_id] = label
+            if fehler is not None:
+                bericht.errors = (*bericht.errors, fehler)
+        return titel
+
     # -- Schreiben --------------------------------------------------------------
 
     def _cluster_schreiben(
@@ -442,6 +515,7 @@ class ClusterService:
         run_id: UUID,
         actor: str,
         bericht: ClusterReport,
+        vorab: ClusterLabel | object | None = _KEIN_VORAB,
     ) -> None:
         """Legt das Cluster-Konzept an oder schreibt es fort, samt Mitgliedern und Zentroid."""
         with self._unit_of_work(store) as uow:
@@ -456,6 +530,7 @@ class ClusterService:
             run_id=run_id,
             actor=actor,
             bericht=bericht,
+            vorab=vorab,
         )
 
         jetzt = self._clock()
@@ -677,6 +752,7 @@ class ClusterService:
         run_id: UUID,
         actor: str,
         bericht: ClusterReport,
+        vorab: ClusterLabel | object | None = _KEIN_VORAB,
     ) -> ClusterLabel:
         """Bestimmt Titel und Beschreibung eines Clusters (§13.2 Schritt 4, §13.4).
 
@@ -705,7 +781,15 @@ class ClusterService:
                 title=vorhanden.title or cluster_id, description=vorhanden.description
             )
 
-        titel = self._modelltitel(mitglieder, store=store, run_id=run_id, bericht=bericht)
+        titel: ClusterLabel | None
+        if isinstance(vorab, ClusterLabel) or vorab is None:
+            # Vorab geholt (siehe `_titel_vorab`) — auch ein `None` ist hier eine Antwort: Das
+            # Modell wurde gefragt und hat nichts Brauchbares geliefert.
+            titel = vorab
+        else:
+            titel, fehler = self._modelltitel(mitglieder, store=store, run_id=run_id)
+            if fehler is not None:
+                bericht.errors = (*bericht.errors, fehler)
         if titel is not None:
             bericht.labeled += 1
             return titel
@@ -717,12 +801,16 @@ class ClusterService:
         *,
         store: str,
         run_id: UUID,
-        bericht: ClusterReport,
-    ) -> ClusterLabel | None:
+    ) -> tuple[ClusterLabel | None, str | None]:
         """Ruft ``cluster_labeling`` auf; ``None``, wenn das Modell nicht liefert.
 
         Ein misslungener Titel bricht den Lauf nicht ab. Ein Cluster ohne guten Namen ist immer
         noch ein Cluster — die Gruppierung selbst kommt aus dem Code und nicht aus dem Modell.
+
+        **Diese Methode fasst den Bericht nicht an**, und das ist keine Kosmetik: Sie läuft
+        nebenläufig (siehe :meth:`_titel_vorab`), und zwei Threads auf demselben Zähler wären ein
+        Wettlauf. Sie gibt den Fehlertext deshalb zurück, statt ihn zu verbuchen — verbucht wird
+        er beim Aufrufer, der Reihe nach.
         """
         titel = [concept.title or concept.id for concept in mitglieder][:_TITEL_MITGLIEDER]
         try:
@@ -739,9 +827,8 @@ class ClusterService:
         except (ProviderNotAllowedError, BudgetExceededError):
             raise
         except ModelError as exc:
-            bericht.errors = (*bericht.errors, f"cluster_labeling: {type(exc).__name__}")
-            return None
-        return antwort.parsed if isinstance(antwort.parsed, ClusterLabel) else None
+            return None, f"cluster_labeling: {type(exc).__name__}"
+        return (antwort.parsed if isinstance(antwort.parsed, ClusterLabel) else None), None
 
     def _neubetitelung_pruefen(
         self,

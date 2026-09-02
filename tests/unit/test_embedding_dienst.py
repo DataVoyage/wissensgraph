@@ -284,3 +284,73 @@ class TestAufrufzahlen:
         ]
         # 14 Texte, Bündel zu acht: zwei Aufrufe.
         assert len(aufrufe) == 2
+
+
+class TestBeschreibungenGleichzeitig:
+    """§11.2 für die Zusammenfassung — eine Modellfrage je Dokument ohne Beschreibung.
+
+    Bei einem frisch synchronisierten Bündel sind das so viele Round-Trips, wie das Bündel groß
+    ist, und alle liefen nacheinander. Sie sind unabhängig: Keine liest, was eine andere
+    schreibt.
+    """
+
+    @staticmethod
+    def _ohne_beschreibung(anzahl: int) -> list[Any]:
+        return [
+            konzept(f"confluence:92{i}", title=f"Ohne {i}", body="Ein Fließtext mit Inhalt.")
+            for i in range(anzahl)
+        ]
+
+    @staticmethod
+    def _messender_chat() -> tuple[Any, dict[str, int]]:
+        import threading
+        import time
+
+        stand = {"jetzt": 0, "hoechst": 0}
+        sperre = threading.Lock()
+
+        def chat(prompt: PromptSpec) -> str:
+            with sperre:
+                stand["jetzt"] += 1
+                stand["hoechst"] = max(stand["hoechst"], stand["jetzt"])
+            time.sleep(0.05)
+            with sperre:
+                stand["jetzt"] -= 1
+            return "Eine erzeugte Beschreibung."
+
+        return chat, stand
+
+    def test_die_fragen_laufen_wirklich_gleichzeitig(self, semantik_settings: Settings) -> None:
+        chat, stand = self._messender_chat()
+        umgebung = baue(semantik_settings, chat=chat, models=models_config(max_concurrency=4))
+        befuellen(umgebung, self._ohne_beschreibung(6))
+
+        bericht = umgebung.embeddings.run(scope="engineering")
+
+        assert bericht.described == 6
+        assert stand["hoechst"] > 1, "Die Zusammenfassungen liefen nacheinander."
+
+    def test_ohne_konfiguration_bleibt_es_beim_alten_ablauf(
+        self, semantik_settings: Settings
+    ) -> None:
+        chat, stand = self._messender_chat()
+        umgebung = baue(semantik_settings, chat=chat)
+        befuellen(umgebung, self._ohne_beschreibung(4))
+
+        umgebung.embeddings.run(scope="engineering")
+
+        assert stand["hoechst"] == 1
+
+    def test_dasselbe_ergebnis_wie_nacheinander(self, semantik_settings: Settings) -> None:
+        einer = baue(semantik_settings)
+        befuellen(einer, self._ohne_beschreibung(6))
+        viele = baue(semantik_settings, models=models_config(max_concurrency=4))
+        befuellen(viele, self._ohne_beschreibung(6))
+
+        a = einer.embeddings.run(scope="engineering")
+        b = viele.embeddings.run(scope="engineering")
+
+        assert b.as_dict() == a.as_dict()
+        assert {c.id: c.description for c in viele.state().concepts.values()} == {
+            c.id: c.description for c in einer.state().concepts.values()
+        }

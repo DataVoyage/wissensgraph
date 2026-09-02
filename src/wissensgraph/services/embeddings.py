@@ -36,6 +36,7 @@ from wissensgraph.config import defaults
 from wissensgraph.config.schema import Settings
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.policies import ProviderNotAllowedError
+from wissensgraph.nebenlaeufig import parallel
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import BudgetExceededError, ModelError, ModelRouter, PromptSpec
 from wissensgraph.ports.repositories import UnitOfWork, UnitOfWorkFactory
@@ -57,6 +58,20 @@ _ZUSAMMENFASSUNG_SYSTEM = (
 #: Wie viele Zeichen des ``body`` in die Zusammenfassung gehen. Der Deckel begrenzt die Kosten und
 #: kostet wenig Aussage: Worum ein Dokument geht, steht fast immer am Anfang.
 _ZUSAMMENFASSUNG_ZEICHEN = 4000
+
+
+@dataclass(frozen=True)
+class _Beschreibung:
+    """Was die Modellfrage nach einer Beschreibung ergeben hat — Text oder Fehler, nie beides.
+
+    Ein eigener kleiner Typ, weil die Frage nebenläufig läuft und ihr Ergebnis den Thread
+    verlassen muss, ohne dabei etwas zu verbuchen. Ein blanker ``str`` könnte den Unterschied
+    zwischen "das Modell hat nichts geliefert" und "das Modell war nicht erreichbar" nicht
+    tragen, und genau dieser Unterschied steht später in ``runs.stats.errors``.
+    """
+
+    text: str
+    fehler: str | None
 
 
 @dataclass
@@ -212,11 +227,38 @@ class EmbeddingService:
         with self._unit_of_work(store) as uow:
             konzepte = uow.concepts.get_many(tuple(ids))
 
+        # Die fehlenden Beschreibungen werden **vorab und nebenläufig** geholt (§11.2). Es ist
+        # eine Modellfrage je Konzept, keine hängt an einer anderen, und jede wartet fast nur
+        # auf das Netz — bei einem frisch synchronisierten Bündel von 64 Dokumenten ohne
+        # Beschreibung waren das 64 Round-Trips nacheinander, mitten in einem Lauf, der sonst
+        # rechnet. Die Einteilung bleibt dieselbe wie überall: Gefragt wird nebenläufig,
+        # geschrieben und gezählt wird gleich darunter der Reihe nach.
+        offen = [concept for concept in konzepte if not concept.description and concept.body]
+        gleichzeitig = self._router.concurrency_for(defaults.TASK_SUMMARIZATION)
+        erzeugt = dict(
+            zip(
+                [concept.id for concept in offen],
+                parallel(
+                    offen,
+                    lambda concept: self._beschreibung_erzeugen(
+                        concept, store=store, run_id=run_id
+                    ),
+                    gleichzeitig=gleichzeitig,
+                ),
+                strict=True,
+            )
+        )
+
         texte: list[str] = []
         gewaehlt: list[Concept] = []
         for concept in konzepte:
             angereichert = self._beschreibung_sichern(
-                concept, store=store, run_id=run_id, actor=actor, bericht=bericht
+                concept,
+                erzeugt.get(concept.id),
+                store=store,
+                run_id=run_id,
+                actor=actor,
+                bericht=bericht,
             )
             text = _einbettungstext(angereichert)
             if not text:
@@ -243,30 +285,28 @@ class EmbeddingService:
                 )
                 bericht.embedded += 1
 
-    def _beschreibung_sichern(
-        self,
-        concept: Concept,
-        *,
-        store: str,
-        run_id: UUID | None,
-        actor: str,
-        bericht: EmbeddingReport,
-    ) -> Concept:
-        """Erzeugt eine fehlende ``description`` aus dem ``body`` (§13.1).
+    def _beschreibung_erzeugen(
+        self, concept: Concept, *, store: str, run_id: UUID | None
+    ) -> _Beschreibung:
+        """Die reine Modellfrage nach einer fehlenden ``description`` — ohne jede Buchung.
 
-        Der Lauf hört nicht auf, wenn das Modell dabei versagt: Eine fehlende Beschreibung ist
-        eine schlechtere Grundlage für das Embedding, aber der Titel allein trägt weiter. Ein
-        abgebrochener Lauf wegen eines einzelnen misslungenen Satzes wäre der schlechtere Tausch.
+        **Fasst weder Bericht noch Datenbank an**: Sie läuft nebenläufig (siehe
+        :meth:`_stapel_verarbeiten`), und ein Zähler, den zwei Threads erhöhen, zählt falsch.
+        Ein Fehler kommt deshalb als Text zurück und wird beim Aufrufer verbucht.
+
+        ``ProviderNotAllowedError`` und ``BudgetExceededError`` fliegen weiter: Beide betreffen
+        nicht dieses eine Konzept, sondern den ganzen Lauf (§11.5, §24 Stufe 7). ``parallel``
+        reicht die erste Ausnahme beim Einsammeln an den Aufrufer durch, und dort steht der
+        Behandlungspfad, den es bisher schon gab.
         """
-        if concept.description or not concept.body:
-            return concept
-
         try:
             antwort = self._router.complete(
                 defaults.TASK_SUMMARIZATION,
                 prompt=PromptSpec(
                     system=_ZUSAMMENFASSUNG_SYSTEM,
-                    user=(concept.title or "") + _TRENNER + concept.body[:_ZUSAMMENFASSUNG_ZEICHEN],
+                    user=(concept.title or "") + _TRENNER + concept.body[:_ZUSAMMENFASSUNG_ZEICHEN]
+                    if concept.body
+                    else (concept.title or ""),
                 ),
                 store=store,
                 run_id=run_id,
@@ -274,11 +314,37 @@ class EmbeddingService:
         except (ProviderNotAllowedError, BudgetExceededError):
             raise
         except ModelError as exc:
-            bericht.errors = (*bericht.errors, f"{concept.id}: {type(exc).__name__}")
+            return _Beschreibung(text="", fehler=f"{concept.id}: {type(exc).__name__}")
+        return _Beschreibung(text=antwort.raw.strip(), fehler=None)
+
+    def _beschreibung_sichern(
+        self,
+        concept: Concept,
+        erzeugt: _Beschreibung | None,
+        *,
+        store: str,
+        run_id: UUID | None,
+        actor: str,
+        bericht: EmbeddingReport,
+    ) -> Concept:
+        """Verbucht eine vorab erzeugte ``description`` (§13.1).
+
+        Der Lauf hört nicht auf, wenn das Modell dabei versagt: Eine fehlende Beschreibung ist
+        eine schlechtere Grundlage für das Embedding, aber der Titel allein trägt weiter. Ein
+        abgebrochener Lauf wegen eines einzelnen misslungenen Satzes wäre der schlechtere Tausch.
+
+        Gefragt hat :meth:`_beschreibung_erzeugen`, und zwar nebenläufig. Hier wird nur noch
+        geschrieben und gezählt — der Reihe nach, weil zwei Threads auf demselben Zähler und
+        derselben Transaktion ein Wettlauf wären.
+        """
+        if erzeugt is None:
+            return concept
+        if erzeugt.fehler is not None:
+            bericht.errors = (*bericht.errors, erzeugt.fehler)
             _log.warning("embedding.beschreibung_gescheitert", concept_id=concept.id)
             return concept
 
-        beschreibung = antwort.raw.strip()
+        beschreibung = erzeugt.text
         if not beschreibung:
             return concept
 

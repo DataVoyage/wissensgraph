@@ -39,10 +39,10 @@ from wissensgraph.domain.changes import ChangeEntry, ChangeType
 from wissensgraph.domain.concepts import Concept
 from wissensgraph.domain.edges import EdgeDraft
 from wissensgraph.domain.policies import ProviderNotAllowedError
+from wissensgraph.nebenlaeufig import BLOCK_JE_ARBEITER, bloecke, parallel
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.models import BudgetExceededError, ModelError, ModelRouter, PromptSpec
 from wissensgraph.ports.repositories import UnitOfWork, UnitOfWorkFactory
-from wissensgraph.services.nebenlaeufig import BLOCK_JE_ARBEITER, bloecke, parallel
 
 _log = get_logger(__name__)
 

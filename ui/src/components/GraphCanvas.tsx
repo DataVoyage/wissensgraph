@@ -201,6 +201,14 @@ export function GraphCanvas({
     sigma.on("clickStage", () => {
       zustand.current.onSelect(null, "");
     });
+    // Der Doppelklick gehört den Knoten. Sigma zoomt von Haus aus auch auf einen Doppelklick
+    // ins Leere, und das ist hier eine Falle: Wer einen Knoten aufklappen will und ihn knapp
+    // verfehlt — die Punkte sind zwei bis neun Pixel groß —, springt stattdessen tief in den
+    // Graphen hinein und findet ohne "Alles zeigen" nicht zurück. Zoomen kann man über das
+    // Mausrad, und das bleibt unberührt.
+    sigma.on("doubleClickStage", (ereignis) => {
+      ereignis.preventSigmaDefault();
+    });
     sigma.on("doubleClickNode", (ereignis) => {
       ereignis.preventSigmaDefault();
       const store = String(graph.getNodeAttribute(ereignis.node, "store"));

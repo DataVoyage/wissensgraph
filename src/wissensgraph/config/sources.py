@@ -86,6 +86,19 @@ class SourceConnectionConfig(FrozenModel):
         description="Zusätzliche Versuche nach einem vorübergehenden Fehler (429, 5xx, Timeout).",
     )
     page_size: int = Field(default=defaults.SOURCE_PAGE_SIZE, ge=1)
+    read_ahead: int = Field(
+        default=defaults.SOURCE_READ_AHEAD,
+        ge=0,
+        description=(
+            "Wie viele Dokumente diese Quelle vorauslesen darf, während der Kern die vorigen "
+            "verarbeitet. 0 schaltet das Vorauslesen ab — Holen und Schreiben wechseln sich ab, "
+            "so wie bisher. Der Wert ist eine Anzahl Dokumente und keine Anzahl Threads: Das "
+            "Blättern ist der Sache nach sequenziell, weil die nächste Seite am Ergebnis der "
+            "vorigen hängt (§8.2 Regel 1). Nebenläufig laufen kann deshalb nur Holen gegen "
+            "Verarbeiten — und genau das ist der Leerlauf, um den es geht. Ein sinnvoller Wert "
+            "liegt in der Größenordnung von 'page_size': So weit darf die Quelle vorlaufen."
+        ),
+    )
     verify_tls: bool = True
 
     extra_headers: dict[str, str] = Field(
@@ -247,6 +260,18 @@ class SourcesConfig(FrozenModel):
     """Der Inhalt von ``sources.yaml`` als Ganzes."""
 
     sources: tuple[SourceConfig, ...] = ()
+    max_concurrency: int = Field(
+        default=defaults.SOURCES_MAX_CONCURRENCY,
+        ge=1,
+        description=(
+            "Wie viele Quellen gleichzeitig angesprochen werden: beim Gesundheitscheck aller "
+            "Quellen (§8.3) und bei 'wg sync --all' (§19). Vorgabe 1 — nacheinander, so wie "
+            "bisher. Die Grenze steht hier und nicht je Quelle, weil sie etwas anderes begrenzt "
+            "als 'connection.read_ahead': nicht die Last auf *einem* Quellsystem, sondern die "
+            "Zahl der Läufe, die sich diese Maschine und ihren Datenbank-Pool teilen. "
+            "'database.pool_size' sollte deshalb mindestens so groß sein wie dieser Wert."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_unique(self) -> SourcesConfig:

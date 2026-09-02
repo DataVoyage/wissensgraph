@@ -95,6 +95,52 @@ describe("Zeichenfläche (§17.2)", () => {
     await waitFor(() => expect(gewaehlt).toEqual(["a"]));
   });
 
+  it("trennt die drei Gesten: Klick wählt aus, Doppelklick klappt auf", async () => {
+    // §17.2 beschreibt die Erkundung als Doppelklick, und die Steuerspalte verspricht ihn —
+    // aufgeklappt hat aber jeder einfache Klick, weil das Aufklappen an der Auswahl hing.
+    // Damit war die Ansicht nicht mehr zu bedienen: Wer nur nachsehen wollte, woran ein
+    // Dokument hängt, holte ungefragt einen weiteren Hop und verschob die ganze Anordnung.
+    const gewaehlt: (string | null)[] = [];
+    const aufgeklappt: string[] = [];
+    renderMitQuery(
+      imRahmen(
+        <GraphCanvas
+          nodes={[knoten("a", { gewicht: 1 })] as never}
+          edges={[]}
+          layout="concentric"
+          physik={PHYSIK_VORGABE}
+          onSelect={(id) => gewaehlt.push(id)}
+          onExpand={(id) => aufgeklappt.push(id)}
+        />,
+      ),
+    );
+
+    const flaeche = screen.getByTestId("graph-canvas");
+    await waitFor(() => expect(flaeche.querySelector("canvas")).not.toBeNull());
+    await new Promise((weiter) => window.setTimeout(weiter, 150));
+    const masse = flaeche.getBoundingClientRect();
+    const x = masse.left + masse.width / 2;
+    const y = masse.top + masse.height / 2;
+    const ziel = document.elementFromPoint(x, y) ?? flaeche;
+    const klick = (): void => {
+      fireEvent.mouseDown(ziel, { clientX: x, clientY: y, buttons: 1 });
+      fireEvent.mouseUp(ziel, { clientX: x, clientY: y });
+      fireEvent.click(ziel, { clientX: x, clientY: y });
+    };
+
+    klick();
+    await waitFor(() => expect(gewaehlt).toEqual(["a"]));
+    // Lange genug, dass sigma den Klick als *einzelnen* abgeschlossen hat — und lange genug,
+    // dass ein Aufklappen aufgefallen wäre.
+    await new Promise((weiter) => window.setTimeout(weiter, 450));
+    expect(aufgeklappt).toEqual([]);
+
+    // Zwei Klicks dicht hintereinander: Erst jetzt wird aufgeklappt.
+    klick();
+    klick();
+    await waitFor(() => expect(aufgeklappt).toEqual(["a"]));
+  });
+
   it("lässt eine gerechnete Anordnung durch das Anfassen eines Knotens unberührt", async () => {
     // Der Fehler, der das sichtbar machte: `downNode` warf die freie Simulation an — und die
     // feuert schon beim Mausdruck, nicht erst beim Ziehen. Ein einzelner Klick genügte also,
@@ -456,6 +502,36 @@ describe("Graph-Explorer — Filter und Layout", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
   });
 
+  it("holt für eine neue Auswahl keinen Hop nach", async () => {
+    // Die Kehrseite der Gestentrennung, eine Ebene höher: Der Knoten aus der URL wird beim
+    // *Einstieg* aufgeklappt, damit ein geteilter Link denselben Ausschnitt zeigt und nicht
+    // eine leere Fläche mit einem markierten Punkt. Jede spätere Auswahl ist dagegen nur eine
+    // Auswahl — sonst wäre die Trennung an der Zeichenfläche wirkungslos, weil die Ansicht
+    // nachholte, was der Klick gerade nicht getan hat.
+    const nachbarn = (): number =>
+      api.calls.filter((aufruf) => aufruf.url.includes("/graph/neighbors/")).length;
+
+    const { rerender } = renderMitQuery(
+      <GraphExplorer
+        state={{ view: "graph", store: "shared", mode: "reise", id: "confluence:1" }}
+        onChange={() => undefined}
+        config={KONFIGURATION as never}
+      {...werkbankProps()} />,
+    );
+    await waitFor(() => expect(nachbarn()).toBe(1));
+
+    rerender(
+      <GraphExplorer
+        state={{ view: "graph", store: "shared", mode: "reise", id: "confluence:2" }}
+        onChange={() => undefined}
+        config={KONFIGURATION as never}
+      {...werkbankProps()} />,
+    );
+    await new Promise((weiter) => window.setTimeout(weiter, 250));
+
+    expect(nachbarn()).toBe(1);
+  });
+
   it("springt aus der Übersicht auf ein Cluster", async () => {
     const gemerkt: unknown[] = [];
     api.on("GET", /\/api\/v1\/clusters\?/, () => ({
@@ -475,6 +551,13 @@ describe("Graph-Explorer — Filter und Layout", () => {
     await userEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
 
     expect(gemerkt).toContainEqual({ id: "cluster:a" });
+    // Die Übersicht ist der Einstieg (§17.2) und klappt deshalb ausdrücklich auf — anders als
+    // eine Auswahl auf der Fläche, die seit der Gestentrennung nur noch auswählt.
+    await waitFor(() =>
+      expect(
+        api.calls.some((aufruf) => aufruf.url.includes("/graph/neighbors/cluster:a")),
+      ).toBe(true),
+    );
   });
 
   it("schneidet in der Karte auf das Cluster, statt es aufzuklappen", async () => {

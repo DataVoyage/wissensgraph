@@ -130,3 +130,65 @@ class TestJobzuordnung:
 
     def test_ohne_job_meldet_die_schleife_null(self, runtime: Any) -> None:
         assert runtime.work(once=True) == 0
+
+
+class TestQuellenGleichzeitig:
+    """``sources.max_concurrency`` in ``wg sync --all`` (§19).
+
+    Zwei Quellen behindern einander nicht: Jeder Lauf nimmt seinen eigenen Advisory-Lock auf
+    *seinen* Quellnamen (§10.5), schreibt in seinen eigenen Nummernkreis (§7.5) und führt seine
+    eigene Zeile in ``runs``. Was sie sich teilen, ist der Datenbank-Pool — deshalb steht die
+    Grenze in der Konfiguration und nicht im Code.
+    """
+
+    @staticmethod
+    def _datei(tmp_path: Path, anzahl: int, gleichzeitig: int) -> Path:
+        pfad = tmp_path / "viele.yaml"
+        pfad.write_text(
+            yaml.safe_dump(
+                {
+                    "max_concurrency": gleichzeitig,
+                    "sources": [
+                        {
+                            "name": f"quelle-{i}",
+                            "adapter": "fixture-source",
+                            "id_prefix": f"fix{i}",
+                            "target": {
+                                "scope": "engineering",
+                                "default_type": "Confluence Page",
+                            },
+                            "selection": {
+                                "documents": [{"external_id": "1", "title": f"Dokument {i}"}]
+                            },
+                        }
+                        for i in range(anzahl)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return pfad
+
+    def test_die_reihenfolge_der_laeufe_folgt_der_konfiguration(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        # Sonst wechselte die Ausgabe von 'wg sync --all' von Lauf zu Lauf, und ein Skript,
+        # das sie liest, hinge am Zufall.
+        with Runtime(settings, sources_file=self._datei(tmp_path, 4, 4)) as laufzeit:
+            assert [item.name for item in laufzeit.registered] == [
+                f"quelle-{i}" for i in range(4)
+            ]
+
+    def test_die_grenze_kommt_aus_der_konfiguration(
+        self, settings: Settings, tmp_path: Path
+    ) -> None:
+        """Kein Literal im Code (§6.1 Regel 1)."""
+        with Runtime(settings, sources_file=self._datei(tmp_path, 2, 3)) as laufzeit:
+            assert laufzeit.sources.max_concurrency == 3
+
+    def test_ohne_angabe_bleibt_es_nacheinander(self, settings: Settings, tmp_path: Path) -> None:
+        pfad = tmp_path / "ohne.yaml"
+        pfad.write_text(yaml.safe_dump({"sources": []}), encoding="utf-8")
+
+        with Runtime(settings, sources_file=pfad) as laufzeit:
+            assert laufzeit.sources.max_concurrency == 1

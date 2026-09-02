@@ -25,6 +25,7 @@ from wissensgraph.config.sources import SourceConfig
 from wissensgraph.domain.concepts import ConceptDraft
 from wissensgraph.domain.ids import source_concept_id, split_concept_id
 from wissensgraph.domain.upsert import UpsertOutcome
+from wissensgraph.nebenlaeufig import vorauslesen
 from wissensgraph.observability.logging import get_logger
 from wissensgraph.ports.sources import Cursor, SourceAdapter, SourceDocument
 from wissensgraph.services.concepts import (
@@ -222,30 +223,36 @@ class SourceIngestService:
             UpsertOutcome.CONFLICT: "conflicts",
         }
 
-        for document in adapter.iter_documents(cursor):
-            zaehler["documents"] += 1
-            try:
-                ergebnis: UpsertResult = self._concepts.upsert(
-                    mapper.to_draft(document), actor=actor, run_id=run_id
-                )
-            except (ConceptValidationError, ValidationError) as exc:
-                zaehler["errors"] += 1
-                _log.warning(
-                    "quelle.dokument.uebersprungen",
-                    source=cfg.name,
-                    external_id=document.external_id,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-                continue
-            zaehler[namen[ergebnis.outcome]] += 1
-            zaehler["edges_added"] += len(ergebnis.edges_added)
-            zaehler["edges_removed"] += len(ergebnis.edges_removed)
+        # Die Quelle darf vorlaufen, während hier geschrieben wird (``connection.read_ahead``).
+        # Die Schleife selbst bleibt unverändert einfädig: Gefragt wird nebenläufig, verbucht
+        # wird der Reihe nach — dieselbe Einteilung wie auf der Modellseite.
+        with vorauslesen(
+            adapter.iter_documents(cursor), tiefe=cfg.connection.read_ahead
+        ) as dokumente:
+            for document in dokumente:
+                zaehler["documents"] += 1
+                try:
+                    ergebnis: UpsertResult = self._concepts.upsert(
+                        mapper.to_draft(document), actor=actor, run_id=run_id
+                    )
+                except (ConceptValidationError, ValidationError) as exc:
+                    zaehler["errors"] += 1
+                    _log.warning(
+                        "quelle.dokument.uebersprungen",
+                        source=cfg.name,
+                        external_id=document.external_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                    continue
+                zaehler[namen[ergebnis.outcome]] += 1
+                zaehler["edges_added"] += len(ergebnis.edges_added)
+                zaehler["edges_removed"] += len(ergebnis.edges_removed)
 
-            if (
-                on_progress is not None
-                and zaehler["documents"] % defaults.SYNC_PROGRESS_INTERVAL == 0
-            ):
-                on_progress(dict(zaehler))
+                if (
+                    on_progress is not None
+                    and zaehler["documents"] % defaults.SYNC_PROGRESS_INTERVAL == 0
+                ):
+                    on_progress(dict(zaehler))
 
         # §8.5: "…und bei jedem Lauf erneut geprüft." Der Schritt gehört ans Ende, weil ein Ziel
         # erst durch diesen Lauf entstanden sein kann — die Kante darauf wurde angelegt, als es

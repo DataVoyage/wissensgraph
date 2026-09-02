@@ -6,6 +6,7 @@ angelegter Dummy-Adapter wird allein über einen Config-Eintrag aktiv, ohne Kern
 
 from __future__ import annotations
 
+import time
 from importlib.metadata import EntryPoint
 from typing import Any
 
@@ -224,3 +225,75 @@ class _HealthWirftEineAusnahme(_ImmerGesund):
 
     def health(self) -> HealthStatus:
         raise ConnectionError("Netz weg")
+
+
+class _LangsamGesund:
+    """Ein Adapter, dessen ``health()`` wartet — der Fall, um den es hier geht."""
+
+    def __init__(self) -> None:
+        self._cfg: Any = None
+
+    @property
+    def name(self) -> str:
+        return "langsam"
+
+    @property
+    def capabilities(self) -> Any:
+        from wissensgraph.ports.sources import AdapterCapabilities
+
+        return AdapterCapabilities()
+
+    def configure(self, cfg: Any) -> None:
+        self._cfg = cfg
+
+    def health(self) -> HealthStatus:
+        time.sleep(0.08)
+        return HealthStatus(state=HealthState.HEALTHY, detail="da")
+
+
+class TestQuellenGleichzeitig:
+    """``sources.max_concurrency``: der Gesundheitscheck aller Quellen (§8.3).
+
+    ``register`` ruft ``health()``, und das ist bei einer HTTP-Quelle eine Anfrage nach draußen.
+    Nacheinander summierten sich die Zeitlimits, bevor der Dienst überhaupt startet — und die
+    langsamste Quelle bestimmte die Startzeit aller.
+    """
+
+    @staticmethod
+    def _config(anzahl: int, gleichzeitig: int) -> SourcesConfig:
+        return SourcesConfig.model_validate(
+            {
+                "max_concurrency": gleichzeitig,
+                "sources": [
+                    quellen.quelle(f"q{i}", adapter="langsam", id_prefix=f"q{i}").model_dump(
+                        by_alias=True
+                    )
+                    for i in range(anzahl)
+                ],
+            }
+        )
+
+    def test_prueft_die_quellen_gleichzeitig(self) -> None:
+        registry = AdapterRegistry(builtins={"langsam": _LangsamGesund})
+
+        beginn = time.monotonic()
+        gebaut = registry.build_all(self._config(6, 6))
+        dauer = time.monotonic() - beginn
+
+        assert [item.usable for item in gebaut] == [True] * 6
+        # Nacheinander wären es mindestens 0,48 s. Die Schranke ist großzügig — geprüft wird
+        # die Größenordnung, nicht die Maschine.
+        assert dauer < 0.3
+
+    def test_haelt_die_reihenfolge_der_konfiguration(self) -> None:
+        # Der Status ist eine Anzeige und kein Wettlauf: 'wg sources list' soll die Quellen in
+        # derselben Reihenfolge zeigen wie sources.yaml.
+        registry = AdapterRegistry(builtins={"langsam": _LangsamGesund})
+
+        gebaut = registry.build_all(self._config(6, 6))
+
+        assert [item.name for item in gebaut] == [f"q{i}" for i in range(6)]
+
+    def test_bleibt_ohne_einstellung_nacheinander(self) -> None:
+        # Vorgabe 1: Wer nichts konfiguriert, bekommt den bisherigen Ablauf.
+        assert SourcesConfig().max_concurrency == 1
