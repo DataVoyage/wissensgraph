@@ -405,3 +405,242 @@ class TestWorker:
 
         assert result.exit_code == 0
         assert "0 Job(s)" in result.stdout
+
+
+class TestSetupAssistent:
+    """``wg setup`` — der geführte Weg durch alle Einstellungen (§6).
+
+    Geprüft wird hier die *Hülle*: Was das Kommando schreibt, wohin, und wie es sich verhält,
+    wenn es nicht fragen kann. Der Katalog selbst und das Schreiben in die Dateien stehen in
+    ``test_setup_assistent.py``.
+    """
+
+    @staticmethod
+    def _arbeitsplatz(tmp_path: Path) -> tuple[Path, Path]:
+        """Kopien der echten Dateien — der Assistent schreibt nie in das Repository."""
+        wurzel = Path(__file__).resolve().parents[2]
+        konfig = tmp_path / "config"
+        konfig.mkdir()
+        for name in ("wissensgraph.yaml", "models.yaml", "sources.yaml"):
+            (konfig / name).write_text(
+                (wurzel / "config" / name).read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        env = tmp_path / ".env"
+        env.write_text("WG_EMBEDDING_DIM=768\nWG_API_TOKEN=echt-geheim\n", encoding="utf-8")
+        return konfig / "wissensgraph.yaml", env
+
+    def test_listet_den_katalog_ohne_etwas_zu_aendern(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+        vorher = env.read_text(encoding="utf-8")
+
+        ergebnis = runner.invoke(
+            app, ["setup", "--list", "--config", str(kern), "--dotenv", str(env)]
+        )
+
+        assert ergebnis.exit_code == 0
+        assert "WG_EMBEDDING_DIM" in ergebnis.stdout
+        assert "clustering.min_similarity" in ergebnis.stdout
+        assert env.read_text(encoding="utf-8") == vorher
+
+    def test_zeigt_kein_geheimnis_im_klartext(self, tmp_path: Path) -> None:
+        """§21.1: Die Ausgabe landet im Terminalprotokoll und in Bildschirmaufnahmen."""
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app, ["setup", "--list", "--config", str(kern), "--dotenv", str(env)]
+        )
+
+        assert "echt-geheim" not in ergebnis.stdout
+        assert SECRET_MASK in ergebnis.stdout
+
+    def test_liefert_den_katalog_auch_maschinenlesbar(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app, ["setup", "--list", "--json", "--config", str(kern), "--dotenv", str(env)]
+        )
+
+        katalog = json.loads(ergebnis.stdout)
+        assert isinstance(katalog, list)
+        namen = {eintrag["schluessel"] for eintrag in katalog}
+        assert {"WG_API_PORT", "clustering.neighbors_k"} <= namen
+
+    def test_schreibt_in_die_env_und_ins_yaml_je_nach_ziel(self, tmp_path: Path) -> None:
+        """Die Regel, um die es geht: Der Platzhalter entscheidet, nicht der Aufrufer."""
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app,
+            [
+                "setup",
+                "--config",
+                str(kern),
+                "--dotenv",
+                str(env),
+                "--set",
+                "WG_API_PORT=9090",
+                "--set",
+                "clustering.neighbors_k=12",
+            ],
+        )
+
+        assert ergebnis.exit_code == 0, ergebnis.stdout
+        assert "WG_API_PORT=9090" in env.read_text(encoding="utf-8")
+        assert "  neighbors_k: 12" in kern.read_text(encoding="utf-8")
+
+    def test_laesst_die_kommentare_der_config_stehen(self, tmp_path: Path) -> None:
+        """Neben 'min_similarity' stehen fünfundzwanzig Zeilen Begründung. Sie sind der
+        eigentliche Wert der Datei — ein Assistent, der sie beim Ändern der Zahl verlöre,
+        wäre schlimmer als gar keiner."""
+        kern, env = self._arbeitsplatz(tmp_path)
+        kommentarzeilen = sum(
+            1 for zeile in kern.read_text(encoding="utf-8").splitlines()
+            if zeile.strip().startswith("#")
+        )
+
+        runner.invoke(
+            app,
+            ["setup", "--config", str(kern), "--dotenv", str(env),
+             "--set", "clustering.min_similarity=0.75"],
+        )
+
+        danach = sum(
+            1 for zeile in kern.read_text(encoding="utf-8").splitlines()
+            if zeile.strip().startswith("#")
+        )
+        assert danach == kommentarzeilen
+        assert "  min_similarity: 0.75" in kern.read_text(encoding="utf-8")
+
+    def test_weist_einen_unzulaessigen_wert_zurueck(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app,
+            ["setup", "--config", str(kern), "--dotenv", str(env),
+             "--set", "WG_API_AUTH_MODE=vielleicht"],
+        )
+
+        assert ergebnis.exit_code == 2
+        assert "WG_API_PORT" not in env.read_text(encoding="utf-8")
+
+    def test_weist_eine_zuweisung_ohne_gleichheitszeichen_zurueck(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app, ["setup", "--config", str(kern), "--dotenv", str(env), "--set", "WG_API_PORT"]
+        )
+
+        assert ergebnis.exit_code == 2
+
+    def test_prueft_ohne_zu_schreiben(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+        vorher = env.read_text(encoding="utf-8")
+
+        ergebnis = runner.invoke(
+            app, ["setup", "--check", "--config", str(kern), "--dotenv", str(env)]
+        )
+
+        assert env.read_text(encoding="utf-8") == vorher
+        assert ergebnis.exit_code in (0, 1)
+
+    def test_meldet_eine_fehlende_konfigurationsdatei_verstaendlich(self, tmp_path: Path) -> None:
+        """Der Assistent lädt die Konfiguration bewusst nicht über 'bootstrap': Er ist gerade
+        das Werkzeug für den Fall, dass sie noch nicht trägt."""
+        ergebnis = runner.invoke(
+            app, ["setup", "--config", str(tmp_path / "gibt-es-nicht.yaml"), "--list"]
+        )
+
+        assert ergebnis.exit_code == 2
+        assert "gibt-es-nicht.yaml" in ergebnis.output
+
+    def test_nennt_den_skriptfaehigen_weg_wenn_die_eingabe_ausgeht(self, tmp_path: Path) -> None:
+        """Im Container gibt es keine Tastatur. Ein Kommando, das dort auf eine Eingabe wartet,
+        hängt still — die Meldung nennt stattdessen den Weg, der dort funktioniert.
+
+        Bewusst kein Vorabtest auf ein Terminal: Antworten dürfen auch aus einer Pipe kommen,
+        und ein solcher Test verböte gerade das."""
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(app, ["setup", "--config", str(kern), "--dotenv", str(env)])
+
+        assert ergebnis.exit_code == 2
+        assert "--set" in ergebnis.output
+
+
+class TestSetupGefuehrt:
+    """Der geführte Modus mit simulierter Eingabe.
+
+    Er ist das eigentliche Kommando — ``--set`` ist die skriptfähige Abkürzung. Ein Assistent,
+    dessen Führung nur von Hand geprüft wird, ist genau der Teil, der beim nächsten Umbau
+    stillschweigend kaputtgeht.
+    """
+
+    @staticmethod
+    def _arbeitsplatz(tmp_path: Path) -> tuple[Path, Path]:
+        return TestSetupAssistent._arbeitsplatz(tmp_path)
+
+    def test_uebernimmt_eingaben_und_schreibt_sie(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app,
+            ["setup", "--config", str(kern), "--dotenv", str(env), "-s", "Job-Queue (§5.1)"],
+            input="redis://anderswo:6379/1\nj\n",
+        )
+
+        assert ergebnis.exit_code in (0, 1), ergebnis.output
+        assert "WG_BROKER_URL=redis://anderswo:6379/1" in env.read_text(encoding="utf-8")
+
+    def test_leere_eingabe_laesst_den_wert_stehen(self, tmp_path: Path) -> None:
+        """Enter heißt "unverändert" — sonst müsste man jeden Wert neu tippen, um an den
+        nächsten zu kommen."""
+        kern, env = self._arbeitsplatz(tmp_path)
+        vorher = env.read_text(encoding="utf-8")
+
+        ergebnis = runner.invoke(
+            app,
+            ["setup", "--config", str(kern), "--dotenv", str(env), "-s", "Job-Queue (§5.1)"],
+            input="\n",
+        )
+
+        assert "Nichts geändert" in ergebnis.output
+        assert env.read_text(encoding="utf-8") == vorher
+
+    def test_fragt_bei_unzulaessiger_eingabe_erneut(self, tmp_path: Path) -> None:
+        """Statt abzubrechen: Wer sich vertippt, soll den Wert korrigieren können, ohne den
+        ganzen Durchlauf zu wiederholen."""
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app,
+            ["setup", "--config", str(kern), "--dotenv", str(env), "--all",
+             "-s", "config/wissensgraph.yaml — search"],
+            input="viele\n25\n\n\nj\n",
+        )
+
+        assert "Erwartet wird eine ganze Zahl." in ergebnis.output
+        assert "  limit: 25" in kern.read_text(encoding="utf-8")
+
+    def test_ein_nein_schreibt_nichts(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+        vorher = env.read_text(encoding="utf-8")
+
+        ergebnis = runner.invoke(
+            app,
+            ["setup", "--config", str(kern), "--dotenv", str(env), "-s", "Job-Queue (§5.1)"],
+            input="redis://anderswo:6379/1\nn\n",
+        )
+
+        assert "Abgebrochen" in ergebnis.output
+        assert env.read_text(encoding="utf-8") == vorher
+
+    def test_meldet_einen_unbekannten_abschnitt_mit_den_bekannten(self, tmp_path: Path) -> None:
+        kern, env = self._arbeitsplatz(tmp_path)
+
+        ergebnis = runner.invoke(
+            app, ["setup", "--config", str(kern), "--dotenv", str(env), "-s", "Gibt es nicht"],
+            input="\n",
+        )
+
+        assert ergebnis.exit_code == 2
+        assert "Laufzeit" in ergebnis.output

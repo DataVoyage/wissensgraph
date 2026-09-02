@@ -142,9 +142,26 @@ Das macht `uv sync --group dev` und `npm install` in `ui/`. Wer die UI nicht anf
 
 ### 4.2 `.env` anlegen
 
+Entweder geführt — das Kommando fragt alles ab, was es gibt, prüft jede Eingabe und schreibt sie
+an die richtige Stelle:
+
+```bash
+uv run wg setup
+```
+
+Oder von Hand:
+
 ```bash
 cp .env.example .env
 ```
+
+Beides führt zum selben Ergebnis; `wg setup` nimmt einem nur die Frage ab, welcher Wert in die
+`.env` gehört und welcher in `config/wissensgraph.yaml`. Es beantwortet sie nicht nach einer
+eigenen Liste, sondern liest sie ab: Steht im YAML ein `${WG_...}`-Platzhalter, gehört der Wert
+in die Umgebung; steht dort eine Zahl, ins YAML. Nützlich sind außerdem `wg setup --list`
+(alles ansehen, Geheimnisse maskiert), `wg setup --check` (prüfen, ohne zu schreiben) und
+`wg setup --set NAME=WERT` (skriptfähig, ohne Rückfrage). Es läuft auch im Container:
+`docker compose exec worker wg setup --check`.
 
 Diese Datei ist git-ignoriert und verlässt den Rechner nicht. **Pflichtwerte**, ohne die der Stack
 nicht startet:

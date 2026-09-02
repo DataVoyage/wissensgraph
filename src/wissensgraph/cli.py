@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import textwrap
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import click
 import typer
 
 from wissensgraph.bootstrap import bootstrap
@@ -145,6 +148,365 @@ def config_show(
         typer.echo(json.dumps(masked, indent=2, ensure_ascii=False, sort_keys=True))
     else:  # pragma: no cover — reine Darstellungsvariante
         typer.echo(masked)
+
+
+# -- Einrichtung ---------------------------------------------------------------
+
+
+def _wizard_konfigdatei(config_file: Path | None) -> Path:
+    """Die Kern-Config-Datei, die der Assistent bearbeitet — ohne sie zu laden.
+
+    Bewusst nicht über ``bootstrap``: Der Assistent ist gerade das Werkzeug für den Fall, dass
+    die Konfiguration *noch nicht* lädt. Ein Kommando, das erst eine gültige Konfiguration
+    braucht, um sie einrichten zu können, hilft beim ersten Mal niemandem.
+    """
+    if config_file is not None:
+        return config_file
+    verzeichnis = os.environ.get("WG_CONFIG_DIR", "").strip() or defaults.LOCAL_CONFIG_DIR
+    return Path(verzeichnis) / defaults.CORE_CONFIG_FILENAME
+
+
+def _wizard_zeile(eintrag: Any, aktuell: str, quelle: str = "") -> str:
+    """Eine Katalogzeile für die Übersicht."""
+    from wissensgraph.config.wizard import maskiert
+
+    marke = "!" if eintrag.pflicht and not aktuell else " "
+    wert = maskiert(eintrag.schluessel, aktuell) or "(leer)"
+    woher = "  [aus der Umgebung]" if quelle == "Umgebung" else ""
+    return f" {marke} {eintrag.schluessel:<44} {wert}{woher}"
+
+
+def _wizard_frage(eintrag: Any, aktuell: str, quelle: str = "") -> str | None:
+    """Stellt eine Frage und gibt den neuen Wert zurück; ``None`` heißt "unverändert"."""
+    from wissensgraph.config.wizard import maskiert
+
+    typer.echo("")
+    typer.echo(f"  {eintrag.schluessel}")
+    if quelle == "Umgebung":
+        # Wichtig zu wissen, bevor jemand hier etwas einträgt: Was der Prozess mitbringt,
+        # schlägt die Datei (§6.2). Ein hier gesetzter Wert bliebe im Container wirkungslos.
+        typer.echo("    Kommt derzeit aus der Prozessumgebung und schlägt die Datei (§6.2).")
+    if eintrag.beschreibung:
+        for stueck in textwrap.wrap(eintrag.beschreibung, width=94):
+            typer.echo(f"    {stueck}")
+    if eintrag.auswahl:
+        typer.echo(f"    Erlaubt: {', '.join(eintrag.auswahl)}")
+    if eintrag.vorgabe and not aktuell:
+        typer.echo(f"    Vorgabe: {maskiert(eintrag.schluessel, eintrag.vorgabe)}")
+
+    while True:
+        eingabe: str = typer.prompt(
+            f"    Wert [{maskiert(eintrag.schluessel, aktuell) or 'leer'}]",
+            default="",
+            show_default=False,
+            hide_input=eintrag.geheim,
+        ).strip()
+        if not eingabe:
+            return None
+        if eingabe == "-":
+            # Ein Wert lässt sich nur so wieder loswerden: Die leere Eingabe bedeutet bereits
+            # "unverändert", und ohne diesen Weg bliebe ein einmal gesetztes Token für immer.
+            return ""
+        fehler = eintrag.pruefen(eingabe)
+        if fehler is None:
+            return eingabe
+        typer.echo(f"    -> {fehler}")
+
+
+def _wizard_bestaetigen(frage: str) -> bool:
+    """Eine Ja/Nein-Frage, die auch auf Deutsch antwortbar ist.
+
+    ``typer.confirm`` fragt ``[Y/n]`` und weist ein "j" als ungültige Eingabe zurück. In einem
+    Werkzeug, dessen Fragen und Erklärungen durchgehend deutsch sind, ist das eine Falle: Wer
+    "j" tippt, hat richtig geantwortet und bekommt einen Fehler.
+    """
+    ja = {"j", "ja", "y", "yes"}
+    nein = {"n", "nein", "no"}
+    while True:
+        antwort = typer.prompt(f"{frage} [J/n]", default="j", show_default=False).strip().lower()
+        if antwort in ja:
+            return True
+        if antwort in nein:
+            return False
+        typer.echo(f"  -> Bitte {'/'.join(sorted(ja))} oder {'/'.join(sorted(nein))}.")
+
+
+@app.command("setup")
+def setup(
+    config_file: ConfigFileOption = None,
+    dotenv_file: DotenvFileOption = None,
+    abschnitt: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--section",
+            "-s",
+            help="Nur diese Abschnitte durchgehen; mehrfach angebbar. Ohne Angabe: alle.",
+        ),
+    ] = None,
+    setzen: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--set",
+            help="NAME=WERT ohne Rückfrage setzen; mehrfach angebbar. Macht den Lauf skriptfähig.",
+        ),
+    ] = None,
+    alle: Annotated[
+        bool,
+        typer.Option("--all", help="Auch Werte durchgehen, die bereits gesetzt sind."),
+    ] = False,
+    auflisten: Annotated[
+        bool, typer.Option("--list", help="Nur den Katalog zeigen und nichts ändern.")
+    ] = False,
+    pruefen_nur: Annotated[
+        bool, typer.Option("--check", help="Nur prüfen, ob die Konfiguration trägt.")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Katalog bzw. Prüfergebnis maschinenlesbar ausgeben.")
+    ] = False,
+) -> None:
+    """Richtet alle Einstellungen ein — geführt, an einer Stelle (§6).
+
+    Die Konfiguration ist bewusst breit: Sie soll ohne Codeänderung tragen, was eine
+    Installation unterscheidet (§6.1 Regel 1). Der Preis sind rund hundert Werte in drei
+    Dateien, verteilt auf zwei Wege — ``config/*.yaml`` für alles Fachliche, ``.env`` für alles,
+    was Zugang, Adresse oder Geheimnis ist (§20.2). Dieses Kommando beantwortet die Frage
+    "welcher Wert gehört wohin" und schreibt an die richtige Stelle.
+
+    Wohin ein Wert gehört, wird **abgelesen und nicht festgelegt**: Steht im YAML ein
+    ``${WG_...}``-Platzhalter, gehört er in die ``.env``; steht dort ein Literal, ins YAML.
+    Geschrieben wird zeilenweise, damit die Kommentare stehen bleiben — sie sind in beiden
+    Dateien der halbe Inhalt.
+
+    Beispiele:
+
+        wg setup                       geführt durch alles, was noch fehlt
+
+        wg setup --all                 auch schon Gesetztes noch einmal durchgehen
+
+        wg setup --set WG_API_TOKEN=geheim --set WG_EMBEDDING_DIM=768
+
+        wg setup --list                den ganzen Katalog ansehen
+
+        wg setup --check               nur prüfen, nichts schreiben
+    """
+    from wissensgraph.config.wizard import (
+        baue_katalog,
+        finde_yaml_zeile,
+        lies_env,
+        maskiert,
+        pruefe_gesamt,
+        schreibe_env,
+        schreibe_yaml,
+    )
+
+    kern = _wizard_konfigdatei(config_file)
+    env_pfad = dotenv_file or Path(".env")
+    beispiel = Path(".env.example")
+    if not kern.is_file():
+        typer.echo(
+            f"Es gibt keine Konfigurationsdatei unter '{kern}'. Der Assistent bearbeitet eine "
+            f"vorhandene Datei — die Vorlage liegt im Repository unter 'config/'.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    katalog = baue_katalog(
+        env_beispiel=beispiel,
+        config_datei=kern,
+        weitere_yaml=[
+            kern.parent / defaults.MODELS_CONFIG_FILENAME,
+            kern.parent / defaults.SOURCES_CONFIG_FILENAME,
+        ],
+    )
+    env_werte = lies_env(env_pfad)
+    yaml_zeilen = kern.read_text(encoding="utf-8").splitlines()
+
+    def aktueller_wert(eintrag: Any) -> tuple[str, str]:
+        """Der geltende Wert und woher er kommt.
+
+        Die Prozessumgebung zählt mit, und das ist im Container der Regelfall: Dort setzt
+        docker-compose die DSNs, die Ports und den Broker selbst — in der ``.env`` steht davon
+        nichts. Ein Assistent, der nur die Datei liest, hielte all das für unbesetzt und fragte
+        nach Werten, die längst gesetzt sind (§6.2: Prozess-ENV schlägt die Datei).
+        """
+        if eintrag.ziel == "env":
+            aus_datei = env_werte.get(eintrag.schluessel, "")
+            if aus_datei:
+                return aus_datei, "Datei"
+            aus_umgebung = os.environ.get(eintrag.schluessel, "")
+            return (aus_umgebung, "Umgebung") if aus_umgebung else ("", "")
+        gefunden = finde_yaml_zeile(yaml_zeilen, eintrag.pfad)
+        return ("", "") if gefunden is None else (gefunden[1], "Datei")
+
+    # -- Nur zeigen ------------------------------------------------------------
+    if auflisten:
+        if as_json:
+            # Ohne `_maschinenlesbar`: Dieser Zweig lädt nichts und protokolliert nichts, es
+            # gibt also keine Logzeile, die die Ausgabe stören könnte. Die Umlenkung wäre eine
+            # Nebenwirkung ohne Anlass.
+            typer.echo(
+                json.dumps(
+                        [
+                            {
+                                "schluessel": item.schluessel,
+                                "abschnitt": item.abschnitt,
+                                "ziel": item.ziel,
+                                "beschreibung": item.beschreibung,
+                                "vorgabe": defaults.SECRET_MASK if item.geheim else item.vorgabe,
+                                "gesetzt": bool(aktueller_wert(item)[0]),
+                                "quelle": aktueller_wert(item)[1],
+                                "pflicht": item.pflicht,
+                                "auswahl": list(item.auswahl),
+                            }
+                            for item in katalog
+                        ],
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return
+        for name in katalog.abschnitte:
+            typer.echo("")
+            typer.echo(f"{name}")
+            for item in katalog.im_abschnitt(name):
+                typer.echo(_wizard_zeile(item, *aktueller_wert(item)))
+        typer.echo("")
+        typer.echo(f"{len(katalog)} Einstellungen; '!' markiert einen fehlenden Pflichtwert.")
+        return
+
+    # -- Nur prüfen ------------------------------------------------------------
+    if pruefen_nur:
+        befund = pruefe_gesamt(config_datei=kern, env={**os.environ, **env_werte})
+        for zeile in befund.fehler:
+            typer.echo(f"{_SYMBOLS[CheckStatus.FAIL]} {zeile}")
+        for zeile in befund.hinweise:
+            typer.echo(f"{_SYMBOLS[CheckStatus.WARN]} {zeile}")
+        if befund.in_ordnung:
+            typer.echo(f"{_SYMBOLS[CheckStatus.OK]} Die Konfiguration trägt.")
+        raise typer.Exit(code=0 if befund.in_ordnung else 1)
+
+    # -- Werte sammeln ---------------------------------------------------------
+    neu_env: dict[str, str] = {}
+    neu_yaml: dict[tuple[str, ...], str] = {}
+
+    for zuweisung in setzen or []:
+        name, trenner, wert = zuweisung.partition("=")
+        if not trenner:
+            typer.echo(f"'{zuweisung}' ist keine Zuweisung. Erwartet wird NAME=WERT.", err=True)
+            raise typer.Exit(code=2)
+        eintrag = katalog.get(name.strip())
+        if eintrag is None:
+            # Unbekannte Namen sind erlaubt und landen in der .env: Der Katalog kennt die
+            # dokumentierten Variablen, nicht jede, die ein eigener Adapter mitbringt (§8.4).
+            neu_env[name.strip()] = wert.strip()
+            continue
+        fehler = eintrag.pruefen(wert.strip())
+        if fehler is not None:
+            typer.echo(f"{name.strip()}: {fehler}", err=True)
+            raise typer.Exit(code=2)
+        if eintrag.ziel == "env":
+            neu_env[eintrag.schluessel] = wert.strip()
+        else:
+            neu_yaml[eintrag.pfad] = wert.strip()
+
+    # -- Geführt ---------------------------------------------------------------
+    if not setzen:
+        gewaehlt = tuple(abschnitt) if abschnitt else katalog.abschnitte
+        unbekannt = [name for name in gewaehlt if name not in katalog.abschnitte]
+        if unbekannt:
+            typer.echo(f"Unbekannte Abschnitte: {', '.join(unbekannt)}", err=True)
+            typer.echo("Bekannt sind:", err=True)
+            for name in katalog.abschnitte:
+                typer.echo(f"  {name}", err=True)
+            raise typer.Exit(code=2)
+
+        typer.echo("Einrichtung des Wissensgraphen (§6).")
+        typer.echo(f"  Umgebung:      {env_pfad}")
+        typer.echo(f"  Konfiguration: {kern}")
+        typer.echo("")
+        typer.echo("Enter übernimmt den bisherigen Wert, '-' leert ihn, Strg-C bricht ab.")
+
+        # Kein Vorabtest auf ein Terminal: Antworten dürfen auch aus einer Pipe kommen, und
+        # ein `isatty`-Test verböte gerade das. Bemerkt wird die fehlende Eingabe dort, wo sie
+        # ausbleibt — click wirft dann dieselbe Ausnahme wie bei Strg-C, und welcher der beiden
+        # Fälle vorliegt, sagt erst hier zuverlässig das Terminal.
+        try:
+            for name in gewaehlt:
+                offen = [
+                    item
+                    for item in katalog.im_abschnitt(name)
+                    if alle or not aktueller_wert(item)[0] or item.pflicht
+                ]
+                if not offen:
+                    continue
+                typer.echo("")
+                typer.echo(f"-- {name} " + "-" * max(0, 74 - len(name)))
+                for item in offen:
+                    antwort = _wizard_frage(item, *aktueller_wert(item))
+                    if antwort is None:
+                        continue
+                    if item.ziel == "env":
+                        neu_env[item.schluessel] = antwort
+                    else:
+                        neu_yaml[item.pfad] = antwort
+        except (typer.Abort, click.exceptions.Abort):
+            if sys.stdin.isatty():
+                typer.echo("")
+                typer.echo("Abgebrochen; nichts geschrieben.")
+                raise typer.Exit(code=1) from None
+            typer.echo(
+                "Die Eingabe ist zu Ende, bevor alle Fragen beantwortet waren. Für einen "
+                "skriptfähigen Lauf '--set NAME=WERT' benutzen, zum Ansehen '--list'.",
+                err=True,
+            )
+            raise typer.Exit(code=2) from None
+
+    # -- Schreiben -------------------------------------------------------------
+    if not neu_env and not neu_yaml:
+        typer.echo("")
+        typer.echo("Nichts geändert.")
+        return
+
+    typer.echo("")
+    typer.echo("Diese Werte werden geschrieben:")
+    for name in sorted(neu_env):
+        typer.echo(f"  {env_pfad}: {name}={maskiert(name, neu_env[name]) or '(leer)'}")
+    for pfad in sorted(neu_yaml):
+        typer.echo(f"  {kern}: {'.'.join(pfad)}={neu_yaml[pfad]}")
+
+    if not setzen and not _wizard_bestaetigen("Schreiben?"):
+        typer.echo("Abgebrochen; nichts geschrieben.")
+        return
+
+    geschrieben = schreibe_env(env_pfad, neu_env, vorlage=beispiel) if neu_env else 0
+    fehlend: list[str] = []
+    if neu_yaml:
+        zahl, fehlend = schreibe_yaml(kern, neu_yaml)
+        geschrieben += zahl
+
+    gewuenscht = len(neu_env) + len(neu_yaml)
+    typer.echo("")
+    typer.echo(
+        f"{geschrieben} von {gewuenscht} Werten geändert"
+        + ("." if geschrieben == gewuenscht else "; der Rest stand schon so da.")
+    )
+    for vermisst in fehlend:
+        typer.echo(
+            f"{_SYMBOLS[CheckStatus.WARN]} '{vermisst}' steht nicht in {kern} und wurde nicht "
+            f"angelegt — eine angehängte Zeile ohne ihren Kommentar wäre schlechter als dieser "
+            f"Hinweis.",
+            err=True,
+        )
+
+    befund = pruefe_gesamt(config_datei=kern, env={**os.environ, **lies_env(env_pfad)})
+    typer.echo("")
+    for zeile in befund.fehler:
+        typer.echo(f"{_SYMBOLS[CheckStatus.FAIL]} {zeile}")
+    for zeile in befund.hinweise:
+        typer.echo(f"{_SYMBOLS[CheckStatus.WARN]} {zeile}")
+    if befund.in_ordnung:
+        typer.echo(f"{_SYMBOLS[CheckStatus.OK]} Die Konfiguration trägt. Weiter mit 'wg doctor'.")
+    raise typer.Exit(code=0 if befund.in_ordnung else 1)
 
 
 @app.command("doctor")

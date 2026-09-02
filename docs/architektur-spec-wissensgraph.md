@@ -468,6 +468,45 @@ Der Startvorgang bricht mit klarer Fehlermeldung ab, wenn:
 - `WG_EMBEDDING_DIM` von der Dimension abweicht, mit der die Datenbank migriert wurde,
 - ein Adapter in `sources.yaml` nicht in der Registry auffindbar ist.
 
+### 6.6 Einrichtung: `wg setup`
+
+Die Breite dieses Modells ist Absicht — sie ist der Preis dafür, dass eine Installation ohne
+Codeänderung anpassbar bleibt (§6.1 Regel 1). Für den, der das System zum ersten Mal aufsetzt, ist
+sie aber eine Zumutung: rund hundert Werte in drei Dateien, verteilt auf zwei Wege. `wg setup`
+führt durch alle, prüft jede Eingabe und schreibt sie an die richtige Stelle.
+
+Wohin ein Wert gehört, wird **abgelesen und nicht festgelegt**:
+
+> Steht im YAML an dieser Stelle ein `${WG_...}`-Platzhalter, gehört der Wert in die `.env`.
+> Steht dort ein Literal, gehört er ins YAML.
+
+Der Katalog wird aus den Quellen abgeleitet, die es ohnehin gibt — der ENV-Tabelle aus §6.4, den
+Platzhaltern der YAML-Dateien und dem Pydantic-Schema mit Typ, Vorgabe und Beschreibung. Eine
+gepflegte zweite Liste wäre binnen eines Sprints falsch: Wer ein Feld ergänzt, denkt nicht an sie.
+`.env.example` steuert die Abschnitte und die Erklärungen bei; sie liegt deshalb auch im Image.
+
+| Aufruf | Wirkung |
+|---|---|
+| `wg setup` | geführt durch alles, was noch fehlt |
+| `wg setup --all` | auch schon Gesetztes noch einmal durchgehen |
+| `wg setup -s "HTTP-API (§16, §20.3)"` | nur einen Abschnitt |
+| `wg setup --set NAME=WERT` | ohne Rückfrage, skriptfähig |
+| `wg setup --list [--json]` | den Katalog ansehen |
+| `wg setup --check` | prüfen, ohne zu schreiben |
+
+Vier Eigenschaften sind dabei nicht verhandelbar:
+
+- **Kommentare überleben.** Geschrieben wird zeilenweise. Neben `min_similarity` stehen
+  fünfundzwanzig Zeilen, die erklären, warum dort 0,80 steht; ein Assistent, der die Datei aus
+  einem Dictionary neu schriebe, löschte sie — und der Verlust fiele erst auf, wenn ihn niemand
+  mehr rückgängig machen kann.
+- **Geheimnisse bleiben maskiert** (§21.1). Die Ausgabe landet in Terminalprotokollen; sichtbar
+  ist nur die Länge, und die beantwortet allein die Frage "steht da überhaupt etwas".
+- **Die Prozessumgebung zählt mit** (§6.2). Im Container setzt Compose die DSNs und Ports selbst;
+  ein Assistent, der nur die Datei liest, fragte nach Werten, die längst gesetzt sind.
+- **Geprüft wird mit dem Lader.** `wg setup --check` baut die Einstellungen genau so, wie es der
+  Start täte. Eine zweite Prüfung neben §6.5 wäre eine zweite Meinung darüber, was gültig ist.
+
 ---
 
 ## 7. Datenmodell

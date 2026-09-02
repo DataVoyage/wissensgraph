@@ -107,6 +107,11 @@ RUN --mount=type=secret,id=netrc,target=/root/.netrc \
     uv sync --frozen --no-install-project --no-dev
 
 COPY src/ ./src/
+# Die ENV-Vorlage kommt mit ins Image: Sie ist Dokumentation und kein Geheimnis — darin stehen
+# die Namen der Variablen und ihre Begründung, nie ein Wert (§20.2). Der Einrichtungsassistent
+# 'wg setup' liest daraus die Abschnitte und die Erklärung jeder Variablen; ohne sie liefe er im
+# Container auf eine nackte Liste von Namen hinaus, also genau auf das, was er ersetzen soll.
+COPY .env.example ./.env.example
 RUN --mount=type=secret,id=netrc,target=/root/.netrc \
     uv sync --frozen --no-dev
 

@@ -287,6 +287,11 @@ QUEUE_RESERVE_TIMEOUT_SECONDS: Final = 5.0
 API_HOST: Final = "0.0.0.0"
 API_PORT: Final = 8080
 API_AUTH_MODE: Final = "token"
+
+#: Der Wert, der in ``.env.example`` anstelle eines Tokens steht. Er ist absichtlich kein
+#: gültiges Geheimnis, sondern eine Erinnerung daran, eines zu setzen — und der
+#: Einrichtungsassistent erkennt ihn daran, dass er unverändert stehen geblieben ist.
+API_TOKEN_PLATZHALTER: Final = "bitte-ersetzen"
 API_CORS_ORIGINS: Final = "http://localhost:5173"
 
 #: Nur an diese Adressen darf ``auth_mode=none`` gebunden werden (§20.3).
