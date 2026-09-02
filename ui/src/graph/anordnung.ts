@@ -624,20 +624,68 @@ function zentrenLegen(
     },
   });
 
-  // Die Zentren stehen jetzt in beliebigem Maßstab — auf den Kantenlängen-Regler bringen.
-  let ausdehnung = 0;
-  for (const id of zentren) {
-    ausdehnung = Math.max(
-      ausdehnung,
-      Math.hypot(Number(klein.getNodeAttribute(id, "x")), Number(klein.getNodeAttribute(id, "y"))),
-    );
+  // **Der Maßstab der Zentren gehört an die Größe der Sterne gebunden — in beide Richtungen.**
+  //
+  // Das ist die Ursache dafür, dass ein aufgeklapptes Cluster in der Traversierung wie ein
+  // Ladefehler aussah: Die Kopfzeile zählte 43 Knoten, auf der Fläche lag ein schwarzer Punkt
+  // auf dem Anker. Die Mitglieder waren da; ihr Ring war ein Klecks von fünfundzwanzig Pixeln
+  // in einer Karte von vierhundert.
+  //
+  // Der Grund ist, dass hier zwei ganz verschiedene Maßstäbe aufeinandertreffen. Der Ringradius
+  // kommt aus `sternRadius` und hängt am Kantenlängen-Regler. Der Abstand zwischen zwei Zentren
+  // dagegen ist das Gleichgewicht aus ForceAtlas2' Abstoßung und Schwerkraft, und das hat mit
+  // dem Regler nichts zu tun, sondern mit der Zahl der Zentren und der Zahl ihrer Kanten. Im
+  // Browser gemessen, bei unverändertem Regler:
+  //
+  // | Fall | Zentren | Abstand zum nächsten | zwei mittlere Sternradien |
+  // |---|---|---|---|
+  // | ein aufgeklapptes Cluster | 18 | 112 | 109 |
+  // | die Karte über den Vollbestand | 191 | 35 | 168 |
+  //
+  // Die beiden Fälle brauchen also *gegenläufige* Korrekturen — der eine mehr Luft, der andere
+  // weniger. Vorher stand hier eine Normierung auf `kantenlaenge · √n · 2,4`, die den Maßstab
+  // nur nach *oben* nachführte ("gespreizt wird höchstens"): Sie traf die Karte einigermaßen
+  // und blies die aufgeklappte Traversierung auf das Dreifache auf, während die Ringe blieben,
+  // wo sie waren.
+  //
+  // Der Bezug ist deshalb jetzt eine Größe, die im selben Maß rechnet wie die Ringe: Der
+  // typische Abstand zum nächsten Zentrum soll zwei mittlere Sternradien plus etwas Luft
+  // betragen. Dann steht in jeder Ansicht neben einem Stern so viel Platz, wie ein Stern
+  // braucht — und nur so viel. Der Median statt des Mittels, weil ein einzelner weit
+  // abgeschlagener Trabant sonst die ganze Karte zusammenzöge.
+  //
+  // Die Zeile ersetzt zugleich eine Korrektur, die hier zwischenzeitlich stand: der Faktor, mit
+  // dem das engste Paar auf die Summe seiner Sperrflächen käme. Sie ist wieder verschwunden,
+  // weil sie an echten Daten das Gegenteil bewirkte — unter 191 Zentren findet sich immer *ein*
+  // Paar, das die Anticollision nicht ganz auseinanderbekommen hat, und ein einziger solcher
+  // Fall zog als globaler Faktor die ganze Karte um ein Vielfaches auf.
+  const stelle = (id: string): { x: number; y: number } => ({
+    x: Number(klein.getNodeAttribute(id, "x")),
+    y: Number(klein.getNodeAttribute(id, "y")),
+  });
+
+  const naechste: number[] = [];
+  for (const a of zentren) {
+    const va = stelle(a);
+    let dichteste = Infinity;
+    for (const b of zentren) {
+      if (a === b) {
+        continue;
+      }
+      const vb = stelle(b);
+      dichteste = Math.min(dichteste, Math.hypot(va.x - vb.x, va.y - vb.y));
+    }
+    if (Number.isFinite(dichteste)) {
+      naechste.push(dichteste);
+    }
   }
-  // Die Anticollision hat die Sterne bereits in echten Abständen verteilt — der Maßstab
-  // stimmt also schon und darf nur noch behutsam nachgeführt werden. Nach oben begrenzt,
-  // damit ein einzelner weit abgeschlagener Trabant nicht alles andere zusammenschrumpfen
-  // lässt: Der Faktor wird nie kleiner als eins, gespreizt wird höchstens.
-  const soll = physik.kantenlaenge * Math.sqrt(zentren.length) * 2.4;
-  const faktor = ausdehnung > 0 ? Math.max(1, soll / ausdehnung) : 1;
+
+  naechste.sort((links, rechts) => links - rechts);
+  const ist = naechste[Math.floor(naechste.length / 2)] ?? 0;
+  const mittlererRadius =
+    zentren.reduce((summe, id) => summe + sternRadius(id), 0) / zentren.length;
+  const soll = mittlererRadius * 2 + physik.kantenlaenge * 0.8;
+  const faktor = ist > 0 ? soll / ist : 1;
   for (const id of zentren) {
     lagen.set(id, {
       x: Number(klein.getNodeAttribute(id, "x")) * faktor,

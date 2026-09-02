@@ -306,10 +306,23 @@ describe("Kantengewicht — was zieht wie stark", () => {
 });
 
 describe("Sternenkarte", () => {
-  /** Ein Ersatz für `forceatlas2.assign` — legt die Zentren auf eine Reihe, deterministisch. */
+  /**
+   * Ein Ersatz für `forceatlas2.assign` — eine Reihe, deterministisch.
+   *
+   * Die Abstände folgen den Sperrflächen, denn genau darauf läuft die Anticollision hinaus:
+   * Zwei Sterne stehen mindestens so weit auseinander, wie ihre Radien zusammen messen. Eine
+   * Attrappe mit festem Rasterabstand behauptete dagegen eine Lage, die es nicht gibt — und
+   * jede Zusicherung darüber wäre eine über die Attrappe statt über die Anordnung.
+   */
   function fa2Attrappe(graph: Graph): void {
-    graph.nodes().sort().forEach((id, platz) => {
-      graph.setNodeAttribute(id, "x", platz * 100);
+    const ids = graph.nodes().sort();
+    const groesse = (id: string): number => Number(graph.getNodeAttribute(id, "size")) || 1;
+    let x = 0;
+    ids.forEach((id, platz) => {
+      if (platz > 0) {
+        x += (groesse(ids[platz - 1] as string) + groesse(id)) * 1.3;
+      }
+      graph.setNodeAttribute(id, "x", x);
       graph.setNodeAttribute(id, "y", 0);
     });
   }
@@ -378,6 +391,65 @@ describe("Sternenkarte", () => {
     const lagen = sterne(bestand(), PHYSIK_VORGABE, fa2Attrappe);
 
     expect(radius(lagen, "cluster:a", "a1")).toBeGreaterThan(radius(lagen, "cluster:b", "b1"));
+  });
+
+  /**
+   * Der Zuschnitt einer aufgeklappten Traversierung: *ein* Cluster mit seinen Mitgliedern und
+   * daneben ein Dutzend Nachbarcluster, deren Mitglieder noch nicht geladen sind.
+   */
+  function aufgeklappt(): Graph {
+    const graph = new Graph({ multi: true, type: "directed" });
+    const knotenListe = [knoten("cluster:a", { type: "Cluster" })];
+    const kantenListe = [];
+    for (let i = 0; i < 20; i += 1) {
+      knotenListe.push(knoten(`a${i}`));
+      kantenListe.push(kante(`m${i}`, "cluster:a", `a${i}`, "member"));
+    }
+    for (let i = 0; i < 12; i += 1) {
+      knotenListe.push(knoten(`cluster:n${i}`, { type: "Cluster" }));
+      kantenListe.push(kante(`r${i}`, "cluster:a", `cluster:n${i}`, "related"));
+    }
+    spiegeln(graph, knotenListe, kantenListe, []);
+    return graph;
+  }
+
+  /**
+   * Der realistische Ersatz: ein Gitter, dessen Maschenweite die Sperrflächen achtet — genau
+   * das, worauf die Anticollision hinausläuft. Zweidimensional, weil eine Reihe die Karte
+   * künstlich in die Länge zieht und jedes Verhältnis darin verzerrt.
+   */
+  function fa2Gitter(graph: Graph): void {
+    const ids = graph.nodes().sort();
+    const weite =
+      2.2 * Math.max(...ids.map((id) => Number(graph.getNodeAttribute(id, "size")) || 1));
+    const kante = Math.ceil(Math.sqrt(ids.length));
+    ids.forEach((id, platz) => {
+      graph.setNodeAttribute(id, "x", ((platz % kante) - (kante - 1) / 2) * weite);
+      graph.setNodeAttribute(id, "y", (Math.floor(platz / kante) - (kante - 1) / 2) * weite);
+    });
+  }
+
+  it("spreizt die Zentren nur bis zur Berührung, nicht auf eine Sollweite", () => {
+    // Der Fehler, der in der Traversierung wie fehlende Daten aussah: Die Kopfzeile zählte
+    // 43 Knoten, zu sehen war ein schwarzer Punkt auf dem Anker. Ein aufgeklapptes Cluster
+    // bringt ein Dutzend leerer Nachbarcluster mit; die alte Normierung auf
+    // `kantenlaenge · √n · 2,4` zog die weit auseinander, während die Mitgliederringe blieben,
+    // wo sie waren. Ein Stern von 130 Einheiten in einer Karte von 2.300 ist bei der
+    // Zoomstufe, die alles zeigt, drei Pixel breit.
+    //
+    // Die Zusicherung ist deshalb eine über *Verhältnisse*: Ein Stern muss ein lesbarer Anteil
+    // seiner Karte bleiben — egal, ob die Kraftrechnung ihre Zentren eng oder weit ablegt.
+    const anteil = (fa2: typeof fa2Attrappe): number => {
+      const lagen = sterne(aufgeklappt(), PHYSIK_VORGABE, fa2);
+      let weiteste = 0;
+      for (const punkt of lagen.values()) {
+        weiteste = Math.max(weiteste, Math.hypot(punkt.x, punkt.y));
+      }
+      return radius(lagen, "cluster:a", "a0") / weiteste;
+    };
+
+    // Ein Zehntel der Karte — mit der Sollweite waren es rund zwei Prozent.
+    expect(anteil(fa2Gitter)).toBeGreaterThan(0.1);
   });
 
   it("kommt ohne jedes Zentrum zurecht", () => {
